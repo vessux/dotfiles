@@ -1,5 +1,5 @@
 [core]
-	excludesfile = /Users/kovis/.gitignore_global
+	excludesfile = /Users/kovis/.config/git/gitignore_global
 	editor = nvim
 [user]
 	name = Jakub Kovaľ

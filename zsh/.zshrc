@@ -3,3 +3,10 @@ alias dc='docker compose'
 alias authagent='eval `ssh-agent -s` && ssh-add /Users/kovis/.ssh/id_rsa && ssh-add /Users/kovis/.ssh/jakub.koval'
 alias primavpn='sudo openfortivpn -c ~/.ssh/fortiprimaconfig'
 alias nixapply='sudo darwin-rebuild switch --flake ~/.config/nix'
+
+# Dirs
+alias ..="cd .."
+alias ...="cd ../.."
+alias ....="cd ../../.."
+alias .....="cd ../../../.."
+alias ......="cd ../../../../.."

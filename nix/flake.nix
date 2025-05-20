@@ -85,6 +85,11 @@
     # programs.fish.enable = true;
     programs.zsh.enable = true;
 
+    environment.variables = {
+      XDG_CONFIG_HOME = "/Users/kovis/.config";
+      ZDOTDIR = "$XDG_CONFIG_HOME/zsh";
+    };
+
     # Set Git commit hash for darwin-version.
     system.configurationRevision = self.rev or self.dirtyRev or null;
 
