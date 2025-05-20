@@ -1,0 +1,6 @@
+[core]
+	excludesfile = /Users/kovis/.gitignore_global
+	editor = nvim
+[user]
+	name = Jakub Kovaľ
+	email = kuba.koval@gmail.com

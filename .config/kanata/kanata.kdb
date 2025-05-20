@@ -1,0 +1,155 @@
+;; Kanata Keyboard Configuration
+;; This configuration provides a custom keyboard layout with multiple layers and special key functions
+;; for macOS using an Apple Internal Keyboard/Trackpad.
+
+(defcfg
+  ;; Allow non-configured keys to function normally
+  process-unmapped-keys yes
+  
+  ;; Specify the internal keyboard device name for macOS
+  macos-dev-names-include (
+    "Apple Internal Keyboard / Trackpad"
+  )
+)
+
+;; Source key definitions - defines the physical layout of keys
+(defsrc
+  f1   f2   f3   f4   f5   f6   f7   f8   f9   f10   f11   f12
+  bspc
+  r
+  caps a s d f h j k l ;
+  fn lmet 
+)
+
+;; Timing variables for key behaviors
+(defvar
+  ;; Time in milliseconds for tap detection
+  tap-time 150
+  ;; Time in milliseconds for hold detection
+  hold-time 200
+  ;; Time in milliseconds for one-shot modifier keys
+  one-shot-time 750
+)
+
+;; Key behavior aliases
+(defalias
+  ;; Caps Lock: Tap for Escape, Hold for Control+Alt+Shift
+  escctrl (tap-hold-press $tap-time $hold-time esc (multi lctl lalt lsft))
+  
+  ;; One-shot modifiers - activate on tap, deactivate after next key press
+  oslsft (one-shot $one-shot-time lsft)
+  oslctl (one-shot $one-shot-time lctl)
+  oslalt (one-shot $one-shot-time lalt)
+  oslmet (one-shot $one-shot-time lmet)
+  
+  ;; Layer switching aliases
+  to-disabled (layer-switch disabled-base)  ;; Switch to disabled layer
+  to-normal (layer-switch base)             ;; Switch to normal layer
+  fn-normal (tap-hold-press $tap-time $hold-time fn (layer-toggle fn-normal))
+  fn-disabled (tap-hold-press $tap-time $hold-time fn (layer-toggle fn-disabled))
+  fn (tap-hold $tap-time $hold-time fn (layer-toggle fn-normal))
+  to-nav (tap-hold $tap-time $hold-time lmet (layer-while-held nav))
+)
+
+;; Virtual key definitions
+(defvirtualkeys
+  to-base (layer-switch base)
+)
+
+;; Base Layer - Default keyboard layout
+(deflayermap base
+  ;; Function keys for media and system controls
+  f1 brdn    ;; Brightness down
+  f2 brup    ;; Brightness up
+  f7 prev    ;; Previous track
+  f8 pp      ;; Play/Pause
+  f9 next    ;; Next track
+  f10 mute   ;; Mute audio
+  f11 vold   ;; Volume down
+  f12 volu   ;; Volume up
+  
+  ;; Special key mappings
+  caps @escctrl  ;; Caps Lock as Escape/Control+Alt+Shift
+  fn @fn-normal  ;; Function key for layer switching
+  lmet @to-nav   ;; Left Meta (Command) for navigation layer
+)
+
+;; Navigation Layer - Activated while holding Left Meta
+(deflayermap nav
+  ;; Text manipulation shortcuts
+  w M-x      ;; Cut
+  e M-c      ;; Copy
+  r M-v      ;; Paste
+  
+  ;; Modifier keys as one-shot
+  caps @escctrl  ;; Escape/Control+Alt+Shift
+  a @oslsft     ;; One-shot Shift
+  s @oslctl     ;; One-shot Control
+  d @oslalt     ;; One-shot Alt
+  f @oslmet     ;; One-shot Meta
+  
+  ;; Arrow keys
+  h left
+  j down
+  k up
+  l right
+  ; bspc      ;; Backspace
+  
+  fn @fn-normal  ;; Function key for layer switching
+)
+
+;; Function Normal Layer - Activated by tapping/holding Fn
+(deflayermap fn-normal
+  ;; Function keys remain unchanged
+  f1 f1
+  f2 f2
+  f7 f7
+  f8 f8
+  f9 f9
+  f10 f10
+  f11 f11
+  f12 f12
+  
+  ;; Special key mappings
+  bspc del    ;; Backspace becomes Delete
+  r lrld      ;; R becomes Reload
+  caps @escctrl  ;; Escape/Control+Alt+Shift
+  k @to-disabled  ;; Switch to disabled layer
+  fn @to-normal   ;; Return to normal layer
+)
+
+;; Disabled Base Layer - Alternative base layer
+(deflayermap disabled-base
+  ;; Same media controls as base layer
+  f1 brdn
+  f2 brup
+  f7 prev
+  f8 pp
+  f9 next
+  f10 mute
+  f11 vold
+  f12 volu
+  
+  caps @escctrl  ;; Escape/Control+Alt+Shift
+  fn @fn-disabled  ;; Function key for disabled layer
+)
+
+;; Function Disabled Layer - Function layer when in disabled mode
+(deflayermap fn-disabled
+  ;; Function keys remain unchanged
+  f1 f1
+  f2 f2
+  f7 f7
+  f8 f8
+  f9 f9
+  f10 f10
+  f11 f11
+  f12 f12
+  
+  ;; Special key mappings
+  bspc del    ;; Backspace becomes Delete
+  r lrld      ;; R becomes Reload
+  caps @escctrl  ;; Escape/Control+Alt+Shift
+  k @to-normal   ;; Switch back to normal layer
+  fn @to-disabled  ;; Stay in disabled layer
+)

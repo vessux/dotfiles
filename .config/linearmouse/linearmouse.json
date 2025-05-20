@@ -1,0 +1,100 @@
+{
+  "$schema" : "https:\/\/schema.linearmouse.app\/0.9.5",
+  "schemes" : [
+    {
+      "pointer" : {
+        "speed" : 0.300000000000000256,
+        "disableAcceleration" : false,
+        "acceleration" : 0
+      },
+      "buttons" : {
+        "universalBackForward" : true
+      },
+      "scrolling" : {
+        "reverse" : {
+          "horizontal" : false,
+          "vertical" : true
+        },
+        "distance" : 3
+      },
+      "if" : {
+        "device" : {
+          "category" : "mouse"
+        }
+      }
+    },
+    {
+      "if" : {
+        "device" : {
+          "productName" : "Xornet gaming mouse",
+          "productID" : "0x3",
+          "vendorID" : "0x2516",
+          "category" : "mouse"
+        }
+      },
+      "pointer" : {
+        "disableAcceleration" : true,
+        "acceleration" : 1,
+        "speed" : 0.6
+      },
+      "scrolling" : {
+        "reverse" : {
+          "horizontal" : false,
+          "vertical" : true
+        },
+        "distance" : 3
+      },
+      "buttons" : {
+        "universalBackForward" : true
+      }
+    },
+    {
+      "pointer" : {
+        "speed" : 0.0689655172413792768,
+        "disableAcceleration" : false,
+        "acceleration" : 1
+      },
+      "scrolling" : {
+        "acceleration" : {
+          "vertical" : 1
+        }
+      },
+      "if" : {
+        "device" : {
+          "vendorID" : "0x5ac",
+          "productID" : "0x342",
+          "productName" : "Apple Internal Keyboard \/ Trackpad",
+          "category" : "trackpad"
+        }
+      }
+    },
+    {
+      "if" : {
+        "device" : {
+          "category" : "mouse",
+          "productName" : "Logi M650",
+          "vendorID" : "0x46d",
+          "serialNumber" : "4D22D071",
+          "productID" : "0xb02a"
+        }
+      },
+      "pointer" : {
+        "speed" : 0.66
+      }
+    },
+    {
+      "if" : {
+        "device" : {
+          "category" : "mouse",
+          "serialNumber" : "82430D13",
+          "vendorID" : "0x46d",
+          "productID" : "0xb037",
+          "productName" : "MX Anywhere 3S"
+        }
+      },
+      "pointer" : {
+        "speed" : 0.7
+      }
+    }
+  ]
+}
