@@ -19,19 +19,19 @@ curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix 
 ### 2. Clone this repository
 
 ```bash
-git clone git@github.com:vessux/dotfiles.git ~/.dotfiles
+git clone git@github.com:vessux/dotfiles.git ~/dotfiles
 ```
 
 ### 3. Apply Nix configuration
 
 ```bash
-sudo nix run nix-darwin -- switch --flake ~/.dotfiles/nix
+sudo nix run nix-darwin -- switch --flake ~/dotfiles/nix
 ```
 
 ### 4. Symlink dotfiles using Stow
 
 ```bash
-cd ~/.dotfiles
+cd ~/dotfiles
 stow .
 ```
 

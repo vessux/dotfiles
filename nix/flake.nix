@@ -157,6 +157,7 @@
       
       environment = {
         systemPackages = systemPackages;
+        systemPath = [ "/opt/homebrew/bin" ];
         variables = {
           XDG_CONFIG_HOME = "${homeDirectory}/.config";
           ZDOTDIR = "$XDG_CONFIG_HOME/zsh";
