@@ -4,6 +4,7 @@
   # System packages organized by category
   systemPackages = with nixpkgs.legacyPackages.aarch64-darwin; [
     # Development tools
+    atuin
     awscli
     bat
     fd

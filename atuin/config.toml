@@ -1,0 +1,73 @@
+# Atuin configuration
+# This file will be stowed to ~/.config/atuin/config.toml
+
+# === CORE SETTINGS ===
+# Enhanced search mode for better fuzzy matching
+search_mode = "fuzzy"
+filter_mode = "global"
+
+# Use compact style for better terminal integration
+style = "compact"
+inline_height = 25
+
+# Better key handling for macOS
+ctrl_n_shortcuts = true
+
+# Enable workspaces for git repo filtering
+workspaces = true
+
+# === UI ENHANCEMENTS ===
+# Show preview of long commands
+show_preview = true
+max_preview_height = 4
+
+# Show help and tabs
+show_help = true
+show_tabs = true
+
+# Return to original command on escape
+exit_mode = "return-original"
+
+# Enable enhanced enter behavior
+enter_accept = true
+
+# === HISTORY SETTINGS ===
+# Store failed commands for debugging
+store_failed = true
+
+# === PERFORMANCE ===
+# Network timeouts
+network_timeout = 30
+network_connect_timeout = 5
+local_timeout = 5
+
+# === STATS CONFIGURATION ===
+[stats]
+# Commands to treat with subcommands for better stats
+common_subcommands = [
+    "apt",
+    "brew",
+    "cargo",
+    "docker",
+    "git",
+    "kubectl",
+    "nix",
+    "npm",
+    "pnpm",
+    "yarn",
+    "systemctl",
+    "tmux",
+    "nvim",
+    "vim",
+]
+
+# Ignore these prefixes in stats
+common_prefix = [
+    "sudo",
+    "time",
+    "watch",
+]
+
+# === PREVIEW SETTINGS ===
+[preview]
+strategy = "auto" 

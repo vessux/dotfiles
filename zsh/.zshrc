@@ -57,3 +57,8 @@ if command -v fzf &> /dev/null; then
         [[ -n $file ]] && nvim "$file"
     }
 fi
+
+# atuin configuration
+if command -v atuin &> /dev/null; then
+    eval "$(atuin init zsh)"
+fi
