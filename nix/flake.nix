@@ -29,6 +29,9 @@
     systemPackages = with nixpkgs.legacyPackages.aarch64-darwin; [
       # Development tools
       awscli
+      bat
+      fd
+      fzf
       neovim
       nodejs
       stow
@@ -281,13 +284,9 @@
 
           # Custom keyboard layout
           "com.apple.HIToolbox" = {
+            AppleCurrentKeyboardLayoutInputSourceID = "com.apple.keylayout.Czech";
             AppleDictationAutoEnable = 1;
             AppleEnabledInputSources = [
-              {
-                InputSourceKind = "Keyboard Layout";
-                "KeyboardLayout ID" = "-14193";
-                "KeyboardLayout Name" = "Czech";
-              }
               {
                 "Bundle ID" = "com.apple.CharacterPaletteIM";
                 InputSourceKind = "Non Keyboard Input Method";
@@ -305,8 +304,36 @@
                 "KeyboardLayout ID" = "-1";
                 "KeyboardLayout Name" = "Unicode Hex Input";
               }
+              {
+                InputSourceKind = "Keyboard Layout";
+                "KeyboardLayout ID" = "-14193";
+                "KeyboardLayout Name" = "Czech";
+              }
             ];
             AppleFnUsageType = 1;
+            AppleInputSourceHistory = [
+              {
+                InputSourceKind = "Keyboard Layout";
+                "KeyboardLayout ID" = "-14193";
+                "KeyboardLayout Name" = "Czech";
+              }
+              {
+                InputSourceKind = "Keyboard Layout";
+                "KeyboardLayout ID" = "-1";
+                "KeyboardLayout Name" = "Unicode Hex Input";
+              }
+            ];
+            AppleSelectedInputSources = [
+              {
+                "Bundle ID" = "com.apple.PressAndHold";
+                InputSourceKind = "Non Keyboard Input Method";
+              }
+              {
+                InputSourceKind = "Keyboard Layout";
+                "KeyboardLayout ID" = "-14193";
+                "KeyboardLayout Name" = "Czech";
+              }
+            ];
           };
         };
       };
