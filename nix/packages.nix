@@ -7,6 +7,7 @@
     atuin
     awscli
     bat
+    eza
     fd
     fzf
     neovim
@@ -15,9 +16,11 @@
     vim
 
     # System utilities
+    dust
     lazydocker
     lazygit
     openfortivpn
+    starship
     tmux
     unixtools.watch
     watch

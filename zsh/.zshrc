@@ -25,6 +25,11 @@ function y() {
 	rm -f -- "$tmp"
 }
 
+# Eza
+alias l="eza -l --icons --git -a"
+alias lt="eza --tree --level=2 --long --icons --git"
+alias ltree="eza --tree --level=2  --icons --git"
+
 lg()
 {
     export LAZYGIT_NEW_DIR_FILE=~/.lazygit/newdir
@@ -42,8 +47,13 @@ if command -v fzf &> /dev/null; then
     # Source fzf key bindings and completion
     source <(fzf --zsh)
     
+    # Shared fd excludes function
+    _fd_excludes() {
+        echo "--exclude .git --exclude node_modules --exclude build --exclude dist --exclude target --exclude vendor --exclude .ollama --exclude .stack --exclude Library --exclude OrbStack --exclude .orbstack --exclude .rustup --exclude .nvm --exclude .DS_Store"
+    }
+    
     # Shared fd command with optimized excludes
-    export FZF_FD_COMMAND='fd --type f --hidden --size -5M --exclude .git --exclude node_modules --exclude build --exclude dist --exclude target --exclude vendor --exclude .ollama --exclude .stack --exclude Library --exclude OrbStack --exclude .orbstack --exclude .rustup --exclude .nvm --exclude .DS_Store'
+    export FZF_FD_COMMAND="fd --type f --hidden --size -5M $(_fd_excludes)"
     
     # fzf environment variables
     export FZF_DEFAULT_OPTS='--height 100% --layout=reverse --border'
@@ -53,12 +63,28 @@ if command -v fzf &> /dev/null; then
     
     # fzf + nvim alias using shared command
     fv() {
-        local file=$(eval $FZF_FD_COMMAND | fzf --preview "bat --color=always {}")
+        local file=$(fd --type f --hidden --size -5M $(_fd_excludes) | fzf --preview "bat --color=always {}")
         [[ -n $file ]] && nvim "$file"
+    }
+    
+    # fzf + file/directory navigation functions using fd
+    fcd() { 
+        local dir=$(fd --type d --hidden $(_fd_excludes) | fzf)
+        [[ -n $dir ]] && cd "$dir" && l
+    }
+    f() { 
+        local file=$(fd --type f --hidden --size -5M $(_fd_excludes) | fzf)
+        [[ -n $file ]] && echo "$file" | pbcopy
     }
 fi
 
 # atuin configuration
 if command -v atuin &> /dev/null; then
     eval "$(atuin init zsh)"
+fi
+
+# starship configuration
+if command -v starship &> /dev/null; then
+    eval "$(starship init zsh)"
+    export STARSHIP_CONFIG=~/.config/starship/starship.toml
 fi
