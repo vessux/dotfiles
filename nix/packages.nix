@@ -32,6 +32,7 @@
     # Browsers
     "firefox"
     "google-chrome"
+    "zen"
 
     # Development
     "cursor"

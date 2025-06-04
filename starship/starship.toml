@@ -4,9 +4,10 @@ format = """
 [](red)\
 $os\
 $username\
-[](bg:peach fg:red)\
+$shell\
+[](fg:red bg:peach)\
 $directory\
-[](bg:yellow fg:peach)\
+[](fg:peach bg:yellow)\
 $git_branch\
 $git_status\
 [](fg:yellow bg:green)\
@@ -19,9 +20,8 @@ $java\
 $kotlin\
 $haskell\
 $python\
-[](fg:green bg:sapphire)\
-$docker_context\
 $conda\
+[](fg:green bg:sapphire)\
 [](fg:sapphire bg:lavender)\
 $time\
 [ ](fg:lavender)\
@@ -61,6 +61,11 @@ show_always = true
 style_user = "bg:red fg:crust"
 style_root = "bg:red fg:crust"
 format = '[ $user]($style)'
+
+[shell]
+disabled = false
+style = "bg:red fg:crust"
+format = '[ $indicator]($style)'
 
 [directory]
 style = "bg:peach fg:crust"
@@ -143,9 +148,9 @@ ignore_base = false
 
 [time]
 disabled = false
-time_format = "%R"
+time_format = "%F %T"
 style = "bg:lavender"
-format = '[[  $time ](fg:crust bg:lavender)]($style)'
+format = '[[$time](fg:crust bg:lavender)]($style)'
 
 [line_break]
 disabled = true
