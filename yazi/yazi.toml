@@ -1,18 +1,3 @@
 [manager]
 show_hidden = true
 linemode = "size"
-
-[opener]
-edit = [
-  { run = 'nvim "$@"', block = true, for = "unix" }
-]
-
-[open]
-rules = [
-  { mime = "text/*", use = "edit" },
-  { name = "*.json", use = "edit" },
-  { name = "*.toml", use = "edit" },
-  { name = "*.yaml", use = "edit" },
-  { name = "*.yml", use = "edit" },
-  { name = "*.md", use = "edit" }
-]

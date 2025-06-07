@@ -24,7 +24,12 @@
     tmux
     unixtools.watch
     watch
+
+    # yazi
     yazi
+    yaziPlugins.chmod
+    yaziPlugins.toggle-pane
+    ueberzugpp
   ];
 
   # Homebrew applications organized by category

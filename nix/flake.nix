@@ -62,6 +62,15 @@
       
       programs.zsh.enable = true;
 
+      # === ACTIVATION SCRIPTS ===
+      
+      system.activationScripts.applications.text = ''
+        # Link yazi plugins in dotfiles directory
+        mkdir -p ${homeDirectory}/dotfiles/yazi/plugins
+        ln -sf ${pkgs.yaziPlugins.chmod} ${homeDirectory}/dotfiles/yazi/plugins/chmod.yazi 2>/dev/null || true
+        ln -sf ${pkgs.yaziPlugins.toggle-pane} ${homeDirectory}/dotfiles/yazi/plugins/toggle-pane.yazi 2>/dev/null || true
+      '';
+
       # === PACKAGE MANAGEMENT ===
       
       homebrew = {
