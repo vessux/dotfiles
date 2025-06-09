@@ -67,6 +67,7 @@
     # Utilities
     "cheatsheet"
     "datovka"
+    "karabiner-elements"
     "keka"
     "kekaexternalhelper"
     "keycastr"
