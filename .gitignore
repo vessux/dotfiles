@@ -3,3 +3,4 @@ zsh/.zsh_history
 yazi/plugins/chmod.yazi
 yazi/plugins/toggle-pane.yazi
 karabiner/automatic_backups
+tmux/plugins

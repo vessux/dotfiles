@@ -90,60 +90,6 @@
         CriticalUpdateInstall = 1;
         ScheduleFrequency = 1; # Daily
       };
-
-      # Custom keyboard layout
-      "com.apple.HIToolbox" = {
-        AppleCurrentKeyboardLayoutInputSourceID = "com.apple.keylayout.Czech";
-        AppleDictationAutoEnable = 1;
-        AppleEnabledInputSources = [
-          {
-            "Bundle ID" = "com.apple.CharacterPaletteIM";
-            InputSourceKind = "Non Keyboard Input Method";
-          }
-          {
-            "Bundle ID" = "com.apple.PressAndHold";
-            InputSourceKind = "Non Keyboard Input Method";
-          }
-          {
-            "Bundle ID" = "com.apple.inputmethod.ironwood";
-            InputSourceKind = "Non Keyboard Input Method";
-          }
-          {
-            InputSourceKind = "Keyboard Layout";
-            "KeyboardLayout ID" = "-1";
-            "KeyboardLayout Name" = "Unicode Hex Input";
-          }
-          {
-            InputSourceKind = "Keyboard Layout";
-            "KeyboardLayout ID" = "-14193";
-            "KeyboardLayout Name" = "Czech";
-          }
-        ];
-        AppleFnUsageType = 1;
-        AppleInputSourceHistory = [
-          {
-            InputSourceKind = "Keyboard Layout";
-            "KeyboardLayout ID" = "-14193";
-            "KeyboardLayout Name" = "Czech";
-          }
-          {
-            InputSourceKind = "Keyboard Layout";
-            "KeyboardLayout ID" = "-1";
-            "KeyboardLayout Name" = "Unicode Hex Input";
-          }
-        ];
-        AppleSelectedInputSources = [
-          {
-            "Bundle ID" = "com.apple.PressAndHold";
-            InputSourceKind = "Non Keyboard Input Method";
-          }
-          {
-            InputSourceKind = "Keyboard Layout";
-            "KeyboardLayout ID" = "-14193";
-            "KeyboardLayout Name" = "Czech";
-          }
-        ];
-      };
     };
   };
 } 

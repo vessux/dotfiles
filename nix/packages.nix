@@ -24,6 +24,7 @@
     tmux
     unixtools.watch
     watch
+    zellij
 
     # yazi
     yazi

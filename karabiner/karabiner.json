@@ -36,12 +36,87 @@
                                 "type": "basic"
                             }
                         ]
+                    },
+                    {
+                        "description": "Both Alt keys tap to Ctrl+A (tmux prefix) - Terminal Apps Only",
+                        "manipulators": [
+                            {
+                                "conditions": [
+                                    {
+                                        "bundle_identifiers": [
+                                            "^com\\.apple\\.Terminal$",
+                                            "^com\\.googlecode\\.iterm2$",
+                                            "^com\\.mitchellh\\.ghostty$",
+                                            "^org\\.alacritty$",
+                                            "^net\\.kovidgoyal\\.kitty$",
+                                            "^com\\.github\\.wez\\.wezterm$"
+                                        ],
+                                        "type": "frontmost_application_if"
+                                    }
+                                ],
+                                "from": {
+                                    "key_code": "left_option",
+                                    "modifiers": { "optional": ["any"] }
+                                },
+                                "parameters": {
+                                    "basic.to_if_alone_timeout_milliseconds": 200,
+                                    "basic.to_if_held_down_threshold_milliseconds": 150
+                                },
+                                "to": [
+                                    {
+                                        "key_code": "left_option"
+                                    }
+                                ],
+                                "to_if_alone": [
+                                    {
+                                        "key_code": "a",
+                                        "modifiers": ["left_control"]
+                                    }
+                                ],
+                                "type": "basic"
+                            },
+                            {
+                                "conditions": [
+                                    {
+                                        "bundle_identifiers": [
+                                            "^com\\.apple\\.Terminal$",
+                                            "^com\\.googlecode\\.iterm2$",
+                                            "^com\\.mitchellh\\.ghostty$",
+                                            "^org\\.alacritty$",
+                                            "^net\\.kovidgoyal\\.kitty$",
+                                            "^com\\.github\\.wez\\.wezterm$"
+                                        ],
+                                        "type": "frontmost_application_if"
+                                    }
+                                ],
+                                "from": {
+                                    "key_code": "right_option",
+                                    "modifiers": { "optional": ["any"] }
+                                },
+                                "parameters": {
+                                    "basic.to_if_alone_timeout_milliseconds": 200,
+                                    "basic.to_if_held_down_threshold_milliseconds": 150
+                                },
+                                "to": [
+                                    {
+                                        "key_code": "right_option"
+                                    }
+                                ],
+                                "to_if_alone": [
+                                    {
+                                        "key_code": "a",
+                                        "modifiers": ["left_control"]
+                                    }
+                                ],
+                                "type": "basic"
+                            }
+                        ]
                     }
                 ]
             },
             "name": "Default profile",
             "selected": true,
-            "virtual_hid_keyboard": { "keyboard_type_v2": "iso" }
+            "virtual_hid_keyboard": { "keyboard_type_v2": "ansi" }
         }
     ]
 }
