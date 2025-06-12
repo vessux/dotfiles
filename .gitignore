@@ -1,4 +1,5 @@
 zsh/.zcompdump
+zsh/.zcompdump.*
 zsh/.zsh_history
 yazi/plugins/chmod.yazi
 yazi/plugins/toggle-pane.yazi

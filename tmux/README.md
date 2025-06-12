@@ -51,6 +51,7 @@ tmux ls                 # List sessions
 🎨 **Spunky Visual Design**: Purple active panes, pink/blue status bar highlights  
 🖱️ **Mouse Support**: Click to switch panes, drag to resize, scroll naturally  
 ⌨️ **Vim-like Navigation**: `h/j/k/l` for intuitive pane movement  
+🚀 **Which-Key Menu**: Discoverable command palette - never memorize shortcuts again!  
 
 ## Key Bindings (Prefix: Ctrl-a)
 
@@ -80,6 +81,10 @@ tmux ls                 # List sessions
 - `v` - Start selection
 - `y` - Copy selection
 - `Ctrl-a ]` - Paste
+
+**Which-Key Menu:**
+- `Ctrl-a Space` - Show command menu with organized actions
+- `Ctrl-Space` - Show command menu from anywhere (no prefix needed)
 
 **Useful:**
 - `Ctrl-a r` - Reload config
@@ -113,24 +118,54 @@ tmux ls                 # List sessions
 - **vim-tmux-navigator**: Seamless switching between vim/nvim and tmux panes
 - **tmux-fzf**: Fuzzy finder popups for sessions, windows, panes
 - **tmux-open**: Open files/URLs directly from tmux
+- **tmux-which-key**: Which-key style command menu - discover actions intuitively
 
 **⚙️ Quality of Life:**
 - **tmux-sensible**: Sensible defaults that just work
 
+## Smart Session Management 🧠
+
+### **Auto-Attach Behavior:**
+
+Add this to your `~/.zshrc` to make `tmux` always attach to existing sessions:
+
+```bash
+# Source the shell integration
+source ~/.config/tmux/shell-integration.sh
+```
+
+**What you get:**
+- **`tmux`** → Attaches to existing session or creates "main"
+- **`tmp`** → Project session (uses current directory name)  
+- **`tms`** → Fuzzy session selector (requires fzf)
+- **`tmkill`** → Interactive session killer (requires fzf)
+- **`tmdev`** → Creates development session with 4 windows
+
+### **Quick Commands:**
+```bash
+tmux             # Smart attach to any existing session
+tmp              # Project session for current directory
+tms              # Fuzzy session picker (requires fzf)
+tmkill           # Interactive session killer (requires fzf)
+tml              # List sessions
+tmka             # Kill all sessions
+tmnuke           # Nuclear option - kill all sessions and wipe save history
+```
+
 ## Pro Tips
 
-1. **Catppuccin Aesthetics**: Active panes glow purple, status bar uses pink/blue highlights
+1. **Smart Session Workflow**: Use `tmp` in each project directory for organized sessions
 2. **Auto-Restore**: Sessions automatically restore on tmux start - never lose work again
-3. **Workflow**: Create one session per project, multiple windows per session
+3. **Fuzzy Everything**: `tms` for session picker, `Ctrl-a f` for windows
 4. **Plugin Management**: `Ctrl-a I` to install, `Ctrl-a U` to update plugins
-5. **Fuzzy Navigation**: `Ctrl-a f` for window finder, `Ctrl-a Ctrl-f` for session finder
-6. **Search Power**: Use `/` to search text, `Ctrl-f` for files, `Ctrl-u` for URLs
+5. **Development Setup**: `tmdev` creates perfect coding environment
+6. **Session Persistence**: With continuum plugin, sessions survive reboots
 
 ## Common Workflows
 
 ### Development Setup
 ```bash
-tmux new -s project
+tmp               # Create/attach to project session (uses directory name)
 Ctrl-a c          # New window for editor
 Ctrl-a -          # Split for terminal
 Ctrl-a h          # Switch back to editor pane

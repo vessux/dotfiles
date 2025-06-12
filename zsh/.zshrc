@@ -89,3 +89,8 @@ if command -v starship &> /dev/null; then
     eval "$(starship init zsh)"
     export STARSHIP_CONFIG=~/.config/starship/starship.toml
 fi
+
+# tmux smart session management
+if command -v tmux &> /dev/null; then
+    source ~/.config/tmux/shell-integration.sh
+fi

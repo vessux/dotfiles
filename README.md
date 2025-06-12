@@ -37,15 +37,61 @@ stow .
 
 ## What's Included
 
-- `.config/` - Configuration files for various tools
-  - Neovim, yazi, lazygit, lazydocker, and more
-- Nix configurations
-- Git configurations
-- Shell configurations (zsh)
+### 🛠️ Development Tools
+- **Neovim** - Text editor configuration
+- **Tmux** - Terminal multiplexer with custom theme and plugins
+- **Git** - Version control configuration and global gitignore
+- **Starship** - Cross-platform shell prompt with custom styling
+- **Atuin** - Shell history sync and search
+- **Bat** - Enhanced cat with syntax highlighting and themes
+- **Yazi** - Terminal file manager with plugins and catppuccin theme
+- **Zsh** - Shell configuration with custom setup
+
+### 🎨 Terminal & UI
+- **Ghostty** - Terminal emulator configuration
+- **Karabiner Elements** - Keyboard customization for macOS
+- **LinearMouse** - Mouse acceleration and scrolling customization
+
+### 📊 System Utilities
+- **Lazygit** - Terminal-based Git interface
+- **Lazydocker** - Terminal-based Docker interface
+- **qBittorrent** - BitTorrent client configuration
+- **Raycast** - Spotlight replacement
+- **IdeaVimRC** - Vim configuration for JetBrains IDEs
+
+### 🏗️ System Management
+- **Nix Darwin** - Declarative macOS system configuration
+  - Package management (Nix packages + Homebrew casks)
+  - System defaults and preferences
+  - Symbolic hotkey configurations
+  - Font installation (JetBrains Mono Nerd Font, Hack Nerd Font)
+  - macOS security settings (Touch ID for sudo)
+
+### 📁 Configuration Structure
+
+All configurations are symlinked to `~/.config/` via Stow:
+
+```
+~/.config/
+├── atuin/          # Shell history configuration
+├── bat/            # Syntax highlighter configuration  
+├── ghostty/        # Terminal emulator configuration
+├── git/            # Git configuration and global gitignore
+├── karabiner/      # Keyboard customization
+├── lazydocker/     # Docker TUI configuration
+├── lazygit/        # Git TUI configuration
+├── linearmouse/    # Mouse configuration
+├── qBittorrent/    # BitTorrent client configuration
+├── starship/       # Shell prompt configuration
+├── tmux/           # Terminal multiplexer configuration
+├── yazi/           # File manager configuration
+├── zsh/            # Shell configuration
+└── ideavimrc/      # Vim configuration for IDEs
+```
 
 ## Customization
 
-Feel free to fork this repository and customize the configurations to suit your needs.
+Feel free to fork this repository and customize the configurations to suit your needs. The Nix configuration allows for declarative system management, making it easy to reproduce the setup on new machines.
 
 ## License
 
