@@ -64,6 +64,7 @@
     "kodi"
     "steam"
     "vlc"
+    "yacreader"
 
     # Utilities
     "cheatsheet"
