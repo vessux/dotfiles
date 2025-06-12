@@ -35,6 +35,22 @@ cd ~/dotfiles
 stow .
 ```
 
+## Tmux Setup
+
+Tmux requires a few extra steps for full plugin and shell integration:
+
+### 🚀 One-Click Setup (Recommended)
+
+```bash
+cd ~/dotfiles/tmux
+./install.sh
+```
+This will:
+- Install TPM (Tmux Plugin Manager)
+- Install all plugins
+- Create a starter session
+- Validate everything
+
 ## What's Included
 
 ### 🛠️ Development Tools

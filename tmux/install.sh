@@ -95,21 +95,6 @@ check_location() {
     print_success "Location verified: $(pwd)"
 }
 
-# Stow dotfiles
-stow_dotfiles() {
-    print_step "Stowing dotfiles..."
-    
-    cd ..  # Go to dotfiles root
-    
-    if stow . 2>/dev/null; then
-        print_success "Dotfiles stowed successfully"
-    else
-        print_warning "Stow may have conflicts, but continuing..."
-    fi
-    
-    cd tmux  # Return to tmux directory
-}
-
 # Install TPM
 install_tpm() {
     print_step "Installing TPM (Tmux Plugin Manager)..."
@@ -240,7 +225,6 @@ main() {
     
     check_dependencies
     check_location
-    stow_dotfiles
     install_tpm
     install_fzf
     
