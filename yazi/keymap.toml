@@ -1,4 +1,4 @@
-[manager]
+[mgr]
 prepend_keymap = [
   { on = "E", run = 'shell "nvim ." --block', desc = "Open current directory in neovim" },
   { on = ["c", "m"], run = 'plugin chmod', desc = "Chmod on selected files" },
