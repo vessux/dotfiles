@@ -1,8 +1,17 @@
 { nixpkgs, ... }:
 
+let
+  # Import nixpkgs for the current system with unfree packages enabled
+  pkgs = import nixpkgs {
+    system = "aarch64-darwin";
+    config = {
+      allowUnfree = true;
+    };
+  };
+in
 {
   # System packages organized by category
-  systemPackages = with nixpkgs.legacyPackages.aarch64-darwin; [
+  systemPackages = with pkgs; [
     # Development tools
     atuin
     awscli
@@ -10,8 +19,10 @@
     eza
     fd
     fzf
+    claude-code
     neovim
     nodejs
+    poetry
     stow
     vim
 
@@ -41,6 +52,7 @@
     "zen"
 
     # Development
+    "claude"
     "cursor"
     "ghostty"
     "jetbrains-toolbox"

@@ -94,3 +94,5 @@ fi
 if command -v tmux &> /dev/null; then
     source ~/.config/tmux/shell-integration.sh
 fi
+
+export PATH="$PATH":/Users/kovis/mutable_node_modules/bin

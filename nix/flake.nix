@@ -40,6 +40,9 @@
       # Platform
       nixpkgs.hostPlatform = "aarch64-darwin";
 
+      # Allow unfree packages system-wide (e.g., claude-code)
+      nixpkgs.config.allowUnfree = true;
+
       # === USER MANAGEMENT ===
       
       users.users.${username} = {
@@ -102,6 +105,10 @@
     };
   in
   {
+    nixpkgsConfig = {
+      allowUnfree = true;
+    };
+
     # Darwin configuration
     darwinConfigurations.${hostname} = nix-darwin.lib.darwinSystem {
       modules = [ configuration ];
