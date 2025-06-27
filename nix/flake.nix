@@ -76,6 +76,8 @@
 
       # === PACKAGE MANAGEMENT ===
       
+      nixpkgs.overlays = [ (import ./overlays/claude-code.nix) ];
+
       homebrew = {
         enable = true;
         casks = packages.homebrewCasks;

@@ -17,6 +17,11 @@ alias v='nvim'
 alias vi='nvim'
 alias vim='nvim'
 
+# claude code
+export CLAUDE_CONFIG_PATH="$HOME/.config/claude"
+alias cl='claude'
+alias clusage='npx ccusage@latest'
+
 # yazi cwd shell wrapper
 function y() {
 	local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
@@ -95,4 +100,9 @@ if command -v tmux &> /dev/null; then
     source ~/.config/tmux/shell-integration.sh
 fi
 
-export PATH="$PATH":/Users/kovis/mutable_node_modules/bin
+# zoxide smart cd command
+if command -v zoxide &> /dev/null; then
+    eval "$(zoxide init zsh)"
+fi
+
+export PATH="$PATH":/Users/kovis/mutable_node_modules/bin:/Users/kovis/.local/bin

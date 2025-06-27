@@ -7,6 +7,7 @@ let
     config = {
       allowUnfree = true;
     };
+    overlays = [ (import ./overlays/claude-code.nix) ];
   };
 in
 {
@@ -19,12 +20,14 @@ in
     eza
     fd
     fzf
-    claude-code
     neovim
     nodejs
     poetry
+    ripgrep
     stow
+    uv
     vim
+    zoxide
 
     # System utilities
     dust
