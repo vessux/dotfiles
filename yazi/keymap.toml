@@ -5,6 +5,7 @@ prepend_keymap = [
   { on = "T", run = 'plugin toggle-pane max-preview', desc = "Maximize or restore preview pane" },
   { on = ["g", "r"] , run = 'shell -- ya emit cd "$(git rev-parse --show-toplevel)"', desc = "Go to git root" },
   { on = "<C-p>" , run = 'open -g -a "Quick Look" "$@"', desc = "Preview in the macos quicklook" },
+  { on = "b", run = 'shell --block "bat \"$0\""', desc = "Display current file with bat" },
 ]
 
 [input]

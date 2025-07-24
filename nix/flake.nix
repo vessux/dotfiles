@@ -57,7 +57,11 @@
         systemPath = [ "/opt/homebrew/bin" ];
         variables = {
           XDG_CONFIG_HOME = "${homeDirectory}/.config";
+          XDG_DATA_HOME = "${homeDirectory}/.local/share";
+          XDG_CACHE_HOME = "${homeDirectory}/.cache";
+          XDG_STATE_HOME = "${homeDirectory}/.local/state";
           ZDOTDIR = "$XDG_CONFIG_HOME/zsh";
+          CLAUDE_CONFIG_DIR = "${homeDirectory}/.config/claude-code";
         };
       };
 
@@ -75,8 +79,6 @@
       '';
 
       # === PACKAGE MANAGEMENT ===
-      
-      nixpkgs.overlays = [ (import ./overlays/claude-code.nix) ];
 
       homebrew = {
         enable = true;

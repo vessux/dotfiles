@@ -18,9 +18,12 @@ alias vi='nvim'
 alias vim='nvim'
 
 # claude code
-export CLAUDE_CONFIG_PATH="$HOME/.config/claude"
 alias cl='claude'
 alias clusage='npx ccusage@latest'
+
+# npm
+export NPM_CONFIG_USERCONFIG=$XDG_CONFIG_HOME/npm/.npmrc
+export NODE_REPL_HISTORY="$XDG_STATE_HOME/node_repl/history"
 
 # yazi cwd shell wrapper
 function y() {
@@ -105,4 +108,4 @@ if command -v zoxide &> /dev/null; then
     eval "$(zoxide init zsh)"
 fi
 
-export PATH="$PATH":/Users/kovis/mutable_node_modules/bin:/Users/kovis/.local/bin
+export PATH="$PATH:${XDG_DATA_HOME}/npm/bin:$HOME/.local/bin"

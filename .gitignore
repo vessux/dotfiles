@@ -5,3 +5,8 @@ yazi/plugins/chmod.yazi
 yazi/plugins/toggle-pane.yazi
 karabiner/automatic_backups
 tmux/plugins
+claude-code/.claude.json
+claude-code/.claude.json.backup
+claude-code/todos
+claude-code/statsig
+claude-code/projects

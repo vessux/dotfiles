@@ -7,7 +7,6 @@ let
     config = {
       allowUnfree = true;
     };
-    overlays = [ (import ./overlays/claude-code.nix) ];
   };
 in
 {
@@ -33,8 +32,10 @@ in
     dust
     lazydocker
     lazygit
+    librsvg
     openfortivpn
     starship
+    terminal-notifier
     tmux
     unixtools.watch
     watch
@@ -91,7 +92,7 @@ in
     "linearmouse"
     "mouseless"
     "nitroshare"
-    "ollama"
+    "ollama-app"
     "qbittorrent"
     "sync"
   ];
