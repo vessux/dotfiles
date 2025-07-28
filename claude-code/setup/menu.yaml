@@ -1,0 +1,21 @@
+# Claude Code Setup Menu
+menu:
+  title: "🛠️  Claude Code Setup Assistant"
+  description: "Configure your project with Claude Code best practices"
+  
+  options:
+    - key: "1"
+      label: "MCP Servers - Configure Model Context Protocol"
+      recipe: "mcp-servers"
+      
+    - key: "2"
+      label: "Command Guards - Safety hooks for commands"
+      recipe: "command-guards"
+      
+    - key: "3"
+      label: "All Recommended - Complete setup"
+      recipes: ["mcp-servers", "command-guards"]
+
+  settings:
+    confirm_before_run: true
+    show_preview: true

@@ -1,0 +1,52 @@
+recipe:
+  name: "Command Guard Hooks"
+  description: "Install safety hooks to prevent dangerous commands"
+
+variables:
+  scope:
+    prompt: "Install guards for this project or globally? (1=Project, 2=Global)"
+    type: "choice"
+    choices:
+      - label: "Project (.claude/hooks/)"
+        value: "project"
+      - label: "Global (~/.config/claude/hooks/)"
+        value: "global"
+
+steps:
+  - name: "Determine install path"
+    type: "set_variable"
+    config:
+      name: "hook_path"
+      value_map:
+        project: ".claude/hooks/command-guard.sh"
+        global: "~/.config/claude/hooks/command-guard.sh"
+
+  - name: "Create directory"
+    type: "ensure_directory"
+    config:
+      path: "${dirname:${hook_path}}"
+
+  - name: "Install command guard"
+    type: "copy_template"
+    config:
+      source: "${recipe_dir}/command-guard.sh"
+      target: "${hook_path}"
+      executable: true
+
+  - name: "Configure as hook"
+    type: "configure_hook"
+    config:
+      hook_type: "pre-command"
+      script: "${hook_path}"
+      scope: "${scope}"
+
+post_setup:
+  message: |
+    ✅ Command guard installed at ${hook_path}
+    
+    Default rules:
+    - Blocks TUI applications
+    - Prevents dangerous rm -rf
+    - Restricts git --no-verify
+    
+    Edit the file to customize rules.

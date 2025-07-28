@@ -1,0 +1,76 @@
+recipe:
+  name: "MCP Server Configuration"
+  description: "Set up Model Context Protocol servers for this project"
+
+variables:
+  selected_servers:
+    prompt: "Which MCP servers would you like to install?"
+    type: "multi_choice"
+    choices:
+      - id: "sequential-thinking"
+        label: "Sequential Thinking - Enhanced reasoning for complex problems"
+        default: true
+      - id: "filesystem"
+        label: "Filesystem Access - Read and write files safely"
+        default: true
+      - id: "git"
+        label: "Git Integration - Git repository operations"
+        default: false
+      - id: "context7"
+        label: "Context7 - External context and knowledge integration"
+        default: false
+      - id: "sqlite"
+        label: "SQLite Database - Query and manage SQLite databases"
+        default: false
+      - id: "brave-search"
+        label: "Brave Search - Web search capabilities"
+        default: false
+
+steps:
+  - name: "Load MCP server catalog"
+    type: "load_catalog"
+    config:
+      catalog_file: "${recipe_dir}/mcp-catalog.yaml"
+      
+  - name: "Check existing configuration"
+    type: "check_file"
+    config:
+      path: "${project_root}/.claude/mcp.json"
+      if_exists: "ask_backup"
+
+  - name: "Create .claude directory"
+    type: "ensure_directory"
+    config:
+      path: "${project_root}/.claude"
+
+  - name: "Generate MCP configuration"
+    type: "create_file"
+    config:
+      path: "${project_root}/.claude/mcp.json"
+      content: |
+        {
+          "mcpServers": {
+            ${generate_mcp_servers:selected_servers}
+          }
+        }
+
+  - name: "Show configuration summary"
+    type: "show_message"
+    config:
+      content: |
+        ✅ MCP configuration created at ${project_root}/.claude/mcp.json
+        
+        Installed servers:
+        ${foreach:selected_servers}
+        - ${item.name}: ${item.description}
+        ${/foreach}
+        
+        To customize server configurations, edit the mcp.json file.
+
+post_setup:
+  message: |
+    ✅ MCP servers configured for this project!
+    
+    Configuration: ${project_root}/.claude/mcp.json
+    
+    Restart Claude Code to activate the servers.

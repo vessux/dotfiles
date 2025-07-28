@@ -1,0 +1,50 @@
+# MCP Server Catalog
+# Available Model Context Protocol servers for Claude Code
+
+mcp_servers:
+  sequential-thinking:
+    name: "Sequential Thinking"
+    description: "Enhanced reasoning for complex problems and multi-step tasks"
+    type: "stdio"
+    command: "npx"
+    args: ["@modelcontextprotocol/server-sequential-thinking"]
+    env: {}
+    
+  filesystem:
+    name: "Filesystem Access"
+    description: "Read and write files safely within project boundaries"
+    type: "stdio"
+    command: "npx"
+    args: ["@modelcontextprotocol/server-filesystem"]
+    env: {}
+    
+  git:
+    name: "Git Integration"
+    description: "Git repository operations and version control"
+    type: "stdio"
+    command: "npx"
+    args: ["@modelcontextprotocol/server-git"]
+    env: {}
+    
+  context7:
+    name: "Context7"
+    description: "External context and knowledge integration"
+    type: "sse"
+    url: "https://mcp.context7.com/sse"
+    
+  sqlite:
+    name: "SQLite Database"
+    description: "Query and manage SQLite databases"
+    type: "stdio"
+    command: "npx"
+    args: ["@modelcontextprotocol/server-sqlite"]
+    env: {}
+    
+  brave-search:
+    name: "Brave Search"
+    description: "Web search capabilities via Brave Search API"
+    type: "stdio"
+    command: "npx"
+    args: ["@modelcontextprotocol/server-brave-search"]
+    env:
+      BRAVE_API_KEY: "your-api-key-here"
