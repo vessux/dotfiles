@@ -1,0 +1,145 @@
+# Command Guards Catalog
+# Available safety guards for Claude Code commands
+
+guards:
+  dangerous_rm:
+    name: "Dangerous rm protection"
+    description: "Blocks rm -rf commands that could delete important files"
+    patterns:
+      - "*rm -rf*"
+      - "*git clean*"
+    callback: "check_dangerous_rm"
+    message: |
+      🚫 Dangerous Command Blocked!
+      
+      ❌ This command can cause permanent data loss
+      ✅ Use safer alternatives or be more specific
+      
+      Safer alternatives:
+      - rm specific_file.txt (instead of rm -rf)
+      - git clean -n (dry run first)
+      - git clean -f specific_file
+      - trash command (if available)
+    
+  force_push:
+    name: "Force push protection"
+    description: "Prevents git force push on protected branches"
+    patterns:
+      - "*git push*--force*"
+    callback: "check_protected_branch"
+    message: |
+      🚫 Force Push Blocked!
+      
+      ❌ Force pushing can overwrite team members' work
+      ✅ Use regular push or create a new branch
+      
+      If you really need to force push:
+      - Ensure you're on a feature branch
+      - Coordinate with your team
+  
+  no_verify:
+    name: "Git hooks bypass protection"
+    description: "Prevents skipping git hooks with --no-verify"
+    patterns:
+      - "*git*--no-verify*"
+    callback: "check_protected_branch"
+    message: |
+      🚫 Git --no-verify Blocked!
+      
+      ❌ Skipping hooks bypasses important checks
+      ✅ Fix the issues and commit properly
+      
+      Run checks manually:
+      - npm test
+      - npm run lint
+  
+  tui_apps:
+    name: "TUI application blocker"
+    description: "Blocks terminal UI apps that break Claude's interface"
+    patterns:
+      - "*vim*"
+      - "*nvim*"
+      - "*nano*"
+      - "*emacs*"
+      - "*top*"
+      - "*htop*"
+      - "*less*"
+      - "*man *"
+    message: |
+      🚫 Terminal UI Application Blocked!
+      
+      ❌ TUI apps interfere with Claude Code's interface
+      ✅ Use file operations through Claude Code instead
+      
+      Alternatives:
+      - Use Read/Write tools for file editing
+      - Use grep/cat for file viewing
+      - Use ps for process listing
+  
+  npm_install_global:
+    name: "Global npm install protection"
+    description: "Warns about global npm installations"
+    patterns:
+      - "*npm install -g*"
+      - "*npm i -g*"
+    message: |
+      ⚠️  Global npm Install Warning!
+      
+      Installing packages globally can:
+      - Cause version conflicts
+      - Require sudo permissions
+      - Affect system-wide Node.js
+      
+      Consider:
+      - Using npx instead
+      - Local project installation
+      - Using a Node version manager
+  
+  sudo_commands:
+    name: "Sudo command protection"
+    description: "Blocks commands that require root privileges"
+    patterns:
+      - "sudo *"
+    message: |
+      🚫 Sudo Command Blocked!
+      
+      ❌ Root privileges are dangerous
+      ✅ Find alternatives that don't require sudo
+      
+      If system changes are needed:
+      - Document what needs to be done
+      - Run commands outside Claude Code
+  
+  recursive_chmod:
+    name: "Recursive chmod protection"  
+    description: "Prevents dangerous recursive permission changes"
+    patterns:
+      - "*chmod -R*"
+    callback: "check_chmod_safety"
+    message: |
+      ⚠️  Recursive chmod Warning!
+      
+      Changing permissions recursively can:
+      - Break application functionality
+      - Create security vulnerabilities
+      - Make files inaccessible
+      
+      Be specific about what needs permission changes
+  
+  env_file_commits:
+    name: "Environment file protection"
+    description: "Prevents committing sensitive environment files"
+    patterns:
+      - "*git add*.env*"
+      - "*git add*config/production*"
+      - "*git add*secrets*"
+    message: |
+      🚫 Sensitive File Commit Blocked!
+      
+      ❌ Never commit environment files or secrets
+      ✅ Use .gitignore to exclude these files
+      
+      Add to .gitignore:
+      - .env
+      - .env.local
+      - config/production.json

@@ -19,6 +19,8 @@ in
     eza
     fd
     fzf
+    jq
+    yq
     neovim
     nodejs
     poetry

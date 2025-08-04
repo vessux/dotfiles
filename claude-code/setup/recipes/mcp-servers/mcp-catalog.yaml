@@ -10,41 +10,67 @@ mcp_servers:
     args: ["@modelcontextprotocol/server-sequential-thinking"]
     env: {}
     
-  filesystem:
-    name: "Filesystem Access"
-    description: "Read and write files safely within project boundaries"
-    type: "stdio"
-    command: "npx"
-    args: ["@modelcontextprotocol/server-filesystem"]
-    env: {}
-    
-  git:
-    name: "Git Integration"
-    description: "Git repository operations and version control"
-    type: "stdio"
-    command: "npx"
-    args: ["@modelcontextprotocol/server-git"]
-    env: {}
-    
   context7:
     name: "Context7"
     description: "External context and knowledge integration"
     type: "sse"
     url: "https://mcp.context7.com/sse"
     
-  sqlite:
-    name: "SQLite Database"
-    description: "Query and manage SQLite databases"
+  puppeteer:
+    name: "Puppeteer"
+    description: "Browser automation for web scraping and testing"
     type: "stdio"
     command: "npx"
-    args: ["@modelcontextprotocol/server-sqlite"]
+    args: ["@modelcontextprotocol/server-puppeteer"]
     env: {}
     
-  brave-search:
-    name: "Brave Search"
-    description: "Web search capabilities via Brave Search API"
+  postgres:
+    name: "PostgreSQL"
+    description: "Query and manage PostgreSQL databases"
     type: "stdio"
     command: "npx"
-    args: ["@modelcontextprotocol/server-brave-search"]
+    args: ["@modelcontextprotocol/server-postgres"]
     env:
-      BRAVE_API_KEY: "your-api-key-here"
+      POSTGRES_CONNECTION_STRING: "postgresql://user:password@localhost/dbname"
+    
+  github:
+    name: "GitHub"
+    description: "GitHub API integration for repos, issues, and PRs"
+    type: "stdio"
+    command: "npx"
+    args: ["@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_TOKEN: "your-github-token"
+    
+  slack:
+    name: "Slack"
+    description: "Read and analyze Slack messages and channels"
+    type: "stdio"  
+    command: "npx"
+    args: ["@modelcontextprotocol/server-slack"]
+    env:
+      SLACK_TOKEN: "your-slack-token"
+    
+  memory:
+    name: "Memory"
+    description: "Persistent memory and knowledge graph for conversations"
+    type: "stdio"
+    command: "npx"
+    args: ["@modelcontextprotocol/server-memory"]
+    env: {}
+    
+  fetch:
+    name: "Fetch"
+    description: "Make HTTP requests and fetch web content"
+    type: "stdio"
+    command: "npx"
+    args: ["@modelcontextprotocol/server-fetch"]
+    env: {}
+    
+  time:
+    name: "Time"
+    description: "Time and date utilities, timezone conversions"
+    type: "stdio"
+    command: "npx"
+    args: ["@modelcontextprotocol/server-time"]
+    env: {}

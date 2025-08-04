@@ -52,6 +52,18 @@ variables:
         label: "Feature Two"
         default: false
   
+  # Dynamic choices from file
+  dynamic_features:
+    prompt: "Select from catalog:"
+    type: "multi_choice"
+    choices_from:
+      file: "${recipe_dir}/feature-catalog.yaml"
+      path: "features"
+      id_field: "id"
+      label_field: "name"
+      description_field: "description"
+      defaults: ["core", "recommended"]
+  
   # Conditional variable (only asked if condition met)
   api_key:
     prompt: "Enter API key:"
@@ -78,13 +90,22 @@ steps:
   - name: "Install configuration template"
     type: "copy_template"
     config:
-      source: "${recipe_dir}/config.json.dist"
+      source: "${recipe_dir}/templates/config.json.dist"
       target: "${install_location}/config.json"
       backup: true
       executable: false  # Optional: make file executable
       transform:
         - expand_vars    # Replace ${variables}
         - format_json    # Pretty-format JSON
+  
+  # Example: Using helper script for complex processing
+  - name: "Process configuration with helper"
+    type: "run_command"
+    config:
+      command: "${recipe_dir}/helpers/process-config.sh"
+      args: ["${install_location}/config.json", "${project_name}"]
+      working_dir: "${recipe_dir}"
+      if_failed: "continue"  # Options: continue, fail, retry
   
   # Set computed variable for later steps
   - name: "Determine hook path"
@@ -198,3 +219,9 @@ post_setup:
 # Project hooks:            ${project_root}/.claude/hooks/
 # Temporary files:          ${home}/.cache/app/
 # Data files:               ${home}/.local/share/app/
+
+# Recipe extensibility patterns:
+# Helper scripts:           ${recipe_dir}/helpers/script.sh
+# Static templates:         ${recipe_dir}/templates/file.dist
+# Data files:               ${recipe_dir}/assets/data.yaml
+# Recipe-specific configs:  ${recipe_dir}/config.yaml

@@ -4,49 +4,67 @@ recipe:
 
 variables:
   scope:
-    prompt: "Install guards for this project or globally? (1=Project, 2=Global)"
+    prompt: "Install guards for this project or globally?"
     type: "choice"
     choices:
-      - label: "Project (.claude/hooks/)"
+      - label: "This project only"
         value: "project"
-      - label: "Global (~/.config/claude/hooks/)"
+      - label: "All projects (global)"
         value: "global"
+    default: "project"
+    
+  selected_guards:
+    prompt: "Which command guards would you like to enable?"
+    type: "multi_choice"
+    choices_from:
+      file: "${recipe_dir}/guards-catalog.yaml"
+      path: "guards"
+      id_field: "_key"
+      label_field: "name"
+      description_field: "description"
+      defaults: ["dangerous_rm", "force_push", "tui_apps", "env_file_commits"]
 
 steps:
-  - name: "Determine install path"
-    type: "set_variable"
+  - name: "Check existing guard script"
+    type: "check_file"
     config:
-      name: "hook_path"
-      value_map:
-        project: ".claude/hooks/command-guard.sh"
-        global: "~/.config/claude/hooks/command-guard.sh"
+      path: "${scope == 'project' ? project_root + '/.claude/hooks/command-guard.sh' : setup_dir + '/../hooks/command-guard.sh'}"
+      if_exists: "ask_backup"
 
-  - name: "Create directory"
+  - name: "Create hooks directory"
     type: "ensure_directory"
     config:
-      path: "${dirname:${hook_path}}"
+      path: "${scope == 'project' ? project_root + '/.claude/hooks' : setup_dir + '/../hooks'}"
 
-  - name: "Install command guard"
-    type: "copy_template"
+  - name: "Generate command guard script"
+    type: "run_command"
     config:
-      source: "${recipe_dir}/command-guard.sh"
-      target: "${hook_path}"
-      executable: true
+      command: "${recipe_dir}/helpers/generate-guard-script.sh"
+      args: [
+        "${recipe_dir}/guards-catalog.yaml",
+        "${selected_guards}",
+        "${scope == 'project' ? project_root + '/.claude/hooks/command-guard.sh' : setup_dir + '/../hooks/command-guard.sh'}"
+      ]
+      working_dir: "${recipe_dir}"
 
   - name: "Configure as hook"
-    type: "configure_hook"
+    type: "run_command"
     config:
-      hook_type: "pre-command"
-      script: "${hook_path}"
-      scope: "${scope}"
+      command: "${recipe_dir}/helpers/configure-hook.sh"
+      args: [
+        "${scope == 'project' ? '.claude/hooks/command-guard.sh' : setup_dir + '/../hooks/command-guard.sh'}",
+        "${scope == 'project' ? project_root + '/.claude/settings.json' : setup_dir + '/../settings.json'}"
+      ]
+      working_dir: "${recipe_dir}"
 
 post_setup:
   message: |
-    ✅ Command guard installed at ${hook_path}
+    ✅ Command guards configured!
     
-    Default rules:
-    - Blocks TUI applications
-    - Prevents dangerous rm -rf
-    - Restricts git --no-verify
+    Scope: ${scope}
+    Location: ${scope == 'project' ? project_root + '/.claude/hooks' : setup_dir + '/../hooks'}
     
-    Edit the file to customize rules.
+    Enabled guards:
+    ${selected_guards}
+    
+    To customize rules, edit the command-guard.sh file.
