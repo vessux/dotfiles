@@ -13,22 +13,36 @@ in
   # System packages organized by category
   systemPackages = with pkgs; [
     # Development tools
+    ast-grep
     atuin
     awscli
     bat
     eza
     fd
     fzf
+    ghostscript
+    imagemagick
     jq
-    yq
+    lua5_1
+    luarocks
+    mermaid-cli
     neovim
     nodejs
     poetry
     ripgrep
     stow
+    tectonic
+    tree-sitter
     uv
     vim
+    yq
     zoxide
+    php
+    go
+    rustc cargo
+    zig
+    dotnet-sdk
+		lazysql
 
     # System utilities
     dust
