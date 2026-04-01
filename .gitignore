@@ -10,3 +10,15 @@ claude-code/.claude.json.backup
 claude-code/todos
 claude-code/statsig
 claude-code/projects
+claude-code/shell-snapshots
+claude-code/backups
+claude-code/cache
+claude-code/file-history
+claude-code/history.jsonl
+claude-code/mcp-needs-auth-cache.json
+claude-code/plans
+claude-code/plugins
+claude-code/policy-limits.json
+claude-code/sessions
+claude-code/skills
+claude-code/tasks
