@@ -1,6 +1,19 @@
 {
   "includeCoAuthoredBy": false,
   "permissions": {},
+  "enableAllProjectMcpServers": true,
   "hooks": {},
-  "enableAllProjectMcpServers": true
+  "statusLine": {
+    "type": "command",
+    "command": "~/.config/claude-code/statusline.sh"
+  },
+  "enabledPlugins": {},
+  "extraKnownMarketplaces": {
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
+      }
+    }
+  }
 }

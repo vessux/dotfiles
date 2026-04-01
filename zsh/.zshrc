@@ -109,3 +109,6 @@ if command -v zoxide &> /dev/null; then
 fi
 
 export PATH="$PATH:${XDG_DATA_HOME}/npm/bin:$HOME/.local/bin"
+
+# opencode
+export PATH=/Users/kovis/.opencode/bin:$PATH
