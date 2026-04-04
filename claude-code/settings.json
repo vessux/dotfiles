@@ -5,7 +5,7 @@
   "hooks": {},
   "statusLine": {
     "type": "command",
-    "command": "~/.config/claude-code/statusline.sh"
+    "command": "npx -y ccstatusline@latest"
   },
   "enabledPlugins": {},
   "extraKnownMarketplaces": {

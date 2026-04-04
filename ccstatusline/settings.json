@@ -1,0 +1,168 @@
+{
+  "version": 3,
+  "lines": [
+    [
+      {
+        "id": "i1",
+        "type": "custom-text",
+        "customText": "󰚩 ",
+        "color": "cyan",
+        "merge": true
+      },
+      {
+        "id": "1",
+        "type": "model",
+        "color": "cyan",
+        "rawValue": true
+      },
+      {
+        "id": "2",
+        "type": "flex-separator"
+      },
+      {
+        "id": "3",
+        "type": "context-bar",
+        "color": "green",
+        "rawValue": true
+      },
+      {
+        "id": "4",
+        "type": "context-percent",
+        "color": "green",
+        "rawValue": true
+      }
+    ],
+    [
+      {
+        "id": "i5",
+        "type": "custom-text",
+        "customText": "↓ ",
+        "color": "brightBlack",
+        "merge": true
+      },
+      {
+        "id": "5",
+        "type": "tokens-input",
+        "color": "brightBlack",
+        "rawValue": true
+      },
+      {
+        "id": "i6",
+        "type": "custom-text",
+        "customText": "↑ ",
+        "color": "brightBlack",
+        "merge": true
+      },
+      {
+        "id": "6",
+        "type": "tokens-output",
+        "color": "brightBlack",
+        "rawValue": true
+      },
+      {
+        "id": "i7",
+        "type": "custom-text",
+        "customText": "󰆏 ",
+        "color": "brightBlack",
+        "merge": true
+      },
+      {
+        "id": "7",
+        "type": "tokens-cached",
+        "color": "brightBlack",
+        "rawValue": true
+      },
+      {
+        "id": "8",
+        "type": "flex-separator"
+      },
+      {
+        "id": "9",
+        "type": "session-cost",
+        "color": "green",
+        "rawValue": true
+      },
+      {
+        "id": "i10",
+        "type": "custom-text",
+        "customText": "󱎫 ",
+        "color": "yellow",
+        "merge": true
+      },
+      {
+        "id": "10",
+        "type": "session-usage",
+        "color": "yellow",
+        "rawValue": true
+      },
+      {
+        "id": "i11",
+        "type": "custom-text",
+        "customText": "󰔟 ",
+        "color": "yellow",
+        "merge": true
+      },
+      {
+        "id": "11",
+        "type": "block-timer",
+        "color": "yellow",
+        "rawValue": true
+      }
+    ],
+    [
+      {
+        "id": "i12",
+        "type": "custom-text",
+        "customText": " ",
+        "color": "magenta",
+        "merge": true
+      },
+      {
+        "id": "12",
+        "type": "git-branch",
+        "color": "magenta",
+        "rawValue": true
+      },
+      {
+        "id": "13",
+        "type": "git-changes",
+        "color": "yellow",
+        "rawValue": true
+      },
+      {
+        "id": "14",
+        "type": "flex-separator"
+      },
+      {
+        "id": "i15",
+        "type": "custom-text",
+        "customText": " ",
+        "color": "blue",
+        "merge": true
+      },
+      {
+        "id": "15",
+        "type": "custom-command",
+        "commandPath": "pwd",
+        "color": "blue"
+      }
+    ]
+  ],
+  "flexMode": "full-minus-40",
+  "compactThreshold": 60,
+  "colorLevel": 1,
+  "inheritSeparatorColors": false,
+  "globalBold": false,
+  "powerline": {
+    "enabled": true,
+    "separators": [
+      " │ "
+    ],
+    "separatorInvertBackground": [
+      false
+    ],
+    "startCaps": [],
+    "endCaps": [],
+    "autoAlign": false
+  }
+}

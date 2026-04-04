@@ -22,3 +22,5 @@ claude-code/policy-limits.json
 claude-code/sessions
 claude-code/skills
 claude-code/tasks
+claude-code/paste-cache
+claude-code/stats-cache.json
