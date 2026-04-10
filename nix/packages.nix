@@ -39,7 +39,7 @@ in
     zoxide
     php
     go
-    rustc cargo
+    rustup
     zig
     dotnet-sdk
 		lazysql
