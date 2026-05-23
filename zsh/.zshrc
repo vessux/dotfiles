@@ -1,3 +1,20 @@
+# completion
+if [[ -d /opt/homebrew/share/zsh/site-functions ]]; then
+  FPATH="/opt/homebrew/share/zsh/site-functions:$FPATH"
+fi
+autoload -Uz compinit
+() {
+  setopt local_options extended_glob
+  local zcompdump="${ZDOTDIR:-$HOME}/.zcompdump"
+  if [[ -n $zcompdump(#qN.mh-24) ]]; then
+    compinit -C -d "$zcompdump"
+  else
+    compinit -d "$zcompdump"
+  fi
+}
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z}'
+
 alias d='docker'
 alias dc='docker compose'
 alias authagent='eval `ssh-agent -s` && ssh-add /Users/kovis/.ssh/id_rsa && ssh-add /Users/kovis/.ssh/jakub.koval'
@@ -20,6 +37,8 @@ alias vim='nvim'
 # claude code
 alias cl='claude'
 alias clusage='npx ccusage@latest'
+alias mute-claude='touch ${XDG_CONFIG_HOME:-$HOME/.config}/claude-code/notify-silent'
+alias unmute-claude='rm -f ${XDG_CONFIG_HOME:-$HOME/.config}/claude-code/notify-silent'
 
 # npm
 export NPM_CONFIG_USERCONFIG=$XDG_CONFIG_HOME/npm/.npmrc
@@ -81,9 +100,9 @@ if command -v fzf &> /dev/null; then
         local dir=$(fd --type d --hidden $(_fd_excludes) | fzf)
         [[ -n $dir ]] && cd "$dir" && l
     }
-    f() { 
+    f() {
         local file=$(fd --type f --hidden --size -5M $(_fd_excludes) | fzf)
-        [[ -n $file ]] && echo "$file" | pbcopy
+        [[ -n $file ]] && echo "$file" | (command -v pbcopy >/dev/null && pbcopy || xclip -selection clipboard 2>/dev/null)
     }
 fi
 
@@ -108,7 +127,5 @@ if command -v zoxide &> /dev/null; then
     eval "$(zoxide init zsh)"
 fi
 
-export PATH="$PATH:${XDG_DATA_HOME}/npm/bin:$HOME/.local/bin"
-
-# opencode
-export PATH=/Users/kovis/.opencode/bin:$PATH
+. "$HOME/.cargo/env"
+export PATH="$PATH:${XDG_DATA_HOME}/npm/bin:$HOME/.cache/.bun/bin:$HOME/.local/bin"
