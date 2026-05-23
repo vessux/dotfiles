@@ -1,19 +1,62 @@
 {
   "includeCoAuthoredBy": false,
-  "permissions": {},
+  "permissions": {
+    "defaultMode": "auto"
+  },
   "enableAllProjectMcpServers": true,
-  "hooks": {},
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/kovis/dotfiles/claude-code/hooks/notify.sh",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/kovis/dotfiles/claude-code/hooks/notify.sh",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ]
+  },
   "statusLine": {
     "type": "command",
-    "command": "npx -y ccstatusline@latest"
+    "command": "/Users/kovis/dotfiles/ccstatusline/statusline-wrapper.sh"
   },
-  "enabledPlugins": {},
+  "enabledPlugins": {
+    "rust-analyzer-lsp@claude-plugins-official": true
+  },
   "extraKnownMarketplaces": {
     "claude-plugins-official": {
       "source": {
         "source": "github",
         "repo": "anthropics/claude-plugins-official"
       }
+    },
+    "superpowers-dev": {
+      "source": {
+        "source": "github",
+        "repo": "obra/superpowers"
+      }
     }
-  }
+  },
+  "effortLevel": "xhigh",
+  "voice": {
+    "enabled": true,
+    "mode": "hold"
+  },
+  "agentPushNotifEnabled": true,
+  "skipAutoPermissionPrompt": true,
+  "voiceEnabled": true
 }
