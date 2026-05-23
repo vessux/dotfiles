@@ -17,32 +17,35 @@ in
     atuin
     awscli
     bat
+    bun
+    cmake
+    dotnet-sdk
     eza
     fd
     fzf
     ghostscript
+    go
     imagemagick
     jq
+    just
+    lazysql
     lua5_1
     luarocks
     mermaid-cli
     neovim
     nodejs
+    php
     poetry
     ripgrep
+    rustup
     stow
     tectonic
     tree-sitter
     uv
     vim
     yq
-    zoxide
-    php
-    go
-    rustup
     zig
-    dotnet-sdk
-		lazysql
+    zoxide
 
     # System utilities
     dust
