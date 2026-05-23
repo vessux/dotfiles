@@ -1,5 +1,6 @@
 zsh/.zcompdump
 zsh/.zcompdump.*
+zsh/.zcompcache/
 zsh/.zsh_history
 yazi/plugins/chmod.yazi
 yazi/plugins/toggle-pane.yazi
@@ -7,6 +8,9 @@ karabiner/automatic_backups
 tmux/plugins
 claude-code/.claude.json
 claude-code/.claude.json.backup
+claude-code/.last-cleanup
+claude-code/notify-silent
+claude-code/debug
 claude-code/todos
 claude-code/statsig
 claude-code/projects
