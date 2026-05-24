@@ -28,3 +28,4 @@ claude-code/skills
 claude-code/tasks
 claude-code/paste-cache
 claude-code/stats-cache.json
+claude-code/notify-webhook.url

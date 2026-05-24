@@ -10,7 +10,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/kovis/dotfiles/claude-code/hooks/notify.sh",
+            "command": "sh -c '$HOME/dotfiles/claude-code/hooks/notify.sh'",
             "timeout": 10,
             "async": true
           }
@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/kovis/dotfiles/claude-code/hooks/notify.sh",
+            "command": "sh -c '$HOME/dotfiles/claude-code/hooks/notify.sh'",
             "timeout": 10,
             "async": true
           }
@@ -32,7 +32,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "/Users/kovis/dotfiles/ccstatusline/statusline-wrapper.sh"
+    "command": "sh -c '$HOME/dotfiles/ccstatusline/statusline-wrapper.sh'"
   },
   "enabledPlugins": {
     "rust-analyzer-lsp@claude-plugins-official": true
