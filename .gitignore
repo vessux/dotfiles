@@ -2,6 +2,7 @@ zsh/.zcompdump
 zsh/.zcompdump.*
 zsh/.zcompcache/
 zsh/.zsh_history
+zsh/.zsh_secrets
 yazi/plugins/chmod.yazi
 yazi/plugins/toggle-pane.yazi
 karabiner/automatic_backups
@@ -29,3 +30,4 @@ claude-code/tasks
 claude-code/paste-cache
 claude-code/stats-cache.json
 claude-code/notify-webhook.url
+claude-code/image-cache

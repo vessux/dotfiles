@@ -44,6 +44,9 @@ alias unmute-claude='rm -f ${XDG_CONFIG_HOME:-$HOME/.config}/claude-code/notify-
 export NPM_CONFIG_USERCONFIG=$XDG_CONFIG_HOME/npm/.npmrc
 export NODE_REPL_HISTORY="$XDG_STATE_HOME/node_repl/history"
 
+# Local secrets (untracked): tokens/keys referenced by configs, e.g. $NPM_TOKEN in .npmrc
+[[ -f ${ZDOTDIR:-$HOME}/.zsh_secrets ]] && source ${ZDOTDIR:-$HOME}/.zsh_secrets
+
 # yazi cwd shell wrapper
 function y() {
 	local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
