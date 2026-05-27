@@ -114,10 +114,39 @@ if command -v atuin &> /dev/null; then
     eval "$(atuin init zsh)"
 fi
 
-# starship configuration
+# ── Per-host theming ─────────────────────────────────────────────────────────
+# The local Mac runs Ghostty in Catppuccin Mocha. Ghostty can't react to which
+# host an SSH session lands on, so on remote (SSH) sessions the shell, tmux and
+# nvim switch to Macchiato — and we repaint the terminal via OSC — to make
+# "am I local or on a devbox?" obvious at a glance.
+if [[ -n $SSH_CONNECTION ]]; then
+    export TTY_FLAVOR=macchiato
+else
+    export TTY_FLAVOR=mocha
+fi
+
+# starship: reuse the tracked Mocha config locally; for remote sessions generate
+# a copy with just the palette line swapped (all flavors are defined in the toml).
 if command -v starship &> /dev/null; then
+    if [[ $TTY_FLAVOR == macchiato ]]; then
+        _starship_gen="${XDG_CACHE_HOME:-$HOME/.cache}/starship/macchiato.toml"
+        mkdir -p "${_starship_gen:h}"
+        sed "s/^palette = .*/palette = 'catppuccin_macchiato'/" \
+            ~/.config/starship/starship.toml > "$_starship_gen"
+        export STARSHIP_CONFIG="$_starship_gen"
+    else
+        export STARSHIP_CONFIG=~/.config/starship/starship.toml
+    fi
     eval "$(starship init zsh)"
-    export STARSHIP_CONFIG=~/.config/starship/starship.toml
+fi
+
+# Repaint the terminal (bg/fg/cursor) to Macchiato on remote sessions, reset on
+# exit. Skipped inside tmux, where the status bar already carries the signal.
+if [[ $TTY_FLAVOR == macchiato && -z $TMUX && -t 1 ]]; then
+    printf '\e]11;#24273a\a\e]10;#cad3f5\a\e]12;#f4dbd6\a'
+    autoload -Uz add-zsh-hook
+    _reset_tty_theme() { printf '\e]111;\a\e]110;\a\e]112;\a' }
+    add-zsh-hook zshexit _reset_tty_theme
 fi
 
 # tmux smart session management
