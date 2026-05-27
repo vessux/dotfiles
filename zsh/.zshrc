@@ -150,8 +150,8 @@ if command -v starship &> /dev/null; then
 fi
 
 # Repaint the terminal to the Berry wine canvas on remote sessions so the host
-# is obvious even when the prompt is off-screen; reset on exit. Runs inside tmux
-# too (wrapped in passthrough, which needs `allow-passthrough on` — already set).
+# is obvious even when the prompt is off-screen. Runs inside tmux too (wrapped in
+# passthrough, which needs `allow-passthrough on` — already set).
 if [[ $TTY_FLAVOR == berry && -t 1 ]]; then
     _tty_osc() {  # $1 = OSC body, e.g. '11;#331824'; wrap for tmux if needed
         if [[ -n $TMUX ]]; then
@@ -163,9 +163,17 @@ if [[ $TTY_FLAVOR == berry && -t 1 ]]; then
     _tty_osc '11;#331824'   # background — wine
     _tty_osc '10;#f7dbe6'   # foreground — light
     _tty_osc '12;#ff5fa2'   # cursor — hot-pink
-    autoload -Uz add-zsh-hook
-    _reset_tty_theme() { local s; for s in '111;' '110;' '112;'; do _tty_osc "$s"; done }
-    add-zsh-hook zshexit _reset_tty_theme
+    # Reset only from the outermost (non-tmux) shell. The terminal background is a
+    # single shared resource (the one Ghostty window), but every tmux pane runs
+    # its own zsh. If each pane reset on exit, closing one window would repaint the
+    # whole terminal back to the Mac default while sibling panes stay open. Gating
+    # on -z $TMUX means the reset fires once — when the SSH login shell that owns
+    # the real PTY logs out — not on every pane/window close.
+    if [[ -z $TMUX ]]; then
+        autoload -Uz add-zsh-hook
+        _reset_tty_theme() { local s; for s in '111;' '110;' '112;'; do _tty_osc "$s"; done }
+        add-zsh-hook zshexit _reset_tty_theme
+    fi
 fi
 
 # tmux smart session management
