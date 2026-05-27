@@ -120,18 +120,19 @@ fi
 # nvim switch to Macchiato — and we repaint the terminal via OSC — to make
 # "am I local or on a devbox?" obvious at a glance.
 if [[ -n $SSH_CONNECTION ]]; then
-    export TTY_FLAVOR=macchiato
+    export TTY_FLAVOR=berry
 else
     export TTY_FLAVOR=mocha
 fi
 
 # starship: reuse the tracked Mocha config locally; for remote sessions generate
-# a copy with just the palette line swapped (all flavors are defined in the toml).
+# a copy with just the palette line swapped to the wine "berry" palette (both
+# palettes are defined in the toml — single source of truth).
 if command -v starship &> /dev/null; then
-    if [[ $TTY_FLAVOR == macchiato ]]; then
-        _starship_gen="${XDG_CACHE_HOME:-$HOME/.cache}/starship/macchiato.toml"
+    if [[ $TTY_FLAVOR == berry ]]; then
+        _starship_gen="${XDG_CACHE_HOME:-$HOME/.cache}/starship/berry.toml"
         mkdir -p "${_starship_gen:h}"
-        sed "s/^palette = .*/palette = 'catppuccin_macchiato'/" \
+        sed "s/^palette = .*/palette = 'berry'/" \
             ~/.config/starship/starship.toml > "$_starship_gen"
         export STARSHIP_CONFIG="$_starship_gen"
     else
@@ -140,12 +141,22 @@ if command -v starship &> /dev/null; then
     eval "$(starship init zsh)"
 fi
 
-# Repaint the terminal (bg/fg/cursor) to Macchiato on remote sessions, reset on
-# exit. Skipped inside tmux, where the status bar already carries the signal.
-if [[ $TTY_FLAVOR == macchiato && -z $TMUX && -t 1 ]]; then
-    printf '\e]11;#24273a\a\e]10;#cad3f5\a\e]12;#f4dbd6\a'
+# Repaint the terminal to the Berry wine canvas on remote sessions so the host
+# is obvious even when the prompt is off-screen; reset on exit. Runs inside tmux
+# too (wrapped in passthrough, which needs `allow-passthrough on` — already set).
+if [[ $TTY_FLAVOR == berry && -t 1 ]]; then
+    _tty_osc() {  # $1 = OSC body, e.g. '11;#331824'; wrap for tmux if needed
+        if [[ -n $TMUX ]]; then
+            printf '\ePtmux;\e\e]%s\a\e\\' "$1"
+        else
+            printf '\e]%s\a' "$1"
+        fi
+    }
+    _tty_osc '11;#331824'   # background — wine
+    _tty_osc '10;#f7dbe6'   # foreground — light
+    _tty_osc '12;#ff5fa2'   # cursor — hot-pink
     autoload -Uz add-zsh-hook
-    _reset_tty_theme() { printf '\e]111;\a\e]110;\a\e]112;\a' }
+    _reset_tty_theme() { local s; for s in '111;' '110;' '112;'; do _tty_osc "$s"; done }
     add-zsh-hook zshexit _reset_tty_theme
 fi
 
