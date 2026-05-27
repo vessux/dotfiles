@@ -1,3 +1,11 @@
+# If the terminal's terminfo isn't installed on this host (e.g. xterm-ghostty on
+# a fresh remote), fall back to a universally-available TERM. Must run before
+# compinit/ZLE so key bindings (backspace!) resolve, and before launching tmux.
+# Truecolor is unaffected (driven by $COLORTERM, which Ghostty still sets).
+if ! infocmp "$TERM" &>/dev/null; then
+    export TERM=xterm-256color
+fi
+
 # completion
 if [[ -d /opt/homebrew/share/zsh/site-functions ]]; then
   FPATH="/opt/homebrew/share/zsh/site-functions:$FPATH"

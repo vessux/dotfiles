@@ -1,3 +1,8 @@
+# ssh-terminfo: auto-install the xterm-ghostty terminfo on remote hosts so tmux
+# (which strictly looks up $TERM) works over SSH. ssh-env propagates a sane TERM.
+# cursor/title kept (the usual defaults) since setting this key overrides them.
+shell-integration-features = cursor,title,ssh-env,ssh-terminfo
+
 theme = Catppuccin Mocha
 font-size = 15
 font-family = "Hack Nerd Font Mono"
