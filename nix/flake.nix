@@ -82,18 +82,25 @@
         ln -sf ${pkgs.yaziPlugins.toggle-pane} ${homeDirectory}/dotfiles/yazi/plugins/toggle-pane.yazi 2>/dev/null || true
       '';
 
-      # Point rbw at our Touch-ID-gated pinentry by absolute /nix/store path —
-      # rbw-agent inherits launchd's PATH (not the user login PATH), so relying
-      # on a bare name is fragile.  rbw owns its config (~/Library/Application
-      # Support/rbw/config.json on macOS, where `rbw login` writes email and
-      # base_url); `config set` is a read-modify-write that only touches the
-      # pinentry key, so this is safe to re-run every rebuild and won't clobber
-      # other settings.  Runs as the user (activation is root) so the file is
-      # owned by them.  `|| true` keeps a hiccup from failing activation.
+      # rbw declarative config: pinentry + lock_timeout. `config set` is a
+      # read-modify-write that only touches the given key, so each line is safe
+      # to re-run every rebuild and won't clobber other settings (email,
+      # base_url, etc.) that `rbw login` wrote.  Runs as the user (activation is
+      # root); `|| true` keeps a hiccup from failing the whole activation.
+      #
+      # Why absolute /nix/store paths: rbw-agent inherits launchd's PATH (not the
+      # user login PATH), so a bare name like "pinentry-rbw-touchid" is fragile.
+      #
+      # Why lock_timeout=1: pair with the rbw() shell wrapper in zsh/.zshrc —
+      # together they relock the agent the moment a secret-fetching command
+      # returns, so the master keys don't sit decrypted in agent memory between
+      # explicit fetches.
       system.activationScripts.postActivation.text = ''
         sudo -u ${username} /usr/bin/env HOME=${homeDirectory} \
           ${pkgs.rbw}/bin/rbw config set pinentry \
           ${packages.pinentry-rbw-touchid}/bin/pinentry-rbw-touchid || true
+        sudo -u ${username} /usr/bin/env HOME=${homeDirectory} \
+          ${pkgs.rbw}/bin/rbw config set lock_timeout 1 || true
       '';
 
       # === PACKAGE MANAGEMENT ===

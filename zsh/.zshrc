@@ -181,6 +181,29 @@ if command -v tmux &> /dev/null; then
     source ~/.config/tmux/shell-integration.sh
 fi
 
+# rbw: re-lock the agent immediately after every secret-fetching command so the
+# decrypted master keys don't sit in agent RAM between operations. The price is
+# one Touch ID per fetch; the win is that nothing running as me can pull the
+# whole vault by talking to the socket between my own calls. lock_timeout=1
+# (set declaratively in flake.nix) handles the idle-after-implicit-unlock case;
+# this wrapper handles the explicit-after-fetch case. Wraps only the
+# secret-returning subcommands (get / code); management ones (add/edit/sync/…)
+# stay untouched.
+if command -v rbw &> /dev/null; then
+    rbw() {
+        case "$1" in
+            get|code)
+                command rbw "$@"; local ec=$?
+                command rbw lock >/dev/null 2>&1
+                return $ec
+                ;;
+            *)
+                command rbw "$@"
+                ;;
+        esac
+    }
+fi
+
 # zoxide smart cd command
 if command -v zoxide &> /dev/null; then
     eval "$(zoxide init zsh)"
