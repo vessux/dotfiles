@@ -53,6 +53,7 @@ in
     lazygit
     librsvg
     openfortivpn
+    rbw
     starship
     terminal-notifier
     tmux
@@ -65,6 +66,16 @@ in
     yaziPlugins.chmod
     yaziPlugins.toggle-pane
     ueberzugpp
+  ];
+
+  # Homebrew taps (third-party formula repos)
+  homebrewTaps = [
+    "jorgelbg/tap"   # provides pinentry-touchid
+  ];
+
+  # Homebrew formulae (CLI tools not packaged in nixpkgs)
+  homebrewBrews = [
+    "pinentry-touchid"   # Touch ID-backed pinentry, used by rbw (not in nixpkgs)
   ];
 
   # Homebrew applications organized by category
