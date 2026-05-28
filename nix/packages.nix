@@ -8,8 +8,16 @@ let
       allowUnfree = true;
     };
   };
+
+  # Touch-ID-gated pinentry for rbw. Source lives in ./pkgs; the derivation
+  # builds via the host's swiftc + Xcode SDK (see that dir's default.nix).
+  pinentry-rbw-touchid = pkgs.callPackage ./pkgs/pinentry-rbw-touchid {};
 in
 {
+  # Re-export so flake.nix can reference the same store path in activation
+  # scripts (we set rbw's pinentry to its absolute /nix/store/.../bin/... path).
+  inherit pinentry-rbw-touchid;
+
   # System packages organized by category
   systemPackages = with pkgs; [
     # Development tools
@@ -53,6 +61,8 @@ in
     lazygit
     librsvg
     openfortivpn
+    pinentry_mac        # GUI pinentry fallback used by pinentry-rbw-touchid
+    pinentry-rbw-touchid # Touch-ID-gated pinentry that backs rbw (./pkgs)
     rbw
     starship
     terminal-notifier
@@ -66,16 +76,6 @@ in
     yaziPlugins.chmod
     yaziPlugins.toggle-pane
     ueberzugpp
-  ];
-
-  # Homebrew taps (third-party formula repos)
-  homebrewTaps = [
-    "jorgelbg/tap"   # provides pinentry-touchid
-  ];
-
-  # Homebrew formulae (CLI tools not packaged in nixpkgs)
-  homebrewBrews = [
-    "pinentry-touchid"   # Touch ID-backed pinentry, used by rbw (not in nixpkgs)
   ];
 
   # Homebrew applications organized by category

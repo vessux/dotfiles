@@ -82,24 +82,24 @@
         ln -sf ${pkgs.yaziPlugins.toggle-pane} ${homeDirectory}/dotfiles/yazi/plugins/toggle-pane.yazi 2>/dev/null || true
       '';
 
-      # Point rbw at the Touch ID pinentry. rbw owns its config file (on macOS
-      # that's ~/Library/Application Support/rbw/config.json — `rbw login` writes
-      # email/base_url there), and `config set` is a read-modify-write that only
-      # touches the pinentry key — so this is safe to re-run every rebuild and
-      # won't clobber other settings. Runs as the user (activation is root) so
-      # the file is owned by them. `|| true` keeps a hiccup from failing the
-      # whole activation.
+      # Point rbw at our Touch-ID-gated pinentry by absolute /nix/store path —
+      # rbw-agent inherits launchd's PATH (not the user login PATH), so relying
+      # on a bare name is fragile.  rbw owns its config (~/Library/Application
+      # Support/rbw/config.json on macOS, where `rbw login` writes email and
+      # base_url); `config set` is a read-modify-write that only touches the
+      # pinentry key, so this is safe to re-run every rebuild and won't clobber
+      # other settings.  Runs as the user (activation is root) so the file is
+      # owned by them.  `|| true` keeps a hiccup from failing activation.
       system.activationScripts.postActivation.text = ''
         sudo -u ${username} /usr/bin/env HOME=${homeDirectory} \
-          ${pkgs.rbw}/bin/rbw config set pinentry pinentry-touchid || true
+          ${pkgs.rbw}/bin/rbw config set pinentry \
+          ${packages.pinentry-rbw-touchid}/bin/pinentry-rbw-touchid || true
       '';
 
       # === PACKAGE MANAGEMENT ===
 
       homebrew = {
         enable = true;
-        taps = packages.homebrewTaps;
-        brews = packages.homebrewBrews;
         casks = packages.homebrewCasks;
         masApps = packages.macAppStoreApps;
       };
