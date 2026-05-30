@@ -72,6 +72,27 @@ func touchIDApproved(reason: String) -> Bool {
     return ok
 }
 
+// MARK: - Operation context (set by the rbw() shell wrapper)
+
+// The rbw client and this pinentry don't share a process tree — rbw-agent
+// spawns us — so the wrapper can't hand us the running subcommand via env or
+// argv. It instead drops it in a temp file, which we fold into the Touch ID
+// reason so the popup names what's being unlocked ("… — rbw get github") rather
+// than a bare "Unlock rbw vault". We anchor the path at $HOME (resolved from the
+// password database, not the environment) rather than $TMPDIR: a tmux server or
+// the launchd-spawned agent can carry a different TMPDIR than the calling shell,
+// but the home directory never differs. Missing/empty file → generic reason.
+func touchIDReason() -> String {
+    let path = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Caches/rbw-touchid-ctx").path
+    guard let ctx = try? String(contentsOfFile: path, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+          !ctx.isEmpty else {
+        return "Unlock rbw vault"
+    }
+    return "Unlock rbw vault — rbw \(ctx)"
+}
+
 // MARK: - Assuan percent encoding
 
 func assuanEncode(_ s: String) -> String {
@@ -176,7 +197,7 @@ while let line = readLine() {
         let isMaster    = (prompt == "Master Password")
         let useKeychain = isMaster && !hadError
         if useKeychain, let pw = keychainRead() {
-            if touchIDApproved(reason: "Unlock rbw vault") {
+            if touchIDApproved(reason: touchIDReason()) {
                 reply("D " + assuanEncode(pw))
                 reply("OK")
             } else {

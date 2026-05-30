@@ -181,26 +181,32 @@ if command -v tmux &> /dev/null; then
     source ~/.config/tmux/shell-integration.sh
 fi
 
-# rbw: re-lock the agent immediately after every secret-fetching command so the
-# decrypted master keys don't sit in agent RAM between operations. The price is
-# one Touch ID per fetch; the win is that nothing running as me can pull the
-# whole vault by talking to the socket between my own calls. lock_timeout=1
-# (set declaratively in flake.nix) handles the idle-after-implicit-unlock case;
-# this wrapper handles the explicit-after-fetch case. Wraps only the
-# secret-returning subcommands (get / code); management ones (add/edit/sync/…)
-# stay untouched.
+# rbw: this wrapper does two things on every invocation.
+#
+# (1) Record the subcommand in a temp file that pinentry-rbw-touchid reads to
+#     label the Touch ID popup ("Unlock rbw vault — rbw get github" instead of a
+#     bare "Unlock rbw vault"). Any subcommand can trigger an unlock — add and
+#     edit just as much as get — so write it for all of them. Remove it after so
+#     a later implicit unlock (idle resync) can't reuse a stale label. The path
+#     is anchored at $HOME (not $TMPDIR): the rbw-agent that spawns the pinentry
+#     is launchd-spawned and a tmux server can carry a stale TMPDIR, so the two
+#     could disagree on a $TMPDIR path — $HOME never differs.
+#
+# (2) Re-lock the agent immediately after every secret-fetching command so the
+#     decrypted master keys don't sit in agent RAM between operations. The price
+#     is one Touch ID per fetch; the win is that nothing running as me can pull
+#     the whole vault by talking to the socket between my own calls. lock_timeout=1
+#     (set declaratively in flake.nix) handles the idle-after-implicit-unlock
+#     case; this handles the explicit-after-fetch case. Only get / code return
+#     secrets, so only they are re-locked.
 if command -v rbw &> /dev/null; then
     rbw() {
-        case "$1" in
-            get|code)
-                command rbw "$@"; local ec=$?
-                command rbw lock >/dev/null 2>&1
-                return $ec
-                ;;
-            *)
-                command rbw "$@"
-                ;;
-        esac
+        local ctx="$HOME/Library/Caches/rbw-touchid-ctx"
+        print -r -- "$*" > "$ctx" 2>/dev/null
+        command rbw "$@"; local ec=$?
+        [[ "$1" == (get|code) ]] && command rbw lock >/dev/null 2>&1
+        rm -f "$ctx" 2>/dev/null
+        return $ec
     }
 fi
 
