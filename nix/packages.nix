@@ -59,6 +59,7 @@ in
     eza
     fd
     fzf
+    gh
     ghostscript
     go
     imagemagick
@@ -88,14 +89,17 @@ in
     lazydocker
     lazygit
     librsvg
+    lima
     openfortivpn
     pinentry_mac        # GUI pinentry fallback used by pinentry-rbw-touchid
     pinentry-rbw-touchid # Touch-ID-gated pinentry that backs rbw (./pkgs)
+    podman
     rbw-touchid          # rbw client + agent, wrapped to label the unlock popup
     starship
     terminal-notifier
     tmux
     unixtools.watch
+    wakeonlan
     watch
     zellij
 
@@ -104,6 +108,20 @@ in
     yaziPlugins.chmod
     yaziPlugins.toggle-pane
     ueberzugpp
+  ];
+
+  # Homebrew CLI formulae kept on brew on purpose:
+  #   mas   — backs masApps during nix-darwin activation
+  #   mise  — fast calver; brew stays fresher than nixpkgs
+  #   beads — nixpkgs lags a major (steveyegge/beads); dolt + icu4c@78 ride along
+  #   z3    — openlock's build locates libz3/headers at the Homebrew prefix
+  #           (justfile: /opt/homebrew/opt/z3, -I/opt/homebrew/include); nix store
+  #           paths aren't on the default search path, so z3 must stay on brew
+  homebrewBrews = [
+    "mas"
+    "mise"
+    "beads"
+    "z3"
   ];
 
   # Homebrew applications organized by category
@@ -153,12 +171,15 @@ in
     "ollama-app"
     "qbittorrent"
     "sync"
+    "thaw@beta"
   ];
 
   macAppStoreApps = {
+    "Amphetamine" = 937984704;
     "Apple developer" = 640199958;
     "Bitwarden" = 1352778147;
     "Trello" = 1278508951;
     "Xcode" = 497799835;
+    "Xnip" = 1221250572;
   };
 } 

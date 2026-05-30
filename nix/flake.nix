@@ -107,6 +107,7 @@
 
       homebrew = {
         enable = true;
+        brews = packages.homebrewBrews;
         casks = packages.homebrewCasks;
         masApps = packages.macAppStoreApps;
       };
