@@ -51,6 +51,25 @@ This will:
 - Create a starter session
 - Validate everything
 
+## Umbel Setup
+
+[Umbel](https://www.npmjs.com/package/@vessux/umbel) composes Claude Code
+sessions from named bundles of skills, hooks, and MCP servers. The bundle
+config (`~/.config/umbel/`) is stowed from this repo; the binary and PATH
+shim are set up once per machine:
+
+```bash
+npm i -g @vessux/umbel   # the `umbel` binary
+umbel shim install       # writes ~/.local/share/umbel/bin/claude
+```
+
+The PATH entry for the shim is already wired in `zsh/.zshrc`, so plain
+`claude` resolves through Umbel and picks up a project's bundle.
+
+Bundles live in `~/.config/umbel/bundles/*.md`. Some declare external binary
+prerequisites (e.g. `plannotator`, `tuidriver`) — each bundle's `.md`
+documents its own install step.
+
 ## What's Included
 
 ### 🛠️ Development Tools
@@ -62,6 +81,7 @@ This will:
 - **Bat** - Enhanced cat with syntax highlighting and themes
 - **Yazi** - Terminal file manager with plugins and catppuccin theme
 - **Zsh** - Shell configuration with custom setup
+- **Umbel** - Claude Code bundle config: skills, hooks, and MCP servers (see [Umbel Setup](#umbel-setup))
 
 ### 🎨 Terminal & UI
 - **Ghostty** - Terminal emulator configuration
@@ -100,6 +120,7 @@ All configurations are symlinked to `~/.config/` via Stow:
 ├── qBittorrent/    # BitTorrent client configuration
 ├── starship/       # Shell prompt configuration
 ├── tmux/           # Terminal multiplexer configuration
+├── umbel/          # Claude Code bundles (skills, hooks, MCP servers)
 ├── yazi/           # File manager configuration
 ├── zsh/            # Shell configuration
 └── ideavimrc/      # Vim configuration for IDEs
