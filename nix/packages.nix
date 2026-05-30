@@ -12,6 +12,34 @@ let
   # Touch-ID-gated pinentry for rbw. Source lives in ./pkgs; the derivation
   # builds via the host's swiftc + Xcode SDK (see that dir's default.nix).
   pinentry-rbw-touchid = pkgs.callPackage ./pkgs/pinentry-rbw-touchid {};
+
+  # rbw wrapped so EVERY caller — interactive shells, bash scripts, ansible,
+  # cron — records the operation before the vault unlocks and re-locks the agent
+  # after a secret read. The record is the ~/Library/Caches/rbw-touchid-ctx
+  # "sticky note" that pinentry-rbw-touchid reads to label the Touch ID popup
+  # ("Unlock rbw vault — rbw get github" instead of a bare "Unlock rbw vault").
+  # This supersedes the old zsh rbw() function, which only covered interactive
+  # shells — scripts called the bare binary and got the generic popup.
+  #
+  # symlinkJoin keeps the real rbw-agent (+ man pages / completions) on PATH; the
+  # wrapper forwards to ${pkgs.rbw}/bin/rbw by absolute store path, so it never
+  # recurses into itself. writeShellScriptBin adds no `set -e`, so the exit code
+  # of rbw is captured rather than aborting before the re-lock/cleanup.
+  rbw-touchid =
+    let
+      wrapper = pkgs.writeShellScriptBin "rbw" ''
+        ctx="$HOME/Library/Caches/rbw-touchid-ctx"
+        printf '%s\n' "$*" > "$ctx" 2>/dev/null
+        ${pkgs.rbw}/bin/rbw "$@"; ec=$?
+        case "$1" in get|code) ${pkgs.rbw}/bin/rbw lock >/dev/null 2>&1 ;; esac
+        rm -f "$ctx" 2>/dev/null
+        exit $ec
+      '';
+    in
+    pkgs.symlinkJoin {
+      name = "rbw-touchid";
+      paths = [ wrapper pkgs.rbw ];
+    };
 in
 {
   # Re-export so flake.nix can reference the same store path in activation
@@ -63,7 +91,7 @@ in
     openfortivpn
     pinentry_mac        # GUI pinentry fallback used by pinentry-rbw-touchid
     pinentry-rbw-touchid # Touch-ID-gated pinentry that backs rbw (./pkgs)
-    rbw
+    rbw-touchid          # rbw client + agent, wrapped to label the unlock popup
     starship
     terminal-notifier
     tmux
