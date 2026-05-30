@@ -194,3 +194,6 @@ fi
 
 [[ -f "$HOME/.cargo/env" ]] && . "$HOME/.cargo/env"
 export PATH="$PATH:${XDG_DATA_HOME}/npm/bin:$HOME/.cache/.bun/bin:$HOME/.local/bin"
+
+# Umbel shim for claude
+export PATH="${XDG_DATA_HOME}/umbel/bin:$PATH"
