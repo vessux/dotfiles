@@ -117,11 +117,14 @@ in
   #   z3    — openlock's build locates libz3/headers at the Homebrew prefix
   #           (justfile: /opt/homebrew/opt/z3, -I/opt/homebrew/include); nix store
   #           paths aren't on the default search path, so z3 must stay on brew
+  #   llama.cpp — multiple builds/day; brew runs ~700 builds ahead of nixpkgs,
+  #           and freshness matters for model/perf support (replaced ollama)
   homebrewBrews = [
     "mas"
     "mise"
     "beads"
     "z3"
+    "llama.cpp"
   ];
 
   # Homebrew applications organized by category
@@ -168,7 +171,6 @@ in
     "linearmouse"
     "mouseless"
     "nitroshare"
-    "ollama-app"
     "qbittorrent"
     "sync"
     "thaw@beta"
