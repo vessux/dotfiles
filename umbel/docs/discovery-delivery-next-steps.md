@@ -1,71 +1,54 @@
-# discovery / delivery — handover & next steps
+# discovery / delivery — handover (clean session)
 
-Snapshot for a clean session. Auto-memory (`project_discovery_delivery_workflow`) is the
-short bridge; this is the depth.
+**Mission this session: adopt the discovery + delivery workflow on the `umbel` repo**
+(`~/Work/personal/umbel`) — task 3, the first real rollout. umbel is **public**, and it
+**already runs borklog**, so this is a *reshape / migration*, not greenfield.
 
-## Where we are
+Auto-memory (`discovery-delivery-workflow`) is the short bridge; this is the depth.
 
-The **discovery** bundle is fully designed, written, and compiles:
+## Ready to use (built, live-verified, committed)
 
-- `~/.config/umbel/bundles/discovery.md` — frontmatter (12 cherry-picked skills across
-  pocock + plannotator, `local/triage-presort` agent, `local/tuidriver` MCP; **no**
-  `extends`) + rewritten playbook body.
-- `~/.config/umbel/agents/local/triage-presort/AGENT.md` — read-only inbox pre-sort agent.
-- Validated: `umbel build discovery` → `discovery-f86cbf2d9656`, all artifacts resolve.
+All in `~/.config/umbel` (= dotfiles; committed `f9119bc`):
+- **discovery** — capture/triage/prep. `bundles/discovery.md` + `hooks/local/discovery-ruleset/` + `agents/local/triage-presort` + `local/tuidriver` MCP.
+- **delivery-base** — the invariant contract (scope → claim → capture-and-escalate-never-decide → done, + public review gate) + shared tooling (annotate/last, grill-with-docs, tuidriver). `bundles/delivery-base.md` + `hooks/local/delivery-base-ruleset/`.
+- **delivery-superpowers** — first method: `extends: [delivery-base, superpowers]`, no custom hook (superpowers' own announce-hook + skills carry prep+execution).
 
-Decision trail (2-round Plannotator grill, every rejected option):
-`~/.config/umbel/docs/discovery-bundle-composition.md`.
-High-level workflow ADR: `~/.config/umbel/docs/adr/0001-discovery-delivery-workflow.md`.
+**How rules reach the agent:** a SessionStart hook reads a committed repo-root
+`.repo-visibility` (`public`|`private`) and injects the tier-matched ruleset as
+`additionalContext` (re-fires on `compact`). **Nothing is written into the project tree
+but that one-line marker.** umbel itself is unchanged — it's all bundle artifacts.
 
-## Next, in order
+Design of record: ADR `~/.config/umbel/docs/adr/0001` (workflow) + `0002` (delivery
+base/method). The INJECT-not-SEED reversal: umbel `docs/worklog.jsonl` @
+2026-06-01T09:29:20Z. Authoring patterns: `~/Work/personal/umbel/docs/cookbook.md`.
 
-1. ✅ **DONE — operating-ruleset delivery** (was: "umbel `CLAUDE.local.md` seeding
-   feature"). Resolved by REVERSAL: **no umbel feature.** The ruleset is **injected** each
-   session by a per-bundle SessionStart hook (`local/{discovery,delivery}-ruleset`) that
-   reads a committed repo-root `.repo-visibility` marker (`public`|`private`) and injects
-   the matching `seed.<tier>.md` — nothing seeded into the repo, no `.gitignore` edits,
-   umbel untouched. `-p` injection probed; both tiers + absent-marker fallback
-   live-verified. Decision + rejected alternatives: umbel `docs/worklog.jsonl` @
-   2026-06-01T09:29:20Z; backlog `bk-2026-05-31T19:33:12Z` deleted. Marker is **committed**
-   (travels into sandboxes) and carries no `umbel` in its name (workflow's fact, not the
-   tool's).
+**The bundles' "Applying this bundle" sections are the source of truth for adoption —
+read them** (`~/.config/umbel/bundles/{discovery,delivery-base,delivery-superpowers}.md`).
+This handover only adds umbel-specifics.
 
-2. ✅ **DONE — delivery split into base + swappable method** (replaced the old
-   `extends: [superpowers, plannotator]` monolith). Two layers:
-   - **`delivery-base`** — the *invariant contract*, tier-aware via its own inject hook
-     (`local/delivery-base-ruleset`): scope-in → claim → **capture-and-escalate, never
-     decide inline** → done (+ public review gate). Plus the *shared delivery tooling*:
-     `plannotator/annotate`+`last`, `pocock/grill-with-docs`, `local/tuidriver` MCP. Not
-     run alone.
-   - **`delivery-superpowers`** — the first *method*: `extends: [delivery-base,
-     superpowers]`, **no custom hook** (superpowers' own announce-hook + skills carry
-     prep+execution). Injection = two coherent blocks (contract + method).
-   Future methods swap by extending `delivery-base` and adding only their own procedure.
-   Boundary (base=invariant lifecycle; method=branch/prep/execution/review-how/decision-
-   record) + B-injection + extend-cohesive-vs-cherry-pick-loose settled via grill; built &
-   live-verified both tiers. base is delivery-only for now (discovery may get its own later).
+## Adopting on umbel — the plan (public tier, reshape)
 
-3. **Repo rollout** — once discovery + the seeding feature are solid: apply discovery to
-   real repos, migrate them to **devbox**, and file issues on **both ends** (beads inbox +
-   GitHub). openlock is a reshape (stealth beads → committed inbox + GitHub backlog), not
-   greenfield.
+1. **Tier = public.** Write `public` to a committed `.repo-visibility` at the umbel repo root.
+2. **beads inbox.** `bd init` + `bd hooks install` (sync over the repo's own git origin). Exact config keys: pin hands-on (deferred).
+3. **Decision record = ADRs.** The umbel repo has **no `docs/adr/` yet** — the 0001/0002 ADRs live in *dotfiles*, a different repo. Create `docs/adr/` in the umbel repo; add a PR-template "architectural change? link the ADR" prompt. Public tier = **no committed worklog**.
+4. **Migrate the borklog backlog.** `docs/backlog.jsonl` (gitignored; 8 items — 6 multi-harness adapters, 1 shim-publish `bk-2026-05-30T14:50:52Z`, 1 YAML-parse papercut `bk-2026-06-01T09:59:33Z`) → `bd q` into the inbox → triage → flesh kept ones into **GitHub Issues** (Pocock `to-prd`) and close the bead; drop the rest.
+5. **Worklog — FLAG (decision to make).** `docs/worklog.jsonl` (gitignored) holds private design archaeology (the v0→v2.1 prehistory the history-squash hid, plus this session's reversals). Public tier has no committed worklog. **Recommend: freeze it as a private, still-gitignored archive — do NOT migrate entries into public ADRs** (would expose rejected-alternative archaeology + prehistory). Go-forward decisions → ADRs only.
+6. **CLAUDE.local.md.** It currently carries the borklog "Project memory" rules. Operating rules are now *injected*, and the backlog/worklog convention is being replaced (beads + GitHub + ADRs). Replace/trim that section; keep committed `CLAUDE.md` as the contributor face. (Note: umbel's CLAUDE.local.md still calls borklog "checked-in" while it's gitignored — stale; reconcile.)
+7. **Pin + run.** `umbel apply discovery` (to triage the migrated inbox), then `delivery-superpowers` (to build). The PATH shim routes plain `claude`.
 
-## Deferred, not forgotten
+## Good first real units (dogfood the workflow)
+- **Land the cookbook:** `docs/cookbook.md` + the README/spec link edits are **uncommitted** on umbel `main`. umbel uses **PR flow** → first GitHub issue → `delivery-superpowers` → PR. A clean first exercise.
+- **YAML-parse papercut** (`bk-2026-06-01T09:59:33Z`): a real `src/bundle/discover.ts` task → issue → fix (surface a bundle's frontmatter parse error in `list`/`build` instead of silently dropping it).
 
-- **Exact beads sync config keys** — `bd hooks install` + Dolt-remote-over-git-origin is
-  confirmed as the mechanism; the precise `bd config` knobs (auto-commit policy, ref
-  layout) are pinned hands-on at the first real repo setup. The bundle names the
-  behaviour, not the knobs.
-- ~~`CLAUDE.local.md` seeding is manual~~ — **resolved** (task 1): the ruleset injects via
-  the SessionStart hook; nothing is written into the repo but the one-line `.repo-visibility`
-  marker. There is no `CLAUDE.local.md` seeding anymore.
+## Deferred / watch
+- Exact beads sync config keys — hands-on at first setup.
+- discovery may get its own base later (`delivery-base` is delivery-only).
+- Shim relocation (`bk-2026-05-30T14:50:52Z`) is **breaking** at the next npm publish — note the path move + re-run `umbel shim install`.
+- Uncommitted in dotfiles: `claude-code/settings.json` (leave — unrelated) and this handover edit.
 
-## Housekeeping notes
-
-- dotfiles design work was untracked at handover — commit
-  `bundles/discovery.md`, `bundles/delivery.md`, `agents/`, `docs/` if not already done.
-  Do **not** sweep in the unrelated `claude-code/settings.json` change
-  (`workflowKeywordTriggerEnabled`, `theme`).
-- umbel repo `docs/backlog.jsonl` is gitignored (local working state); the
-  `CLAUDE.local.md` text calling it "checked-in" is slightly off — verify intent if it
-  matters.
+## Pointers
+- Bundles + playbooks: `~/.config/umbel/bundles/{discovery,delivery-base,delivery-superpowers}.md`
+- ADRs: `~/.config/umbel/docs/adr/{0001-discovery-delivery-workflow,0002-delivery-base-and-swappable-methods}.md`
+- Composition trail (discovery): `~/.config/umbel/docs/discovery-bundle-composition.md`
+- Cookbook (umbel, public): `~/Work/personal/umbel/docs/cookbook.md`
+- umbel worklog (INJECT decision + rejected alternatives): `~/Work/personal/umbel/docs/worklog.jsonl`
