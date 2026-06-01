@@ -31,6 +31,7 @@ claude-code/paste-cache
 claude-code/stats-cache.json
 claude-code/notify-webhook.url
 claude-code/image-cache
+claude-code/uploads
 claude-code/.last-update-result.json
 claude-code/daemon
 claude-code/daemon.log
