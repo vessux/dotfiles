@@ -7,32 +7,13 @@ yazi/plugins/chmod.yazi
 yazi/plugins/toggle-pane.yazi
 karabiner/automatic_backups
 tmux/plugins
-claude-code/.claude.json
-claude-code/.claude.json.backup
-claude-code/.last-cleanup
-claude-code/notify-silent
-claude-code/debug
-claude-code/todos
-claude-code/statsig
-claude-code/projects
-claude-code/shell-snapshots
-claude-code/backups
-claude-code/cache
-claude-code/file-history
-claude-code/history.jsonl
-claude-code/mcp-needs-auth-cache.json
-claude-code/plans
-claude-code/plugins
-claude-code/policy-limits.json
-claude-code/sessions
-claude-code/skills
-claude-code/tasks
-claude-code/paste-cache
-claude-code/stats-cache.json
-claude-code/notify-webhook.url
-claude-code/image-cache
-claude-code/uploads
-claude-code/.last-update-result.json
-claude-code/daemon
-claude-code/daemon.log
-claude-code/jobs
+# claude-code: whitelist, not blacklist. Everything in this dir is transient
+# runtime state (sessions, cache, projects, daemon, uploads, skills, …) except
+# the few config dirs/files below. Ignore all of it, then opt the tracked ones
+# back in — so new runtime dirs Anthropic adds are ignored automatically.
+claude-code/*
+!claude-code/settings.json
+!claude-code/commands/
+!claude-code/hooks/
+!claude-code/scripts/
+!claude-code/setup/
