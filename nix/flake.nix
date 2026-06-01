@@ -30,6 +30,23 @@
         settings.experimental-features = "nix-command flakes";
       };
 
+      # Nix garbage collection. The usual `nix.gc` options can't be used here:
+      # nix.enable = false hands the daemon to Determinate Nix, which ships no
+      # GC scheduler, and nix-darwin gates the whole `nix` module behind that
+      # flag. launchd.daemons is a separate module, so it works regardless;
+      # running as root lets it prune the root-owned system profile's old
+      # generations too (a user-run GC only touches per-user profiles).
+      # --delete-older-than prunes generations past the cutoff, then collects
+      # the store paths they were pinning. Current generation is always kept.
+      launchd.daemons.nix-gc = {
+        command = "/nix/var/nix/profiles/default/bin/nix-collect-garbage --delete-older-than 90d";
+        serviceConfig = {
+          StartCalendarInterval = [ { Weekday = 0; Hour = 3; Minute = 15; } ];
+          StandardOutPath = "/var/log/nix-gc.log";
+          StandardErrorPath = "/var/log/nix-gc.log";
+        };
+      };
+
       # System metadata
       system = {
         configurationRevision = self.rev or self.dirtyRev or null;
