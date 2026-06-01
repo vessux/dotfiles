@@ -30,6 +30,7 @@
       }
     ]
   },
+  "workflowKeywordTriggerEnabled": false,
   "statusLine": {
     "type": "command",
     "command": "sh -c '$HOME/dotfiles/ccstatusline/statusline-wrapper.sh'"
@@ -56,6 +57,7 @@
     "enabled": true,
     "mode": "hold"
   },
+  "theme": "auto",
   "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
   "voiceEnabled": true
