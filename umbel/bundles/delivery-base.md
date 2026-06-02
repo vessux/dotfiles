@@ -41,3 +41,9 @@ decisions get recorded belong to the **method**, not here.
 Same tier setup as discovery: record `public`/`private` in a committed one-line
 `.repo-visibility` at the repo root (shared with discovery — reuse it if present). The
 contract hook reads it each session.
+
+beads (used for private-tier claim/close) is wired by discovery's **"Wire beads"** step —
+Dolt-remote-backed on the git origin (`bd dolt push` → `refs/dolt/data`), with beads' config
++ portable hook shims committed and the DB/export/logs gitignored, and `bd bootstrap` on a
+fresh clone. `issues.jsonl` is an export, **never** the git backing. Install hooks with
+`bd hooks install --beads` so they work across the worktrees delivery methods create.

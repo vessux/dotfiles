@@ -1,8 +1,22 @@
 # discovery / delivery — handover (clean session)
 
-**Mission this session: adopt the discovery + delivery workflow on the `umbel` repo**
-(`~/Work/personal/umbel`) — task 3, the first real rollout. umbel is **public**, and it
-**already runs borklog**, so this is a *reshape / migration*, not greenfield.
+**STATUS (2026-06-02): adoption INFRA DONE on `umbel`.** Committed on branch
+`chore/adopt-discovery-delivery-workflow` @70db1cd (NOT pushed; cookbook left uncommitted):
+`.repo-visibility=public`; worklog distilled into `docs/adr/0001-0006`+README (worklog.jsonl
+kept as gitignored archive); 8 backlog items imported into the beads inbox (prefix `umbel-`,
+P1 shim-publish `umbel-1dd`, P2 YAML papercut `umbel-244`, P3×6 multi-harness epic) with
+`backlog.jsonl` kept as a gitignored archive; PR template added; **CLAUDE.local.md removed**
+(process is injected); **discovery pinned** (`.umbel-bundle`).
+**beads is GIT-REMOTE-BACKED VIA DOLT** (normal mode, NOT stealth): Dolt remote `origin` =
+`git+https://github.com/vessux/umbel.git`, `bd dolt push` → `refs/dolt/data` (verified on the
+remote). `export.git-add=false`; `.beads/config.yaml`+`metadata.json` committed, the Dolt DB +
+`issues.jsonl` + logs gitignored. The discovery "Wire beads" step was rewritten to this model
+(it was vague and caused a jsonl-in-git mis-step); crisp version in auto-memory
+`beads-git-backing-model`.
+**Remaining:** (1) dogfood — plain `claude` → triage inbox → GitHub Issues; swap pin to
+`delivery-superpowers` → land the cookbook PR, then fix YAML papercut `umbel-244` in
+`src/bundle/discover.ts`; (2) push/merge the branch; (3) optional `bd hooks install` (auto
+`bd dolt push/pull` on git push/pull) — not run. The plan below is the original mission record.
 
 Auto-memory (`discovery-delivery-workflow`) is the short bridge; this is the depth.
 
