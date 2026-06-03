@@ -201,4 +201,8 @@ export PATH="${XDG_DATA_HOME}/umbel/bin:$PATH"
 # mise — runtime/tool version manager (node, just, …). Activated last so its shims
 # take PATH precedence; guarded so it's a no-op where mise isn't installed. Does
 # nothing until a global (~/.config/mise) or project (.mise.toml) config declares a tool.
+# ~/.config/mise is a stow dir-symlink → ~/dotfiles/mise, so mise resolves the global
+# config to a path outside ~/.config and refuses to trust it. Trust ~/dotfiles up front
+# so it's silent on every box without a manual `mise trust` per machine.
+export MISE_TRUSTED_CONFIG_PATHS="${HOME}/dotfiles"
 command -v mise >/dev/null && eval "$(mise activate zsh)"
