@@ -1,0 +1,10 @@
+# Global mise toolchain — stowed to ~/.config/mise/config.toml on Mac + devbox.
+# Provides ambient runtimes outside any project; a repo's own .mise.toml still wins.
+# On the Mac these shadow the nix-installed copies via PATH precedence (mise activate
+# prepends its shims). node/just stay declared in nix/packages.nix for now — remove
+# them once mise is verified on both boxes (the "move off nix" follow-up).
+[tools]
+# LTS line, matches the Mac's nix node 24.x. Ships npm, which is what `npm link`
+# (umbel — needs node >=18.17) was missing on devbox.
+node = "24"
+just = "latest"

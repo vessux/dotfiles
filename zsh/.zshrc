@@ -197,3 +197,8 @@ export PATH="$PATH:${XDG_DATA_HOME}/npm/bin:$HOME/.cache/.bun/bin:$HOME/.local/b
 
 # Umbel shim for claude
 export PATH="${XDG_DATA_HOME}/umbel/bin:$PATH"
+
+# mise — runtime/tool version manager (node, just, …). Activated last so its shims
+# take PATH precedence; guarded so it's a no-op where mise isn't installed. Does
+# nothing until a global (~/.config/mise) or project (.mise.toml) config declares a tool.
+command -v mise >/dev/null && eval "$(mise activate zsh)"
