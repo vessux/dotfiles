@@ -46,6 +46,45 @@ url = "https://github.com/backnotprop/plannotator/releases/download/v0.19.27/pla
 url_api = "https://api.github.com/repos/backnotprop/plannotator/releases/assets/437645037"
 provenance = "github-attestations"
 
+[[tools."github:oven-sh/bun"]]
+version = "bun-v1.3.14"
+backend = "github:oven-sh/bun"
+
+[tools."github:oven-sh/bun"."platforms.linux-arm64"]
+checksum = "sha256:a27ffb63a8310375836e0d6f668ae17fa8d8d18b88c37c821c65331973a19a3b"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-aarch64.zip"
+url_api = "https://api.github.com/repos/oven-sh/bun/releases/assets/418773677"
+
+[tools."github:oven-sh/bun"."platforms.linux-arm64-musl"]
+checksum = "sha256:b98e0ad3625c5c00d1d5b5ff55605c7adddbfae151861e68ade57b2d3b8703bb"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-aarch64-musl.zip"
+url_api = "https://api.github.com/repos/oven-sh/bun/releases/assets/418773678"
+
+[tools."github:oven-sh/bun"."platforms.linux-x64"]
+checksum = "sha256:a063908ae08b7852ca10939bbdc6ceed3ddabce8fb9402dce83d65d73b36e6c7"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64-baseline.zip"
+url_api = "https://api.github.com/repos/oven-sh/bun/releases/assets/418774976"
+
+[tools."github:oven-sh/bun"."platforms.linux-x64-musl"]
+checksum = "sha256:a063908ae08b7852ca10939bbdc6ceed3ddabce8fb9402dce83d65d73b36e6c7"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64-baseline.zip"
+url_api = "https://api.github.com/repos/oven-sh/bun/releases/assets/418774976"
+
+[tools."github:oven-sh/bun"."platforms.macos-arm64"]
+checksum = "sha256:d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-darwin-aarch64.zip"
+url_api = "https://api.github.com/repos/oven-sh/bun/releases/assets/418774455"
+
+[tools."github:oven-sh/bun"."platforms.macos-x64"]
+checksum = "sha256:4183df3374623e5bab315c547cfa0974533cd457d86b73b639f7a87974cd6633"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-darwin-x64.zip"
+url_api = "https://api.github.com/repos/oven-sh/bun/releases/assets/418774587"
+
+[tools."github:oven-sh/bun"."platforms.windows-x64"]
+checksum = "sha256:0a0620930b6675d7ba440e81f4e0e00d3cfbe096c4b140d3fff02205e9e18922"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-windows-x64.zip"
+url_api = "https://api.github.com/repos/oven-sh/bun/releases/assets/418775198"
+
 [[tools.just]]
 version = "1.51.0"
 backend = "aqua:casey/just"
