@@ -17,3 +17,8 @@ claude-code/*
 !claude-code/hooks/
 !claude-code/scripts/
 !claude-code/setup/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
