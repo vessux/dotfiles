@@ -15,6 +15,7 @@ uv = "latest"
 # claude-code/scripts/update-plannotator.sh. The github: backend (ubi: is
 # deprecated, gone in mise 2027.1.0) auto-detects the per-OS/arch release asset,
 # verifies GitHub build-provenance attestations, and records the sha256 in the
-# lockfile. Pinned for reproducibility across Mac+devbox (was 0.19.24); bump
-# explicitly here or via `mise up github:backnotprop/plannotator`.
-"github:backnotprop/plannotator" = "0.19.27"
+# lockfile. macOS-only (`os`): it's a Bun-compiled binary requiring AVX2, which
+# the devbox host CPU (i5-3570K, Ivy Bridge) lacks → SIGILL on launch. Pinned
+# (was 0.19.24); bump explicitly here or via `mise up github:backnotprop/plannotator`.
+"github:backnotprop/plannotator" = { version = "0.19.27", os = ["macos"] }
