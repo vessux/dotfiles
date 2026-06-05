@@ -22,3 +22,12 @@ claude-code/*
 .dolt/
 *.db
 .beads-credential-key
+# Two intentional overrides of beads' tracked-by-default files: the Dolt DB is
+# the source of truth (synced to the git remote via refs/dolt/data), so —
+#   - issues.jsonl: a ~60s-rewritten export, churny and redundant with Dolt.
+#   - interactions.jsonl: a raw agent-interaction audit log, not worth publishing.
+.beads/issues.jsonl
+.beads/interactions.jsonl
+
+# umbel: per-checkout bundle pin (local, re-created per machine)
+.umbel-bundle
