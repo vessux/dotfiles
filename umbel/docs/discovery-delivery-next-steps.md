@@ -23,7 +23,7 @@ Auto-memory (`discovery-delivery-workflow`) is the short bridge; this is the dep
 ## Ready to use (built, live-verified, committed)
 
 All in `~/.config/umbel` (= dotfiles; committed `f9119bc`):
-- **discovery** — capture/triage/prep. `bundles/discovery.md` + `hooks/local/discovery-ruleset/` + `agents/local/triage-presort` + `local/tuidriver` MCP.
+- **discovery** — capture/refine (renamed from capture/triage/prep, ADR 0003). `bundles/discovery.md` + `hooks/local/discovery-ruleset/` + `agents/local/presort` + `local/tuidriver` MCP.
 - **delivery-base** — the invariant contract (scope → claim → capture-and-escalate-never-decide → done, + public review gate) + shared tooling (annotate/last, grill-with-docs, tuidriver). `bundles/delivery-base.md` + `hooks/local/delivery-base-ruleset/`.
 - **delivery-superpowers** — first method: `extends: [delivery-base, superpowers]`, no custom hook (superpowers' own announce-hook + skills carry prep+execution).
 

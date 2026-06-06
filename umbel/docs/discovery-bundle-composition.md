@@ -18,8 +18,9 @@ Round 1 annotations folded in. Top section = **settled** (FYI, no action). Middl
   `to-issues` = a plan/PRD → many vertical-slice tickets. Different scales. (`to-issues`
   fate is open below.)
 
-**Agents:** author a **`triage-presort`** agent (reads open beads, proposes
-dup-merges + priority/type; keep/drop/publish stays yours). ✓
+**Agents:** author a **`presort`** agent (reads open beads, proposes
+dup-merges + priority/type; keep/drop/promote stays yours). ✓ *(named `triage-presort`
+at first; renamed to `presort` when "triage" was purged — see ADR 0003.)*
 
 **MCPs:** ship **`local/tuidriver`** only. No beads/GitHub MCP (CLI + `gh` is enough). ✓
 

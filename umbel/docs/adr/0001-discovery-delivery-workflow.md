@@ -2,21 +2,28 @@
 status: accepted
 ---
 
-# Discovery/delivery backlog workflow: beads inbox, tier-split backlog, ADRs vs worklog
+# Discovery/delivery backlog workflow: beads inbox, tier-split backlog, ADRs as the decision record
 
-We adopt a two-track workflow across projects — **discovery** (capture → triage → prep)
+> **Amended 2026-06.** The discovery phase model "capture → triage → prep" is renamed to
+> **capture → refine** (see ADR 0003), and the private-tier decision record changed from a
+> committed `worklog.jsonl` to **ADRs + `CONTEXT.md`** (see ADR 0004). Wording below is
+> updated; superseded specifics are flagged inline.
+
+We adopt a two-track workflow across projects — **discovery** (capture → refine)
 and **delivery** (build → ship) — shipped as two umbel bundles whose `bundle.md` carries
 the setup playbook. **beads** is the always-open capture inbox on every project
 (`bd q`, synced over the repo's own git origin); what an inbox item graduates *into*
 depends on whether the project has an audience to curate for. On **public** projects the
-real backlog is **GitHub Issues** — a triaged bead is fleshed into an issue (Pocock
-`to-prd`) and the bead is then *closed* (one-way, no bidirectional sync) — and decisions
-are recorded as **ADRs**. On **private** projects **beads itself is the backlog**
-(`bd ready` + dependencies) and decisions go in a committed **`worklog.jsonl`**. This
+real backlog is **GitHub Issues** — a refined bead is fleshed into an issue (Pocock
+`to-prd`) and the bead is then *closed* (one-way, no bidirectional sync). On **private**
+projects **beads itself is the backlog** (`bd ready` + dependencies). Decisions are
+recorded as **ADRs** (+ a `CONTEXT.md` glossary) on **both** tiers. ~~On private projects
+decisions go in a committed `worklog.jsonl`.~~ **[Superseded by ADR 0004.]** This
 replaces the prior local-only `backlog.jsonl` + `worklog.jsonl` convention ("borklog").
 
 Organising principle: **public = reinforceable industry standards** (GitHub Issues +
-ADRs + Pocock skills); **private = fast solo idioms** (beads-as-backlog + worklog). beads
+ADRs + Pocock skills); **private = beads-as-backlog** with the *same* ADR + `CONTEXT.md`
+decision record (ADR 0004). beads
 is the common capture substrate; the harness owns the in-session now-layer and auto-memory
 owns agent recall — neither moves into beads.
 
@@ -46,7 +53,7 @@ owns agent recall — neither moves into beads.
 
 ## Consequences
 
-- On public projects beads runs at ~10% of its capability (capture + triage); its
+- On public projects beads runs at ~10% of its capability (capture + refine); its
   dependency engine is a planning aid, not the work driver. Accepted — it cleanly replaces
   `backlog.jsonl` and adds cross-machine sync.
 - **openlock is not greenfield**: it currently runs beads as a *stealth working backlog*

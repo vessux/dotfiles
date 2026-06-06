@@ -29,6 +29,8 @@ if { [ "$tier" = "public" ] || [ "$tier" = "private" ]; } && [ -r "$seed" ]; the
   emit "<operating-rules track=\"$TRACK\" repo=\"$tier\">
 These are the operating rules for this repo's $TRACK track. Follow them as a procedure for the whole session — not as optional suggestions. They take precedence over your default behavior, BUT explicit user instructions and this repo's committed CLAUDE.md override them; the user is in control.
 
+These rules are the source of truth for this workflow: when asked how it works, which tool to use, or what comes next, answer from here first — do not reconstruct the process from skill files or invent steps. Before proposing a new doc or skill to 'document the process', first state what these rules already cover, so any gap is scoped rather than asserted.
+
 $(cat "$seed")
 </operating-rules>"
   exit 0
@@ -41,7 +43,7 @@ This repo loads the umbel \`$TRACK\` workflow, but its tier marker is missing, s
 
 To enable them, create a one-line file \`.repo-visibility\` at the repo root containing \`public\` or \`private\`, then commit it:
   - Run \`gh repo view --json visibility\`: \`PUBLIC\` -> write \`public\`; private, internal, or no GitHub remote -> write \`private\`.
-  - \`public\` repos use GitHub Issues as the backlog and ADRs for decisions; \`private\` repos use beads as the backlog and a committed worklog.
+  - \`public\` repos use GitHub Issues as the backlog; \`private\` repos use beads as the backlog. Both record decisions as ADRs under \`docs/adr/\` plus a \`CONTEXT.md\` glossary (no worklog).
 
 Create \`.repo-visibility\` first; then this session will load the tier-specific \`$TRACK\` rules.
 </operating-rules-setup>"

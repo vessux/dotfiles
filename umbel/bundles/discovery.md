@@ -1,6 +1,6 @@
 ---
 name: discovery
-description: The discovery track — capture, triage, and prep raw ideas into a ready, curated backlog. beads inbox + cherry-picked triage/PRD/grill/prototype skills. Read the body to set a repo up under the workflow it describes, then hand ready work to the delivery track. Reads the repo's visibility to pick tier; adapts the rest.
+description: The discovery track — capture and refine raw ideas into a ready backlog. beads inbox + cherry-picked refinement/PRD/grill/prototype skills. Read the body to set a repo up under the workflow it describes, then hand ready work to the delivery track. Reads the repo's visibility to pick tier; adapts the rest.
 skills:
   - pocock/triage
   - pocock/to-prd
@@ -15,7 +15,7 @@ skills:
   - plannotator/annotate
   - plannotator/last
 agents:
-  - local/triage-presort
+  - local/presort
 hooks:
   - local/discovery-ruleset
 mcps:
@@ -30,12 +30,12 @@ skill set and the playbook for setting a repo up.
 
 The skill set is **cherry-picked across upstreams**, not a wholesale mirror: no
 single vendored bundle (pocock / superpowers / plannotator) maps to one track, so
-discovery lists only the capture/triage/prep skills it actually uses. Execution
+discovery lists only the capture/refine skills it actually uses. Execution
 skills (TDD, debugging, plan-execution, code-review) belong to the delivery track.
 
 Prerequisite: `bd` (beads) on `PATH` (`brew install bd`). beads is a CLI the agent
 calls directly — it is *not* a bundle artifact. The `local/tuidriver` MCP and the
-`triage-presort` subagent ship with this bundle.
+`presort` subagent ship with this bundle.
 
 ## Applying this bundle
 
@@ -107,14 +107,18 @@ Setup steps:
    **concurrent multi-agent / multi-machine** flow this single-writer model is the wrong
    fit — switch beads to a shared `dolt sql-server` (server mode: `bd init --server` /
    `bd dolt start`) per the beads docs.*
-3. **Stand up the decision record for the tier.** *public*: ensure `docs/adr/` exists
-   and the PR template carries an "architectural change? link the ADR" prompt.
-   *private*: ensure a committed `worklog.jsonl`.
+3. **Stand up the decision record.** Both tiers record decisions the same way:
+   **ADRs** under `docs/adr/` plus a root **`CONTEXT.md`** glossary, created *lazily*
+   by the sharpening skills (`grill-with-docs`, `improve-codebase-architecture`) when
+   there's a decision or a term worth recording — so there's nothing to pre-create.
+   *public* additionally: ensure the PR template carries an "architectural change?
+   link the ADR" prompt. **No `worklog.jsonl` on either tier** (see ADR 0004).
 
 **Migrating an existing `*.jsonl` backlog (borklog):** import each item into beads
 (`bd create … --external-ref <old-id>`), **then keep the old `backlog.jsonl` /
-`worklog.jsonl` as a gitignored archive — never `rm` the only copy.** Distill a public
-repo's worklog into ADRs; freeze a private repo's worklog in place.
+`worklog.jsonl` as a gitignored archive — never `rm` the only copy.** Distill any
+existing worklog into ADRs regardless of tier (both tiers record decisions as
+ADRs + `CONTEXT.md` now).
 
 The committed `CLAUDE.md` stays the shared, contributor-facing face and carries none of
 this private workflow. **Do not put the workflow's process in `CLAUDE.local.md` either** —
@@ -127,7 +131,7 @@ don't replace them with a new pointer.
 The operating ruleset is **not** written into the repo. A SessionStart hook
 (`discovery-ruleset`) injects it every session, selecting `seed.public.md` or
 `seed.private.md` by the `.repo-visibility` marker. Those two files are the
-authoritative, self-contained procedures — capture → triage → prep, where the backlog
+authoritative, self-contained procedures — capture → refine → outcome, where the backlog
 and decision record live, loading current state at the start of a pass, and that the
 now-layer is the harness while recall facts live in auto-memory. Read them to see
 exactly what a discovery session runs under; change the rules **there**, not in this
@@ -143,14 +147,16 @@ injects a recipe to create it rather than guessing the tier.
 - **Why GitHub is the public backlog (not beads).** It's *reinforceable*: external
   contributors and their agents already understand GitHub Issues, file into it, and
   PRs reference it. beads is a private working tool nobody else runs.
-- **Why ADRs on public, worklog on private.** A decision record only works if it
-  survives multi-author contact. A private idiom (worklog, beads memory) is silently
-  skipped on someone else's PR; ADRs are an industry standard you can enforce via PR
-  template and review. On a solo private repo there are no other authors to reinforce
-  against, so the faster worklog idiom wins — and committing it to a private repo is
-  both private *and* synced for free.
-- **Why the ruleset is injected, not filed in the repo.** The workflow itself (beads,
-  triage, worklog) is a private idiom contributors don't run; putting it in a committed
+- **Why ADRs (+ `CONTEXT.md`) on both tiers.** A decision record only works if it
+  survives multi-author contact, and ADRs are an industry standard you can enforce via
+  PR template and review. ADRs plus a `CONTEXT.md` glossary are also exactly what the
+  sharpening skills (`grill-with-docs`, `improve-codebase-architecture`) already produce.
+  So both tiers use them, and only the *backlog* differs by tier (GitHub Issues vs
+  beads). The earlier private-only `worklog.jsonl` idiom was dropped — it bought little
+  over the proven ADR + glossary pair and split the two tiers needlessly (see ADR 0004).
+- **Why the ruleset is injected, not filed in the repo.** The workflow itself
+  (beads-as-inbox, the refinement pass, the bd-driven backlog) is a private idiom
+  contributors don't run; putting it in a committed
   `CLAUDE.md` pollutes the shared face, and writing it to a separate file would drift
   per-repo and need re-seeding on every bundle change. Injecting from the bundle keeps
   one authoritative copy, versioned with the bundle, present only while the bundle is

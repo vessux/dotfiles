@@ -1,21 +1,23 @@
 # Discovery workflow — this is a PUBLIC repo
 
-You run the **discovery** track here: turn raw input into a ready, curated backlog. Follow this procedure.
+You run the **discovery** track here: turn raw input into a ready, curated backlog. The spine is **capture → refine → outcome**. Follow this procedure.
 
 ## Standing rules
-- **Capture is ambient.** The moment any idea, bug, or follow-up appears — yours or surfaced mid-task — run `bd q "…"`. No triage, no ceremony, no asking first. Don't rationalize skipping it: "too small", "I'll remember", "I'll fix it inline" are all wrong — `bd q` it and move on. An **open** bead is in the inbox (untriaged); a **closed** bead is triaged-out, its close-reason recording its fate (`→ gh#42`, `wontfix: …`).
-- **beads is only the inbox. The real backlog is GitHub Issues** — curated, browsable, the surface external people file against. Keep raw capture in beads; promote only fleshed-out work to GitHub.
-- **Decisions go in ADRs** under `docs/adr/`, reinforced by the PR-template "architectural change? link the ADR" prompt. There is **no committed worklog** here.
+- **Capture is ambient.** The moment any idea, bug, or follow-up appears — yours or surfaced mid-task — run `bd q "…"`. No filtering, no ceremony, no asking first. Don't rationalize skipping it: "too small", "I'll remember", "I'll fix it inline" are all wrong — `bd q` it and move on. An **open** bead is a **raw capture** in the inbox; a **closed** bead is **resolved**, its close-reason recording its fate (`→ gh#42` promoted, `wontfix: …` dropped). On a public repo a refined item *leaves* beads — it lives on as the GitHub issue — so beads only ever holds raw captures plus a closed trail.
+- **beads is only the inbox. The real backlog is GitHub Issues** — curated, browsable, the surface external people file against. Keep raw capture in beads; promote only refined work to GitHub.
+- **Decisions go in ADRs** under `docs/adr/`, and domain language in a root `CONTEXT.md` glossary — both maintained by the sharpening skills as decisions crystallise, reinforced by the PR-template "architectural change? link the ADR" prompt. There is **no committed worklog** here.
 - **The now-layer is your harness task list; recall facts live in auto-memory.** Never fold either into beads — they answer different questions.
-- **At the start of every triage pass, load current state yourself** (never ask the user): `git pull`, refresh beads, list the open inbox (`bd list --status=open`), and `gh issue list` the backlog. Do this even when you think you already know the state — triaging a stale inbox produces duplicates and wrong calls.
+- **At the start of every refinement pass, load current state yourself** (never ask the user): `git pull`, refresh beads, list the open inbox (`bd list --status=open`), and `gh issue list` the backlog. Do this even when you think you already know the state — refining a stale inbox produces duplicates and wrong calls.
 
 ## The loop
 1. **Capture** (ambient): `bd q "…"` as above.
-2. **Pre-sort** (optional): dispatch the `triage-presort` agent over `bd list --status=open` to cluster duplicates and propose type/priority. It only proposes — you decide.
-3. **Triage** each open bead: keep or drop.
-4. **Prep the keepers**: flesh a kept bead into a proper issue with `to-prd` (→ `to-issues` when it is epic-sized and needs vertical slices), create the GitHub issue, then **close the bead**: `bd close <id> --reason "→ gh#N"`. Flow is one-way beads → GitHub; no bidirectional sync.
-5. **Drop the rest**: `bd close <id> --reason "wontfix: …"`.
+2. **Pre-sort** (optional): dispatch the `presort` agent over `bd list --status=open` to cluster duplicates and propose type/priority. It only proposes — you decide.
+3. **Refine** each open bead to a decision — **keep, drop, or promote**. The sharpening tools are *how* that decision gets made, not post-decision polish: `grill-me` / `grill-with-docs` (stress-test a design, write the ADR, sharpen `CONTEXT.md`), `zoom-out` (higher-level view), `prototype` (de-risk before committing), `improve-codebase-architecture` (surface deepening work as new captures), `annotate` / `last` (feedback on a PRD/plan or a long thread). Work a bead with these until it is either clearly droppable or shaped enough to promote.
+   - **Promote a keeper:** flesh it into a proper issue with `to-prd` (→ `to-issues` when it is epic-sized and needs vertical slices), create the GitHub issue (label it `ready-for-agent`), then **close the bead**: `bd close <id> --reason "→ gh#N"`. Flow is one-way beads → GitHub; no bidirectional sync.
+   - **Drop the rest:** `bd close <id> --reason "wontfix: …"`.
 
-Sharpening tools available throughout prep: `grill-me` / `grill-with-docs` (stress-test a design, write the ADR), `zoom-out` (higher-level view), `prototype` (de-risk before committing), `improve-codebase-architecture` (surface deepening work as new captures), `annotate` / `last` (feedback on a PRD/plan or a long thread), `handoff` (compact a session for the next agent).
+`handoff` (compact a session for the next agent) is available at any point.
+
+**Not part of this loop:** the GitHub `/triage` skill is a *separate* activity — it sorts the issues **outsiders** file (labelling `needs-triage` / `ready-for-agent` / …). Your own promoted issues land already-shaped and `ready-for-agent`, so they skip it. "Triage" means only that GitHub-side intake; the beads pass above is **refinement**.
 
 **Output:** a ready GitHub issue. That is the input to the `delivery` track.

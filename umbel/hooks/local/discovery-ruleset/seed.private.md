@@ -1,21 +1,21 @@
 # Discovery workflow — this is a PRIVATE repo
 
-You run the **discovery** track here: turn raw input into a ready backlog. Follow this procedure.
+You run the **discovery** track here: turn raw input into a ready backlog. The spine is **capture → refine → outcome**. Follow this procedure.
 
 ## Standing rules
-- **Capture is ambient.** The moment any idea, bug, or follow-up appears — yours or surfaced mid-task — run `bd q "…"`. No triage, no ceremony, no asking first. Don't rationalize skipping it: "too small", "I'll remember", "I'll fix it inline" are all wrong — `bd q` it and move on. An **open** bead is in the inbox (untriaged); a **closed** bead is triaged-out, its close-reason recording its fate.
-- **beads is the backlog.** `bd ready` + dependencies + epics drive the work directly. There is no GitHub issue tracker here — do not create one.
-- **Decisions go in `worklog.jsonl`**, committed to this repo: a terse, append-only journal of settled decisions and the alternatives you rejected.
+- **Capture is ambient.** The moment any idea, bug, or follow-up appears — yours or surfaced mid-task — run `bd q "…"`. No filtering, no ceremony, no asking first. Don't rationalize skipping it: "too small", "I'll remember", "I'll fix it inline" are all wrong — `bd q` it and move on. The whole lifecycle lives in beads here: an **open** bead with no stage marker is a **raw capture**; once you refine a keeper you mark it `stage:ready` (`bd set-state <id> stage=ready`) — the line between raw capture and **ready for delivery**; a **closed** bead is **resolved** (delivered, or dropped — the close-reason says which).
+- **beads is the backlog.** `bd ready` + dependencies + epics drive the work directly. There is no GitHub issue tracker here — do not create one. The delivery track pulls the refined, unblocked beads (`bd ready` that are `stage:ready`).
+- **Decisions go in ADRs** under `docs/adr/`, and domain language in a root `CONTEXT.md` glossary — the same proven artifacts a public repo uses, maintained by the sharpening skills as decisions crystallise. Create them lazily (only when there's a decision or a term worth recording). There is **no worklog**.
 - **The now-layer is your harness task list; recall facts live in auto-memory.** Never fold either into beads — they answer different questions.
-- **At the start of every triage pass, load current state yourself** (never ask the user): `git pull`, refresh beads, and list the open inbox (`bd list --status=open`). Do this even when you think you already know the state — triaging a stale inbox produces duplicates and wrong calls.
+- **At the start of every refinement pass, load current state yourself** (never ask the user): `git pull`, refresh beads, and list the open inbox (`bd list --status=open`). Do this even when you think you already know the state — refining a stale inbox produces duplicates and wrong calls.
 
 ## The loop
 1. **Capture** (ambient): `bd q "…"` as above.
-2. **Pre-sort** (optional): dispatch the `triage-presort` agent over `bd list --status=open` to cluster duplicates and propose type/priority. It only proposes — you decide.
-3. **Triage** each open bead: keep or drop.
-4. **Prep the keepers**: groom in place — set priority, wire dependencies (`bd dep`), group into epics — until the bead is `bd ready`. No PRD-to-self, no promotion step.
-5. **Drop the rest**: `bd close <id> --reason "wontfix: …"`.
+2. **Pre-sort** (optional): dispatch the `presort` agent over `bd list --status=open` to cluster duplicates and propose type/priority. It only proposes — you decide.
+3. **Refine** each open bead to a decision — **shape it to ready, or drop it**. The sharpening tools are *how* that decision gets made, not post-decision polish: `grill-me` / `grill-with-docs` (stress-test a design, capture the decision as an ADR, sharpen `CONTEXT.md`), `zoom-out` (higher-level view), `prototype` (de-risk before committing), `improve-codebase-architecture` (surface deepening work as new captures), `annotate` / `last` (feedback on a plan or a long thread). Work a bead with these until it is either clearly droppable or shaped enough to hand to delivery.
+   - **Ready a keeper:** groom in place — set priority, wire dependencies (`bd dep`), group into epics — then mark it `bd set-state <id> stage=ready`. No PRD-to-self, no promotion step; the bead *is* the work item.
+   - **Drop the rest:** `bd close <id> --reason "wontfix: …"`.
 
-Sharpening tools available throughout prep: `grill-me` / `grill-with-docs` (stress-test a design, capture the decision), `zoom-out` (higher-level view), `prototype` (de-risk before committing), `improve-codebase-architecture` (surface deepening work as new captures), `annotate` / `last` (feedback on a plan or a long thread), `handoff` (compact a session for the next agent).
+`handoff` (compact a session for the next agent) is available at any point.
 
-**Output:** a `bd ready` bead. That is the input to the `delivery` track.
+**Output:** a `stage:ready` bead (surfaced via `bd ready` once unblocked). That is the input to the `delivery` track.
