@@ -6,13 +6,13 @@ status: accepted
 
 > **Amended 2026-06.** The discovery phase model "capture → triage → prep" is renamed to
 > **capture → refine** (see ADR 0003), and the private-tier decision record changed from a
-> committed `worklog.jsonl` to **ADRs + `CONTEXT.md`** (see ADR 0004). Wording below is
+> committed `worklog.jsonl` to **ADRs + `CONTEXT.md`** (see ADR 0004); the capture verb changed from `bd q` to `bd create` (see ADR 0005). Wording below is
 > updated; superseded specifics are flagged inline.
 
 We adopt a two-track workflow across projects — **discovery** (capture → refine)
 and **delivery** (build → ship) — shipped as two umbel bundles whose `bundle.md` carries
 the setup playbook. **beads** is the always-open capture inbox on every project
-(`bd q`, synced over the repo's own git origin); what an inbox item graduates *into*
+(`bd create`, synced over the repo's own git origin); what an inbox item graduates *into*
 depends on whether the project has an audience to curate for. On **public** projects the
 real backlog is **GitHub Issues** — a refined bead is fleshed into an issue (Pocock
 `to-prd`) and the bead is then *closed* (one-way, no bidirectional sync). On **private**

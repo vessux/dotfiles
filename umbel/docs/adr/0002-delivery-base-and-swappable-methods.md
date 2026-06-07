@@ -31,7 +31,7 @@ This builds entirely from bundle artifacts — **umbel itself is unchanged** (se
 - **Seed the ruleset into a gitignored `CLAUDE.local.md`** (the original plan) — rejected:
   needs file-write + idempotency + `.gitignore` machinery, drifts per-repo, must be
   re-seeded on every change, and writes into the project tree. The ruleset is only needed
-  while a bundle is loaded; raw `bd q` capture works regardless (beads is a global CLI).
+  while a bundle is loaded; raw beads capture works regardless (beads is a global CLI).
   Superseded by injection.
 - **Inject via `--append-system-prompt`** — rejected: one-shot launch flag with undocumented
   behavior across compaction. A SessionStart hook re-fires on `compact`, mirroring how

@@ -42,7 +42,7 @@ actual `bd close` / promote / `bd update` calls.
 
 ## Hard constraints
 
-- **Read-only.** Never run `bd close`, `bd update`, `bd create`, `bd q`,
+- **Read-only.** Never run `bd close`, `bd update`, `bd create`,
   `bd promote`, `bd dep`, or any mutating command. Read verbs only
   (`list`, `show`, `find-duplicates`, `count`).
 - No `gh issue create` / GitHub mutations — promotion is the user's call in the
