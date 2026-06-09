@@ -25,7 +25,7 @@ Auto-memory (`discovery-delivery-workflow`) is the short bridge; this is the dep
 All in `~/.config/umbel` (= dotfiles; committed `f9119bc`):
 - **discovery** — capture/refine (renamed from capture/triage/prep, ADR 0003). `bundles/discovery.md` + `hooks/local/discovery-ruleset/` + `agents/local/presort` + `local/tuidriver` MCP.
 - **delivery-base** — the invariant contract (scope → claim → capture-and-escalate-never-decide → done, + public review gate) + shared tooling (annotate/last, grill-with-docs, tuidriver). `bundles/delivery-base.md` + `hooks/local/delivery-base-ruleset/`.
-- **delivery-superpowers** — first method: `extends: [delivery-base, superpowers]`, no custom hook (superpowers' own announce-hook + skills carry prep+execution).
+- **delivery-superpowers** — first method: `extends: [delivery-base, superpowers]`, one inject hook for **config only** (`local/delivery-superpowers-locations`, redirects specs/plans to a gitignored `.local/superpowers/`); superpowers' own announce-hook + skills carry prep+execution.
 
 **How rules reach the agent:** a SessionStart hook reads a committed repo-root
 `.repo-visibility` (`public`|`private`) and injects the tier-matched ruleset as

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# SessionStart hook: declare where the superpowers skills write their FILE artifacts for this
+# repo, overriding the vendored docs/superpowers/ default with a gitignored .local/ root.
+# Tier-independent. Offline-safe: no network, no repo reads.
+set -euo pipefail
+
+# Raw text -> JSON additionalContext (Claude Code hook shape). printf, not heredoc
+# (bash 5.3+ heredoc hang, see obra/superpowers#571).
+emit() {
+  local s="$1"
+  s="${s//\\/\\\\}"; s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"; s="${s//$'\r'/\\r}"; s="${s//$'\t'/\\t}"
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$s"
+}
+
+emit "<superpowers-artifact-locations>
+For this repo, the superpowers skills write their FILE artifacts under a gitignored,
+machine-local root — NOT the upstream \`docs/superpowers/\` default. Treat the paths below as the
+declared 'user preference' those skills defer to:
+
+- Design specs (brainstorming): \`.local/superpowers/specs/YYYY-MM-DD-<topic>-design.md\`
+- Implementation plans (writing-plans): \`.local/superpowers/plans/YYYY-MM-DD-<feature>.md\`
+
+Before writing the first artifact, ensure \`.local/\` is gitignored: if \`git check-ignore -q .local\`
+fails, add a \`.local/\` line to \`.gitignore\` and commit it. Do NOT commit anything under \`.local/\`.
+
+Worktrees are unaffected — keep them at superpowers' own \`.worktrees/\` default (it self-ignores
+and self-cleans). Do not move worktrees under \`.local/\`.
+</superpowers-artifact-locations>"
+exit 0

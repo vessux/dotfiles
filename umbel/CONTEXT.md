@@ -16,9 +16,17 @@ The single discovery phase that shapes a capture into delivery-ready work or dro
 sharpening skills as its engine.
 _Avoid_: triage, prep, grooming
 
+**Adopt**:
+To wire a repo up under a bundle's workflow — read the bundle body, inspect the repo's current
+state, and provision everything the bundle needs to be fully utilised (tier marker, tooling,
+per-repo skill defaults), adapting to what is already there.
+_Avoid_: install, apply, enable, pin
+
 ## Relationships
 
 - **Refinement** shapes a **Capture** into a delivery-ready bead, or drops it.
+- To **Adopt** a bundle is to provision a repo so its skills are fully utilised — distinct from
+  *pinning* (a product-level launch route) and from merely loading the bundle's skills.
 
 ## Example dialogue
 
@@ -32,3 +40,6 @@ _Avoid_: triage, prep, grooming
 - "Capture" was read two ways — a terse pointer (re-find the thought later) vs a perishable-context
   snapshot. Resolved: it's a **perishable-context snapshot**; the body is recorded at capture time
   because the context won't survive to refinement.
+- "Adopt" was collapsed into "pin the bundle" / "load its skills" — resolved: adoption is the
+  per-repo **setup procedure** derived from the bundle body (tier, tooling, skill defaults); pinning
+  only routes launches and skill-loading is automatic, so neither alone is adoption.
