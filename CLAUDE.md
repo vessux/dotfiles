@@ -1,7 +1,6 @@
 # dotfiles
 
-Personal dotfiles repo. Runs the **discovery track (private tier)** — see the session
-operating rules and `umbel/docs/adr/`. beads is the backlog.
+Personal dotfiles repo.
 
 ## Agent skills
 
