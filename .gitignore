@@ -31,3 +31,8 @@ claude-code/*
 
 # umbel: per-checkout bundle pin (local, re-created per machine)
 .umbel-bundle
+
+# delivery-superpowers: the location-override hook redirects superpowers'
+# specs/plans here; machine-local, never committed. Slash-less so the hook's
+# own `git check-ignore -q .local` probe passes before the dir exists.
+.local
