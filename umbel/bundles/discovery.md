@@ -47,9 +47,11 @@ migration: every repo starts somewhere different (greenfield, old `*.jsonl` bork
 beads already running stealth), so adapt, and ask when the current state is ambiguous.
 
 One question decides the shape, and you can usually answer it yourself:
-**is the GitHub repo public or private?** Check with `gh repo view --json visibility`
-(or the absence of a GitHub remote → treat as private). Public visibility → public
-tier; private or no remote → private tier.
+**is the GitHub repo public or private?** Check with `gh repo view --json visibility`:
+public visibility → public tier; private or internal → private tier. **No GitHub remote
+yet is not a third option** — it means *not ready to adopt the private tier*, because the
+private path's beads wiring (step 2) is remote-backed. Publish the repo and add the remote
+*first*, then proceed as private.
 
 Setup steps:
 
@@ -58,6 +60,10 @@ Setup steps:
    this marker every session and injects the matching operating procedure — so this is
    the one step that turns the rules on. It is committed (not gitignored) so it
    resolves offline in fresh clones and sandboxes, where `gh` may be unavailable.
+   **For the `private` tier, a git remote is a prerequisite — add it before writing
+   `private`** (step 2's beads wiring is remote-backed). A repo with no remote isn't
+   "private, locally"; it's *not ready to adopt the private tier* — publish and add the
+   remote first. Local-only beads runs, but leaves step 2 incomplete; that's not done.
 2. **Wire beads — git-remote-backed via Dolt; transparent, but fork-safe.** This is the
    step people get wrong. The goal: **don't hide that the repo uses beads, but cleanly
    separate the maintainer's cross-machine DX from anything that could fight a forker's
@@ -65,6 +71,10 @@ Setup steps:
    state out of git. Beads' own defaults already encode this split — follow them; don't
    invent ad-hoc overrides.
 
+   - **Prerequisite — a git remote.** This whole step is remote-backed (Dolt syncs to the
+     git origin; auto-backup enables only when a remote exists), so a remote must already
+     be wired — sequenced *before* you wrote `.repo-visibility=private`. No remote → publish
+     the repo and add it first; don't proceed here (or declare setup done) on a remote-less repo.
    - **Normal mode, not `--stealth`.** Stealth hides beads, sets `no-git-ops: true`, and
      **skips wiring the Dolt remote** — wrong for a shared/public repo. Being open about
      beads is fine; fork-safety comes from *which artifacts* are committed (below), not
@@ -96,6 +106,11 @@ Setup steps:
      unaffected. Hooks automate `bd dolt push/pull` alongside `git push`/`git pull`.
 
    *Auth/ref layout are environment-specific — confirm the push lands before relying on it.*
+
+   **Done condition.** Step 2 is complete only when the inbox is actually reachable: `bd list`
+   returns the beads inbox *and* the remote sync is wired (`git ls-remote origin 'refs/dolt/*'`
+   shows the pushed refs). A repo where `.repo-visibility=private` exists but this check fails is
+   **not** set up — don't claim discovery setup is done.
 
    *Sync is **git-style async, not real-time**: a capture/claim is a local commit that
    reaches the remote on push and other machines on pull — **a claim is not a lock**.
