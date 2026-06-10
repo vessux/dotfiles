@@ -16,6 +16,12 @@
         "rawValue": true
       },
       {
+        "id": "16",
+        "type": "custom-command",
+        "commandPath": "$HOME/dotfiles/ccstatusline/umbel-segment.sh",
+        "preserveColors": true
+      },
+      {
         "id": "2",
         "type": "flex-separator"
       },
