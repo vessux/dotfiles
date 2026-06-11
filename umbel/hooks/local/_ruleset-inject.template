@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# GENERATED from _ruleset-inject.template by gen-ruleset-inject.sh — do not edit; edit the template and regenerate
 # SessionStart hook: inject this track's operating ruleset for this repo's tier.
 # Reads the committed repo-root .repo-visibility marker (public|private) and emits
 # the matching seed.<tier>.md as additionalContext. Marker absent -> emit a guided
 # create-marker prompt (never guesses the tier). Offline-safe: no network.
 set -euo pipefail
 
-TRACK="discovery"
+TRACK="@TRACK@"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Raw text -> JSON additionalContext (Claude Code hook shape). printf, not

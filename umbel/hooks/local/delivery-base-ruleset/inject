@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# GENERATED from _ruleset-inject.template by gen-ruleset-inject.sh — do not edit; edit the template and regenerate
 # SessionStart hook: inject this track's operating ruleset for this repo's tier.
 # Reads the committed repo-root .repo-visibility marker (public|private) and emits
 # the matching seed.<tier>.md as additionalContext. Marker absent -> emit a guided
