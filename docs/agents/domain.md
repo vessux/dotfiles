@@ -17,8 +17,8 @@ More contexts get documented as they need it.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest
 creating them upfront. The producer skill (`/grill-with-docs`) creates them lazily when terms or
-decisions actually get resolved. (As of setup: `umbel/docs/adr/` exists; `CONTEXT-MAP.md` and the
-per-context `CONTEXT.md` files do not yet.)
+decisions actually get resolved. (As of setup: `umbel/docs/adr/` and `umbel/CONTEXT.md` exist; the
+root `CONTEXT-MAP.md` does not yet.)
 
 ## File structure (multi-context)
 
@@ -27,7 +27,7 @@ per-context `CONTEXT.md` files do not yet.)
 ├── CONTEXT-MAP.md                ← lists contexts (lazily created)
 ├── docs/adr/                     ← system-wide decisions, if any (lazily created)
 └── umbel/                        ← the first documented context
-    ├── CONTEXT.md                ← umbel domain glossary (lazily created)
+    ├── CONTEXT.md                ← umbel domain glossary (EXISTS)
     └── docs/adr/                 ← umbel decisions (EXISTS)
         ├── 0001-discovery-delivery-workflow.md
         ├── 0002-delivery-base-and-swappable-methods.md
