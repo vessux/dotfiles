@@ -14,7 +14,6 @@ skills:
   - pocock/setup-matt-pocock-skills
   - plannotator/annotate
   - plannotator/last
-agents:
   - local/presort
 hooks:
   - local/discovery-ruleset
@@ -35,7 +34,7 @@ skills (TDD, debugging, plan-execution, code-review) belong to the delivery trac
 
 Prerequisite: `bd` (beads) on `PATH` (`brew install bd`). beads is a CLI the agent
 calls directly — it is *not* a bundle artifact. The `local/tuidriver` MCP and the
-`presort` subagent ship with this bundle.
+`/presort` skill (a forked, read-only refinement-pass classifier) ship with this bundle.
 
 ## Applying this bundle
 
