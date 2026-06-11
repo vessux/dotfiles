@@ -41,10 +41,11 @@ fi
 emit "<operating-rules-setup track=\"$TRACK\">
 This repo loads the umbel \`$TRACK\` workflow, but its tier marker is missing, so the operating rules cannot be selected.
 
-To enable them, create a one-line file \`.repo-visibility\` at the repo root containing \`public\` or \`private\`, then commit it:
-  - Run \`gh repo view --json visibility\`: \`PUBLIC\` -> write \`public\`; private, internal, or no GitHub remote -> write \`private\`.
-  - \`public\` repos use GitHub Issues as the backlog; \`private\` repos use beads as the backlog. Both record decisions as ADRs under \`docs/adr/\` plus a \`CONTEXT.md\` glossary (no worklog).
+To enable them, pick the tier, then create a one-line \`.repo-visibility\` file at the repo root containing \`public\` or \`private\` and commit it:
+  - \`gh repo view --json visibility\`: \`PUBLIC\` -> \`public\`; private or internal -> \`private\`.
+  - **No GitHub remote yet?** Don't just write \`private\` and stop — \`private\` uses beads, whose documented wiring (Dolt sync to the git remote + auto-backup) is remote-backed and can't complete without one. Publish the repo and add the remote *first*, then write \`private\`. A local-only beads inbox does run, but it's an incomplete setup — not 'done'.
+  - \`public\` repos use GitHub Issues as the backlog; \`private\` repos use beads. Both record decisions as ADRs under \`docs/adr/\` plus a \`CONTEXT.md\` glossary (no worklog).
 
-Create \`.repo-visibility\` first; then this session will load the tier-specific \`$TRACK\` rules.
+Setup is **done** only when the tier backlog is actually reachable — for \`private\`, \`bd list\` returns the inbox AND its remote sync is wired (\`git ls-remote origin 'refs/dolt/*'\` shows pushed refs); for \`public\`, Issues are reachable. The marker existing is not 'done' on its own. Create \`.repo-visibility\` (for \`private\`, after the remote); then this session will load the tier-specific \`$TRACK\` rules.
 </operating-rules-setup>"
 exit 0
