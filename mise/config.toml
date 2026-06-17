@@ -20,6 +20,18 @@ uv = "latest"
 # (was 0.19.24); bump explicitly here or via `mise up github:backnotprop/plannotator`.
 "github:backnotprop/plannotator" = { version = "0.19.27", os = ["macos"] }
 
+# markitdown — local rich files (PDF/docx/pptx/xlsx) -> markdown, for handing
+# readable sources to agents (the `md` zsh fn in zsh/.zshrc). pipx backend driven
+# by uv (see [settings.pipx] below) since there's no pipx on this box. Document-
+# subset extras only — [all] drags in audio-transcription + Azure Document-
+# Intelligence deps none of the use cases need; add an extra here if a file type
+# comes up. Stays on PyPI/mise (not nix): Microsoft-active fast-mover, same
+# "nixpkgs lags" rationale as the brew formulae in nix/packages.nix. URLs do NOT
+# go through markitdown — they go through Jina (r.jina.ai) in the `md` fn.
+# NB: inline-bracket extras ("pipx:markitdown[pdf,...]") are silently dropped by
+# mise's uvx path — it parses off the package name. Use the `extras` option instead.
+"pipx:markitdown" = { version = "latest", extras = "pdf,docx,pptx,xlsx" }
+
 # bun — JS runtime/bundler. Managed here so it's available cross-box (also wanted
 # for building plannotator from source on the devbox, and for openlock later).
 # The github: backend keys versions by the *full release tag* (`bun-v1.3.14`), not
@@ -31,3 +43,8 @@ version = "bun-v1.3.14"
 
 [tools."github:oven-sh/bun".platforms]
 linux-x64 = { asset_pattern = "bun-linux-x64-baseline.zip" }
+
+# Drive the pipx backend with uv (already installed) instead of requiring pipx —
+# there's no pipx on this box. Enables the markitdown install above.
+[settings.pipx]
+uvx = true
