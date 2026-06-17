@@ -103,6 +103,12 @@ Setup steps:
      worktrees, and every worktree must reach the one shared inbox and run the same hooks.
      `core.hooksPath` is local config, so this stays per-machine opt-in; forks are
      unaffected. Hooks automate `bd dolt push/pull` alongside `git push`/`git pull`.
+   - **Set your beads role — per-clone, machine-local: `git config beads.role maintainer`.**
+     beads tags git operations with a role; left unset it nags and `bd doctor` flags it
+     (`Fix: git config beads.role maintainer`). Set it the same way as `core.hooksPath` —
+     with `git config` (machine-local), **never** in the committed `.beads/config.yaml`,
+     which would foist `maintainer` on every fork. Your own clones use `maintainer`; a
+     contributor who opts into beads sets `contributor`.
 
    *Auth/ref layout are environment-specific — confirm the push lands before relying on it.*
 
@@ -127,6 +133,15 @@ Setup steps:
    there's a decision or a term worth recording — so there's nothing to pre-create.
    *public* additionally: ensure the PR template carries an "architectural change?
    link the ADR" prompt. **No `worklog.jsonl` on either tier** (see ADR 0004).
+4. **Generate the agent docs the bundled skills read.** Run `/setup-matt-pocock-skills`
+   (shipped in this bundle) to scaffold `docs/agents/{issue-tracker,triage-labels,domain}.md`
+   plus the `## Agent skills` block in `CLAUDE.md`/`AGENTS.md`. The bundled `to-prd`,
+   `to-issues`, and `triage` skills read these for the tracker, triage vocabulary, and domain
+   layout, and nag (or run with the wrong context) when they're missing. One adaptation: when
+   the skill asks where issues live, the answer is **beads, not its GitHub default** — describe
+   the beads inbox via the "Other" option (private tier: beads *is* the backlog; public tier:
+   beads is the inbox feeding the GitHub backlog), and map triage onto this bundle's `stage:*`
+   states rather than the canonical GitHub labels.
 
 **Migrating an existing `*.jsonl` backlog (borklog):** import each item into beads
 (`bd create … --external-ref <old-id>`), **then keep the old `backlog.jsonl` /
