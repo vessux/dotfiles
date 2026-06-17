@@ -7,13 +7,19 @@
 #   name    = $UMBEL_BUNDLE, trusted only when $UMBEL_RESOLVED=1
 #   version = STOPGAP, scraped from PATH (see below)
 #
+# A real bundle requires BOTH vars: `umbel run` spawns claude with
+# UMBEL_RESOLVED=1 on EVERY launch (it's the shim's re-entrancy guard), and
+# sets UMBEL_BUNDLE only when a bundle actually resolved — its vanilla path
+# (execVanilla) keeps RESOLVED=1 but drops the name. So a missing/empty name
+# under RESOLVED=1 means "vanilla", never an error.
+#
 # Output states (raw 16-color SGR; wired with preserveColors:true so this
 # script owns color, and colorLevel:1/ansi16 keeps it theme-driven):
 #   resolved + version   -> magenta  "󰏗 name@<7hash>"
 #   resolved, no version -> magenta  "󰏗 name"          (version best-effort)
-#   vanilla (unresolved) -> dim grey "󰏗 vanilla"
-#   hard error           -> empty stdout (segment drops out)
-# Bare-name, vanilla, and blank each mean something different.
+#   vanilla / no bundle  -> dim grey "󰏗 vanilla"
+# "vanilla" covers an explicit vanilla pick (RESOLVED=1, no name) AND a claude
+# not launched via umbel at all (RESOLVED unset) — both mean no bundle governs.
 #
 # VERSION SOURCE IS FRAGILE — graduates via dotfiles-cbt / umbel-ri9:
 # Claude appends each --plugin-dir's bin/ to PATH (umbel src/bundle/
@@ -30,16 +36,13 @@ MAGENTA="${ESC}[35m"
 GREY="${ESC}[90m"
 RESET="${ESC}[0m"
 
-# Vanilla: no bundle resolved for this session.
-if [ "${UMBEL_RESOLVED:-}" != 1 ]; then
+# Vanilla / no bundle: either claude wasn't launched via umbel (RESOLVED unset)
+# or umbel's vanilla path resolved with no name. Both -> dim grey "󰏗 vanilla".
+name=${UMBEL_BUNDLE:-}
+if [ "${UMBEL_RESOLVED:-}" != 1 ] || [ -z "$name" ]; then
 	printf '%s%s vanilla%s' "$GREY" "$ICON" "$RESET"
 	exit 0
 fi
-
-name=${UMBEL_BUNDLE:-}
-# Resolved but nameless is contradictory -> hard error: emit nothing so the
-# segment drops entirely (a distinct signal from "vanilla").
-[ -n "$name" ] || exit 0
 
 # Best-effort version: find THIS bundle's PATH entry and read its hash.
 hash=

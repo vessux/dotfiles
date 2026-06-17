@@ -22,10 +22,6 @@
         "preserveColors": true
       },
       {
-        "id": "2",
-        "type": "flex-separator"
-      },
-      {
         "id": "3",
         "type": "context-bar",
         "color": "green",
@@ -79,10 +75,6 @@
         "rawValue": true
       },
       {
-        "id": "8",
-        "type": "flex-separator"
-      },
-      {
         "id": "9",
         "type": "session-cost",
         "color": "green",
@@ -134,10 +126,6 @@
         "type": "git-changes",
         "color": "yellow",
         "rawValue": true
-      },
-      {
-        "id": "14",
-        "type": "flex-separator"
       },
       {
         "id": "i15",

@@ -3,8 +3,9 @@
 # Run:  ./umbel-segment.test.sh   (exit 0 = all pass)
 #
 # Hermetic: the segment script uses only shell builtins, so PATH can be a
-# synthetic value here without affecting it. We exercise all four output
-# states by setting UMBEL_RESOLVED / UMBEL_BUNDLE / PATH per case via `env`.
+# synthetic value here without affecting it. We exercise both output states
+# (resolved bundle vs vanilla) by setting UMBEL_RESOLVED / UMBEL_BUNDLE / PATH
+# per case via `env`.
 set -u
 
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -45,14 +46,15 @@ out=$(env UMBEL_RESOLVED=1 UMBEL_BUNDLE=discovery \
 check "resolved, no matching PATH entry -> bare name magenta" \
 	"${M}󰏗 discovery${R}" "$out"
 
-# State 4: vanilla — UMBEL_RESOLVED unset (bundle name present but ignored)
+# State 4: not launched via umbel — UMBEL_RESOLVED unset (stale name ignored)
 out=$(env -u UMBEL_RESOLVED UMBEL_BUNDLE=discovery PATH="/usr/bin:/bin" "$SUT")
-check "vanilla (UMBEL_RESOLVED unset) -> dim grey" \
+check "no umbel (UMBEL_RESOLVED unset) -> dim grey vanilla" \
 	"${G}󰏗 vanilla${R}" "$out"
 
-# State 5: hard error — resolved but no name -> empty stdout (segment drops)
+# State 5: explicit vanilla pick — resolved (RESOLVED=1) but no name -> dim grey
 out=$(env -u UMBEL_BUNDLE UMBEL_RESOLVED=1 PATH="/usr/bin:/bin" "$SUT")
-check "resolved but no name -> empty stdout" "" "$out"
+check "vanilla pick (resolved, no name) -> dim grey vanilla" \
+	"${G}󰏗 vanilla${R}" "$out"
 
 echo
 if [ "$fails" -eq 0 ]; then
