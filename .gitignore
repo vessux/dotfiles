@@ -18,6 +18,14 @@ claude-code/*
 !claude-code/scripts/
 !claude-code/setup/
 
+# .claude/: this repo's project-local harness dir — distinct from the tracked
+# claude-code/ global config above. The harness writes only transient state
+# here (worktrees from EnterWorktree at .claude/worktrees/<name>, session
+# state, …); nothing is meant to be committed. Blanket-ignore so a stray
+# `git add -A` can't stage worktree contents. Whitelist later if repo-specific
+# project config is ever wanted — see the claude-code/* block above.
+.claude/
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
