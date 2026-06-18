@@ -29,10 +29,7 @@ root `CONTEXT-MAP.md` does not yet.)
 └── umbel/                        ← the first documented context
     ├── CONTEXT.md                ← umbel domain glossary (EXISTS)
     └── docs/adr/                 ← umbel decisions (EXISTS)
-        ├── 0001-discovery-delivery-workflow.md
-        ├── 0002-delivery-base-and-swappable-methods.md
-        ├── 0003-refinement-rename-and-model.md
-        └── 0004-private-tier-decision-record.md
+        └── NNNN-*.md             ← numbered ADRs; list the dir to read them
 ```
 
 The non-`umbel/` parts of this repo (zsh, nvim, tmux, git, … tool configs) carry no domain
