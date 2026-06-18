@@ -29,7 +29,7 @@ the artifact boundary** — the question is only how to stop it drifting silentl
 
 ## Decision
 
-Draw one boundary across both artifact classes:
+Two artifact types, one rule — **what ships is self-contained**:
 
 - **Runtime artifacts** (hook sidecars + injected seed text) are **self-contained per leaf**.
   They must run standalone (no umbel build-dependency) and injected text must cite nothing
@@ -44,7 +44,15 @@ Draw one boundary across both artifact classes:
   `discovery.md` ("Same tier setup as discovery", "beads wired by discovery's Wire beads step").
   This is correct, not over-coupling — delivery consumes the ready backlog discovery produces,
   so it structurally presupposes discovery's setup, and the `.repo-visibility` marker is a shared
-  substrate (CONTEXT.md). Prose read at setup time has no runtime or portability constraint.
+  substrate (CONTEXT.md). That deference stays **within the distribution** — delivery presupposes
+  discovery, so `discovery.md` is guaranteed present — which marks the line: a distributed item may
+  lean on another that **ships with it**, never on a **dotfiles-local source that doesn't ship**.
+  So setup prose, like runtime text, is self-contained against repo-local artifacts — it cites no
+  ADRs by number (dotfiles-j8x), stating the rationale inline and pointing only at the *adopting*
+  repo's own dirs (e.g. "ADRs under `docs/adr/`"). The operative axis is **distributed vs.
+  build-time**, not runtime vs. setup-doc: everything that ships is self-contained, and
+  identical-copy duplication is collapsed only at the **build layer** (the never-shipped
+  template/generator above), never by a shipped item reaching back to a non-shipping source.
 
 ## Considered options
 
