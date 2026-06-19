@@ -4,22 +4,17 @@ status: accepted
 
 # Discovery/delivery backlog workflow: beads inbox, tier-split backlog, ADRs as the decision record
 
-> **Amended 2026-06.** The discovery phase model "capture → triage → prep" is renamed to
-> **capture → refine** (see ADR 0003), and the private-tier decision record changed from a
-> committed `worklog.jsonl` to **ADRs + `CONTEXT.md`** (see ADR 0004); the capture verb changed from `bd q` to `bd create` (see ADR 0005). Wording below is
-> updated; superseded specifics are flagged inline.
-
 We adopt a two-track workflow across projects — **discovery** (capture → refine)
 and **delivery** (build → ship) — shipped as two umbel bundles whose `bundle.md` carries
 the setup playbook. **beads** is the always-open capture inbox on every project
 (`bd create`, synced over the repo's own git origin); what an inbox item graduates *into*
 depends on whether the project has an audience to curate for. On **public** projects the
-real backlog is **GitHub Issues** — a refined bead is fleshed into an issue (Pocock
-`to-prd`) and the bead is then *closed* (one-way, no bidirectional sync). On **private**
-projects **beads itself is the backlog** (`bd ready` + dependencies). Decisions are
-recorded as **ADRs** (+ a `CONTEXT.md` glossary) on **both** tiers. ~~On private projects
-decisions go in a committed `worklog.jsonl`.~~ **[Superseded by ADR 0004.]** This
-replaces the prior local-only `backlog.jsonl` + `worklog.jsonl` convention ("borklog").
+real backlog is **GitHub Issues** — a refined bead is fleshed into an issue and the bead
+is then *closed* (one-way, no bidirectional sync). On **private** projects **beads itself
+is the backlog** (`bd ready` + dependencies). Decisions are recorded as **ADRs** (+ a
+`CONTEXT.md` glossary) on **both** tiers (the decision-record mechanism is ADR 0004's
+topic). This replaces the prior local-only `backlog.jsonl` + `worklog.jsonl` convention
+("borklog").
 
 Organising principle: **public = reinforceable industry standards** (GitHub Issues +
 ADRs + Pocock skills); **private = beads-as-backlog** with the *same* ADR + `CONTEXT.md`
@@ -61,3 +56,11 @@ owns agent recall — neither moves into beads.
   (stealth → committed inbox + GitHub backlog), handled per-repo, not a fresh `bd init`.
 - The "basically online" sync (git-origin-as-Dolt-remote + auto-commit + auto-push +
   git hooks) is mechanism-confirmed but its exact knobs need a hands-on check on first setup.
+
+## History
+
+- Originally specified three things now owned by their own ADRs: the discovery phase model was
+  "capture → triage → prep", renamed to **capture → refine** (ADR 0003); the private tier recorded
+  decisions in a committed `worklog.jsonl`, dropped in favour of ADRs + `CONTEXT.md` (ADR 0004); and
+  the capture verb was `bd q`, changed to `bd create` (ADR 0005). The body above states the current
+  workflow; each of those ADRs owns the rationale for its change.

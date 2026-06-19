@@ -65,7 +65,8 @@ bead state. There is no enforcement gate. So ADR-0003's bead-state model (raw ca
   the proposal table, the grill/ready line, and that `needs-grill` is ephemeral.
 - **Supersedes dotfiles-2ab** (presort not dispatchable): `context: fork` is that bead's own
   "option B"; the custom-agent-registry fix (option A) is unnecessary.
-- **Amends ADR-0003**: pre-sort's *substrate* changes from an agent to a `context: fork` skill. The
-  triage→refinement rename, the "triage" purge, and the bead-state model from ADR-0003 all stand.
+- Pre-sort's *substrate* — a `context: fork` skill — replaces the standalone-agent model ADR-0003 had
+  assumed; ADR-0003's own decisions (the triage→refinement rename, the "triage" purge, the bead-state
+  model) are unaffected.
 - `umbel/CONTEXT.md` gains the **Pre-sort** term.
 - Tracked as dotfiles-ayb (`stage:ready`).

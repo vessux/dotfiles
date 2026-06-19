@@ -13,14 +13,11 @@ needlessly.
 
 **Decision.** Both tiers record decisions the same way: **ADRs + `CONTEXT.md`**, created *lazily* (only
 when there's a decision or a term worth recording). The private tier drops `worklog.jsonl`. The only
-thing that now differs by tier is the **backlog** (GitHub Issues on public, beads on private). This
-supersedes ADR 0001's private-tier worklog decision and its "worklog kept private on public repos"
-rejected-option reasoning.
+thing that now differs by tier is the **backlog** (GitHub Issues on public, beads on private).
 
 ## Consequences
 
-- `seed.private.md`, both `inject` marker-absent recipes, and `bundles/discovery.md` are updated; ADR
-  0001 is annotated as superseded-in-part.
+- `seed.private.md`, both `inject` marker-absent recipes, and `bundles/discovery.md` are updated.
 - A repo migrating from an old `worklog.jsonl` distils it into ADRs regardless of tier (rather than
   freezing it on private).
 - On a *public* GitHub repo running the private (light) tier — e.g. a public dotfiles repo — the

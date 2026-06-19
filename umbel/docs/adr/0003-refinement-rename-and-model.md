@@ -13,7 +13,7 @@ pre-sort agent, **and** the unrelated matt-pocock `/triage` GitHub-label skill.
 
 **Decision.** Merge triage + prep into a single phase, **refinement**, with the sharpening skills as
 its engine. The spine becomes **capture → refine → outcome**. "Triage" is fully purged from the beads
-side: the beads pass is a *refinement pass*, the pre-sort agent is renamed `triage-presort` →
+side: the beads pass is a *refinement pass*, the pre-sort step is renamed `triage-presort` →
 **`presort`**, and the `untriaged`/`triaged-out` bead adjectives are dropped. Afterward **"triage"
 means exactly one thing** — the matt-pocock `/triage` skill, which sorts the GitHub issues *outsiders*
 file (public tier only). Your own promoted issues land already `ready-for-agent` and skip it.
