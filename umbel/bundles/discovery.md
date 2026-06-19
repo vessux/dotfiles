@@ -119,11 +119,14 @@ Setup steps:
 
    *Sync is **git-style async, not real-time**: a capture/claim is a local commit that
    reaches the remote on push and other machines on pull — **a claim is not a lock**.
-   `dolt.auto-commit=on` (default) + these hooks automate that at git push/pull boundaries,
-   which is sufficient for a solo maintainer across machines. `dolt.auto-push` (newer bd)
-   only adds per-command pushing, is single-writer-only, and adds remote churn — skip it
-   unless capture-only sessions (no code push) must self-sync. There is no background
-   auto-pull in any version; the receive side is always `git pull`/`bd dolt pull`. For a
+   `dolt.auto-commit=on` (default) + these hooks automate that at git push/pull
+   boundaries — enough for a solo maintainer whose sessions end in a code push.
+   `dolt.auto-push` (newer bd) adds per-command pushing so captures reach the
+   remote without a code push — enable it when you run discovery across machines
+   and want capture-only sessions to self-sync; it's single-writer-only and adds
+   remote churn, so on one machine leave it off (concurrent writers → server mode,
+   below). There is no background auto-pull in any version; the receive side is
+   always `git pull`/`bd dolt pull`. For a
    **concurrent multi-agent / multi-machine** flow this single-writer model is the wrong
    fit — switch beads to a shared `dolt sql-server` (server mode: `bd init --server` /
    `bd dolt start`) per the beads docs.*
