@@ -84,8 +84,9 @@ find holes). Real difference — but you flagged the overlap, and you already cu
 ### O-4 · `to-issues` — keep (optional) or drop?
 
 It's the only tool that produces vertical-slice tickets, and that work *must* live in
-discovery (delivery never creates backlog items). But it only matters when a PRD is big
-enough to shard into an epic; most beads promote via `to-prd` alone.
+discovery (delivery never creates backlog items). But most *feature* keepers promote via
+`to-prd` alone — bug/chore keepers go straight to an issue — so it only matters when a
+feature PRD is epic-sized.
 
 - (a) **Keep it** — available for the epic-sharding case, playbook marks it optional. ←
   **my pick** (preserves the "delivery doesn't own the backlog" line).
