@@ -29,9 +29,10 @@ title:
   multi-line dump; no length limit). Add `--silent` for just the ID.
 
 ```bash
-bd create "presort agent isn't a reachable subagent_type" \
-  -d "seed says 'dispatch the presort agent' but it's not a registered Agent-tool type;
-options: wire it into the registry, or invoke via general-purpose with inlined instructions." \
+bd create "two bundle seeds duplicate the same skill instructions" \
+  -d "noticed while editing one bundle that another carries a near-identical copy of the same skill,
+and the two have already drifted in wording; options: factor the shared text into one leaf both
+bundles reference, or leave the copies and reconcile only if the drift causes a real bug." \
   --silent
 ```
 
