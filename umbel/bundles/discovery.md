@@ -102,7 +102,9 @@ Setup steps:
      checkouts** — essential because delivery methods (e.g. superpowers) routinely spin up
      worktrees, and every worktree must reach the one shared inbox and run the same hooks.
      `core.hooksPath` is local config, so this stays per-machine opt-in; forks are
-     unaffected. Hooks automate `bd dolt push/pull` alongside `git push`/`git pull`.
+     unaffected. Hooks bridge `bd dolt pull` onto `git pull` and auto-**commit** Dolt
+     locally, but they do **not** push Dolt on `git push` — reaching the remote is
+     `dolt.auto-push` or a manual `bd dolt push` (see the sync note below).
    - **Set your beads role — per-clone, machine-local: `git config beads.role maintainer`.**
      beads tags git operations with a role; left unset it nags and `bd doctor` flags it
      (`Fix: git config beads.role maintainer`). Set it the same way as `core.hooksPath` —
@@ -112,15 +114,21 @@ Setup steps:
 
    *Auth/ref layout are environment-specific — confirm the push lands before relying on it.*
 
-   **Done condition.** Step 2 is complete only when the inbox is actually reachable: `bd list`
-   returns the beads inbox *and* the remote sync is wired (`git ls-remote origin 'refs/dolt/*'`
-   shows the pushed refs). A repo where `.repo-visibility=private` exists but this check fails is
-   **not** set up — don't claim discovery setup is done.
+   **Done condition.** Step 2 is complete only when the inbox is reachable *and new captures
+   keep reaching the remote*: `bd list` returns the beads inbox *and* a throwaway test capture
+   **advances** `git ls-remote origin 'refs/dolt/*'` (then delete it). `ls-remote` merely *showing*
+   refs proves a past push, not that today's captures still sync — that's the silent-dead-sync
+   trap. The git hooks do **not** push Dolt; the remote advances only via `dolt.auto-push` (the
+   cross-machine default, below) or a manual `bd dolt push`. On a single machine remote sync is
+   backup-only and optional. A repo where `.repo-visibility=private` exists but a test capture
+   fails to advance the remote is **not** set up — don't claim discovery setup is done.
 
    *Sync is **git-style async, not real-time**: a capture/claim is a local commit that
    reaches the remote on push and other machines on pull — **a claim is not a lock**.
-   `dolt.auto-commit=on` (default) + these hooks automate that at git push/pull
-   boundaries — enough for a solo maintainer whose sessions end in a code push.
+   `dolt.auto-commit=on` (default) + these hooks auto-**commit** Dolt locally at git
+   push/pull boundaries, but do **not** push it — so ending a session with a code push
+   does *not* carry your captures to the remote; that needs `dolt.auto-push` or a manual
+   `bd dolt push`.
    `dolt.auto-push` (newer bd) adds per-command pushing so captures reach the
    remote without a code push — enable it when you run discovery across machines
    and want capture-only sessions to self-sync; it's single-writer-only and adds
