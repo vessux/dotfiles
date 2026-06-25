@@ -143,7 +143,7 @@ Setup steps:
    by the sharpening skills (`grill-with-docs`, `improve-codebase-architecture`) when
    there's a decision or a term worth recording — so there's nothing to pre-create.
    *public* additionally: ensure the PR template carries an "architectural change?
-   link the ADR" prompt. **No `worklog.jsonl` on either tier** (see ADR 0004).
+   link the ADR" prompt. **No `worklog.jsonl` on either tier**.
 4. **Generate the agent docs the bundled skills read.** Run `/setup-matt-pocock-skills`
    (shipped in this bundle) to scaffold `docs/agents/{issue-tracker,triage-labels,domain}.md`
    plus the `## Agent skills` block in `CLAUDE.md`/`AGENTS.md`. The bundled `to-prd`,
@@ -193,7 +193,7 @@ injects a recipe to create it rather than guessing the tier.
   sharpening skills (`grill-with-docs`, `improve-codebase-architecture`) already produce.
   So both tiers use them, and only the *backlog* differs by tier (GitHub Issues vs
   beads). The earlier private-only `worklog.jsonl` idiom was dropped — it bought little
-  over the proven ADR + glossary pair and split the two tiers needlessly (see ADR 0004).
+  over the proven ADR + glossary pair and split the two tiers needlessly.
 - **Why the ruleset is injected, not filed in the repo.** The workflow itself
   (beads-as-inbox, the refinement pass, the bd-driven backlog) is a private idiom
   contributors don't run; putting it in a committed
