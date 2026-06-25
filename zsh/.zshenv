@@ -37,3 +37,51 @@ md() {
 		markitdown "$1"
 	fi
 }
+
+# nextdelivery — list THIS repo's "ready for delivery" backlog, dispatching on the repo's
+# delivery tier so neither you nor an agent hand-reconstructs the per-tier query. Zero-arg,
+# read-only LISTER: it runs the native backlog tool and passes the output through verbatim
+# (native colours/columns/paging) — no arg passthrough, no reformatting, no tier header.
+# Lives here (not .zshrc) so non-interactive callers — notably an agent's own Bash — see it,
+# same reason as `md` above.
+#
+# Tier comes from the committed repo-root `.repo-visibility` marker (public|private), read
+# exactly as the umbel ruleset-inject hooks read it. It NEVER defaults a tier.
+#   private -> `bd ready --label stage:ready`. bd ready already excludes
+#              in_progress/blocked/deferred, and `bd update --claim` is the atomic pickup,
+#              so listing the refined-ready set is concurrency-safe.
+#   public  -> not implemented here; see dotfiles-6i5 (blocked by dotfiles-ie4, the
+#              claim-protocol decision). Exits non-zero rather than guess a query shape.
+#   missing/unreadable/unknown marker, or not in a git repo -> stderr error + fix hint,
+#              exits non-zero.
+nextdelivery() {
+	local repo_root marker tier
+	local hint="  set the tier: create a one-line .repo-visibility at the repo root containing 'public' or 'private' and commit it (see 'umbel adopt')."
+	repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
+	if [[ -z "$repo_root" ]]; then
+		print -u2 "nextdelivery: not in a git repo — no .repo-visibility tier marker to read"
+		print -u2 "$hint"
+		return 1
+	fi
+	marker="$repo_root/.repo-visibility"
+	if [[ ! -r "$marker" ]]; then
+		print -u2 "nextdelivery: no readable .repo-visibility tier marker at $marker"
+		print -u2 "$hint"
+		return 1
+	fi
+	tier="$(tr -d '[:space:]' < "$marker" 2>/dev/null)"
+	case "$tier" in
+		private)
+			bd ready --label stage:ready
+			;;
+		public)
+			print -u2 "nextdelivery: public-tier path not implemented yet — see dotfiles-6i5 (blocked by dotfiles-ie4, the claim-protocol decision)."
+			return 1
+			;;
+		*)
+			print -u2 "nextdelivery: unrecognised tier '${tier}' in .repo-visibility (want 'public' or 'private')"
+			print -u2 "$hint"
+			return 1
+			;;
+	esac
+}
