@@ -42,6 +42,12 @@ track. One track can be served by several bundles (delivery runs on **delivery-b
 swappable method such as **delivery-superpowers**).
 _Avoid_: plugin, pack, preset
 
+**Claim**:
+The atomic, identity-independent acquisition of one ready unit by a single worker before work
+begins; the mechanism is tier-specific (private: a beads status transition; public: creating the
+canonical work-branch — ADR 0011), but assignment alone is never a Claim.
+_Avoid_: assign, take, grab, lock
+
 ## Relationships
 
 - **Refinement** shapes a **Capture** into a delivery-ready bead, or drops it.
@@ -51,6 +57,8 @@ _Avoid_: plugin, pack, preset
   *pinning* (a product-level launch route) and from merely loading the bundle's skills.
 - A **Bundle** equips a repo to run a **Track**; one **Track** may be served by several **Bundles**
   (a base contract plus a swappable method).
+- A **delivery** **Track** session opens by **Claim**ing one ready unit; the Claim is atomic, so
+  concurrent workers — even sharing one identity — never take the same unit.
 
 ## Example dialogue
 
@@ -70,3 +78,7 @@ _Avoid_: plugin, pack, preset
 - Memory scoping was first framed as "bundle-specific" — resolved: auto-memory belonging to one arm
   of the workflow is **track-scoped**, not bundle-scoped (a fact about delivery work must survive
   swapping the delivery method); memory with no track tag is **global**. (Mechanism: ADR 0008.)
+- "Claim" was conflated with GitHub **assignment** ("assign the issue to yourself") on the public
+  tier — resolved: a **Claim** is *atomic and identity-independent*; assignment is neither (same-user
+  agents share `@me`), so it cannot serve as the claim. Public claims via canonical-branch
+  ref-creation instead (ADR 0011).
