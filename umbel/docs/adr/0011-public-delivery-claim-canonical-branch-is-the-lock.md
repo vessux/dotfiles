@@ -35,14 +35,15 @@ lacks.
 
 So, public-tier claim:
 
-- **Claim = create the canonical branch `delivery/<N>` server-side**, via
-  `gh issue develop <N> --name delivery/<N>` (issue-linked; falls back to the raw
-  `gh api -X POST …/git/refs` create for a guaranteed 422 if `gh issue develop` proves lenient
-  about an existing branch). First agent wins; the loser's create fails → it picks another issue.
+- **Claim = create the canonical branch `delivery/<N>` server-side** with a raw ref create
+  (`gh api -X POST …/git/refs`, branched from the default branch). Ref creation is the CAS: the
+  first agent wins; any later create of the same ref fails (`422 Reference already exists`) → that
+  loser picks another issue. **Not** `gh issue develop` — the build-time check (Consequences) found
+  it *adopts* a pre-existing linked branch rather than failing, so it is not a CAS.
 - **The work-branch is the lock.** The delivery method isolates *onto* `delivery/<N>`
   (`.worktrees/<N>` tracking it) rather than inventing a name. Isolation is already mandatory in
   the contract, so fixing the branch name is a thin constraint, not a new step — and the single
-  issue-linked branch is self-documenting.
+  issue-named branch is self-documenting.
 - **Relabel is list-hygiene, not the lock.** On winning, relabel the issue off `ready-for-agent`
   (→ `in-progress`) so `nextdelivery`'s public query stays the simple
   `gh issue list --label ready-for-agent` (dotfiles-6i5). Because the *branch* is the lock, a
@@ -76,8 +77,13 @@ So, public-tier claim:
   otherwise-method's-call branch naming (`delivery-base` already mandates *that* you isolate).
 - `nextdelivery`'s public path (dotfiles-6i5) resolves to `gh issue list --label ready-for-agent`,
   still gated on this landing (the relabel is what makes that query exclude claimed work).
-- **Build-time check:** confirm `gh issue develop` *fails* on an existing branch; if it adopts it
-  instead, use the raw `git/refs` create (guaranteed 422). This assumption is load-bearing.
+- **Build-time check (resolved):** `gh issue develop` does **not** fail on an existing branch — it
+  *adopts* it, printing "Using existing linked branch" and exiting 0 (confirmed against gh 2.93.0:
+  it runs `ListLinkedBranches` + `findExistingLinkedBranchName` and only calls the
+  `createLinkedBranch` mutation when no match exists). So the claim uses the raw `git/refs` create
+  instead — live-verified: re-POST of an existing ref returns `422 Reference already exists`.
+  Trade-off accepted: the branch is a plain ref, not issue-*linked*, but its `delivery/<N>` name
+  is still self-documenting.
 - **Not solved here:** abandoned claims (a dead agent leaves an orphan `delivery/<N>`, locking the
   issue out of the lister). Only *manual* release is specified. Automatic, cross-tier stale-claim
   reclaim — which private's stuck `in_progress` beads need too — is a separate bead.
