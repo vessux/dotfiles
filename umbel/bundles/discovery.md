@@ -15,6 +15,7 @@ skills:
   - plannotator/annotate
   - plannotator/last
   - local/presort
+  - local/glean
 hooks:
   - local/discovery-ruleset
 mcps:
@@ -35,6 +36,8 @@ skills (TDD, debugging, plan-execution, code-review) belong to the delivery trac
 Prerequisite: `bd` (beads) on `PATH` (`brew install bd`). beads is a CLI the agent
 calls directly — it is *not* a bundle artifact. The `local/tuidriver` MCP and the
 `/presort` skill (a forked, read-only refinement-pass classifier) ship with this bundle.
+`local/glean` (the end-of-session impediment harvester, `/glean`) also ships here — it is
+track-agnostic and lives in the base/`delivery-base` layer, dual-listed into discovery.
 
 ## Applying this bundle
 

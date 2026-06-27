@@ -5,6 +5,7 @@ skills:
   - plannotator/annotate
   - plannotator/last
   - pocock/grill-with-docs
+  - local/glean
 mcps:
   - local/tuidriver
 hooks:
@@ -34,6 +35,9 @@ decisions get recorded belong to the **method**, not here.
 - `plannotator/annotate` + `plannotator/last` — review a plan or a long thread.
 - `pocock/grill-with-docs` — stress-test a design and write a decision record (a method
   decides *whether/how* to record; the tool lives here).
+- `local/glean` — end-of-session harvester (`/glean`): a fork re-reads the session transcript
+  and files the Impediments the agent hit but never captured. Track-agnostic, so it lives in the
+  base layer; dual-listed in `discovery`.
 - `local/tuidriver` (MCP) — drive a terminal UI to verify behaviour.
 
 ## Applying
