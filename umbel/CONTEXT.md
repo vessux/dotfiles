@@ -48,6 +48,27 @@ begins; the mechanism is tier-specific (private: a beads status transition; publ
 canonical work-branch — ADR 0011), but assignment alone is never a Claim.
 _Avoid_: assign, take, grab, lock
 
+**Impediment**:
+A Capture whose subject is the *workflow itself* — friction between the agent and the harness,
+tooling, or instructions that cost real effort to route around this session and **would recur,
+burning tokens again, unless an instruction, skill, or tool is changed**. The criterion is
+fixability, not the error flag: a tool result marked `is_error` from normal probing (an empty
+`grep`, a guard that fails) is **not** an Impediment; a denied permission, an interface retried
+three times before it worked, a misfiring bundled skill, or an ambiguous injected instruction
+**is**. The highest-value class is friction with *our own* instructions and skills — those we
+control and can fix, so they compound — as opposed to external-tool bugs we can only work around.
+_Avoid_: roadblock, friction, snag, bug, error
+
+**Glean**:
+The retrospective gathering of *compounding signals* from a finished session — friction,
+techniques, decisions worth recording — that the agent never captured in the moment because it
+was heads-down on the task. A disinterested fork re-reads the session transcript (the full record,
+which survives compaction), recognises each signal, and files it as a typed Capture. Its discipline
+is **compound engineering**: each session leaves leverage that cheapens the next. The first — and
+currently only — gleaned category is the **Impediment** (`type:impediment`); the category list is
+open by design, every category sharing one harvest mechanism and one command (`/glean`).
+_Avoid_: retro, sweep, scan, audit
+
 ## Relationships
 
 - **Refinement** shapes a **Capture** into a delivery-ready bead, or drops it.
@@ -59,6 +80,15 @@ _Avoid_: assign, take, grab, lock
   (a base contract plus a swappable method).
 - A **delivery** **Track** session opens by **Claim**ing one ready unit; the Claim is atomic, so
   concurrent workers — even sharing one identity — never take the same unit.
+- An **Impediment** is a **Capture** whose subject is the workflow, not the task. It is recorded
+  as a bead like any other Capture, but earns its keep only when a change to an instruction,
+  skill, or tool would stop it recurring; the same friction hit across many sessions (e.g. a
+  worktree teardown that fails on every delivery finish) is the signal it is worth fixing.
+- **Glean** produces typed **Capture**s retrospectively from a session transcript; its first
+  category is the **Impediment**. It is the compound-engineering counterpart to ambient capture:
+  ambient capture records a signal as it surfaces, Glean recovers the ones that slipped past while
+  the agent was heads-down. Both tracks run it (one source skill, dual-listed); it is itself a
+  fork, like **Pre-sort**, but unlike Pre-sort it *writes* — because capture is ungated by design.
 
 ## Example dialogue
 
