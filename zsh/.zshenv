@@ -57,8 +57,9 @@ md() {
 #   private -> `bd ready --label stage:ready`. bd ready already excludes
 #              in_progress/blocked/deferred, and `bd update --claim` is the atomic pickup,
 #              so listing the refined-ready set is concurrency-safe.
-#   public  -> not implemented here; see dotfiles-6i5 (blocked by dotfiles-ie4, the
-#              claim-protocol decision). Exits non-zero rather than guess a query shape.
+#   public  -> `gh issue list --label ready-for-agent`. Per ADR 0011 the claim
+#              relabels off ready-for-agent (the canonical work-branch is the lock),
+#              so the simple label query lists only unclaimed work — no no:assignee filter.
 #   missing/unreadable/unknown marker, or not in a git repo -> stderr error + fix hint,
 #              exits non-zero.
 nextdelivery() {
@@ -82,8 +83,7 @@ nextdelivery() {
 			bd ready --label stage:ready
 			;;
 		public)
-			print -u2 "nextdelivery: public-tier path not implemented yet — see dotfiles-6i5 (blocked by dotfiles-ie4, the claim-protocol decision)."
-			return 1
+			gh issue list --label ready-for-agent
 			;;
 		*)
 			print -u2 "nextdelivery: unrecognised tier '${tier}' in .repo-visibility (want 'public' or 'private')"
