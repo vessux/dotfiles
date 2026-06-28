@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# plannotate <path-or-url> — annotate a doc/folder in Plannotator from OUTSIDE a Claude
+# Code session (e.g. yazi's 'A' key, or any bare shell), then copy the returned
+# annotations (JSON) to the SYSTEM clipboard via `clip` (OSC 52 -> the terminal you sit
+# at) so you can paste them into an agent.
+#
+#   file       -> Plannotator document-annotate mode
+#   directory  -> Plannotator folder mode  (no extension filter, no dir guard — intended)
+#
+# Contract: `plannotator annotate --json` writes the annotation JSON to stdout and its
+# review URL + status to stderr. stderr flows straight through to your terminal, so you
+# see the URL (open it on the laptop); we capture only stdout, keeping the JSON clean.
+#   plannotator exits non-zero -> "failed", exit nonzero, clipboard untouched
+#   zero annotations           -> "no annotations — clipboard unchanged" (don't clobber)
+#   annotations present         -> pipe RAW json (no header) to clip, "copied to clipboard"
+#
+# Feedback is plain stderr — no yazi toast — so it reads the same from yazi or a shell.
+set -uo pipefail
+
+if [[ $# -lt 1 || -z "$1" ]]; then
+	printf 'plannotate: usage: plannotate <path-or-url>\n' >&2
+	exit 2
+fi
+
+# Announce it's now waiting: yazi's `shell --block` drops to the terminal where plannotator
+# only prints "Resolved: <path>", which looks idle — this makes the in-progress state clear.
+printf 'plannotate: waiting for annotations — annotate "%s" in Plannotator (port %s), then submit…\n' "$1" "${PLANNOTATOR_PORT:-19432}" >&2
+
+# Capture stdout (the JSON); stderr (URL + status) passes through to the terminal.
+json=$(plannotator annotate "$1" --json)
+status=$?
+if (( status != 0 )); then
+	printf 'plannotate: failed\n' >&2
+	exit "$status"
+fi
+
+# Detect the empty cases (nothing annotated): "" or "[]", ignoring surrounding whitespace.
+trimmed=${json//[$' \t\r\n']/}
+if [[ -z "$trimmed" || "$trimmed" == "[]" ]]; then
+	printf 'plannotate: no annotations — clipboard unchanged\n' >&2
+	exit 0
+fi
+
+if printf '%s' "$json" | clip; then
+	printf 'plannotate: copied to clipboard\n' >&2
+else
+	printf 'plannotate: clipboard write failed\n' >&2
+	exit 1
+fi

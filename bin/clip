@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# clip — copy stdin to the SYSTEM clipboard via OSC 52, written to the controlling
+# terminal (/dev/tty).
+#
+# Why OSC 52 and not xclip/wl-copy: this runs on a headless remote devbox reached over
+# SSH inside tmux — there is no DISPLAY/WAYLAND, and xclip/wl-copy would target the
+# *devbox* clipboard, which the laptop can't reach. OSC 52 instead rides the TTY out to
+# the terminal emulator you physically sit at, which sets ITS clipboard — the one you
+# paste from. It's the one mechanism that lands text in the laptop clipboard whether the
+# caller runs on the devbox or locally. tmux must forward OSC 52 (set-clipboard on/
+# external, which it is); raw OSC 52 is enough — no tmux DCS-passthrough wrapper needed.
+#
+# Compose it with any command's output:
+#   md <url> | clip            # a fetched page -> laptop clipboard
+#   plannotate <path>          # (uses clip internally)
+set -uo pipefail
+
+# base64 the payload onto a single line. `base64 | tr -d '\n'` is portable across GNU
+# (wraps at 76 cols by default) and BSD/macOS base64 (no -w flag), unlike `base64 -w0`;
+# OSC 52 must be one unbroken line, so strip every newline either way.
+b64=$(base64 | tr -d '\n')
+
+# ESC ] 52 ; c ; <base64> BEL  — selection 'c' = clipboard. Write to /dev/tty (the real
+# terminal), not stdout, so it works even when the caller's stdout is captured or piped.
+# No controlling terminal (cron, an agent's shell, a Claude Code `!` command) -> there's no
+# terminal for OSC 52 to reach, so fail loudly instead of emitting bash's raw redirect error.
+# yazi's `shell --block` and any interactive shell DO have a tty, which is the intended use.
+# Redirect order matters: point stderr at /dev/null *before* opening /dev/tty, so a failed
+# open is swallowed here and only our own message below is shown.
+if ! printf '\033]52;c;%s\a' "$b64" 2>/dev/null > /dev/tty; then
+	printf 'clip: no controlling terminal — OSC 52 needs an interactive shell or yazi --block\n' >&2
+	exit 1
+fi

@@ -12,6 +12,13 @@
 # there — the shims are purely the non-interactive fallback.
 export PATH="${XDG_DATA_HOME:-$HOME/.local/share}/mise/shims:$PATH"
 
+# ~/.config/bin — repo-tracked executable scripts (the `bin/` stow package). On PATH here,
+# not .zshrc, so non-interactive callers see them (same reason as the shims above). And these
+# are real executables, not .zshenv functions like `md`/`nextdelivery` below, so NON-zsh
+# subprocesses can call them too — notably yazi's `shell` block (the `A` key runs `plannotate`,
+# which pipes to `clip`). See docs/adr/0001-reusable-scripts-as-config-bin-executables.md.
+export PATH="$HOME/.config/bin:$PATH"
+
 # md — files & URLs -> markdown, for feeding content to agents. Lives here (not
 # .zshrc) so non-interactive callers see it — notably `!md` inside a Claude Code
 # session, the cleanest way to drop a page/file into the chat (same reason the shims
