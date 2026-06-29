@@ -80,7 +80,10 @@ nextdelivery() {
 	tier="$(tr -d '[:space:]' < "$marker" 2>/dev/null)"
 	case "$tier" in
 		private)
-			bd ready --label stage:ready
+			# bd list --ready (NOT bd ready): identical ready-set membership, but bd ready's
+			# empty-result line falsely reads "all issues have blocking dependencies" when the
+			# stage:ready filter simply matched nothing. bd list says a neutral "No issues found." (q1p)
+			bd list --ready --label stage:ready --sort priority
 			;;
 		public)
 			gh issue list --label ready-for-agent
