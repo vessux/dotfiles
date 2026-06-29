@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# SessionStart hook: declare where the superpowers skills write their FILE artifacts for this
-# repo, overriding the vendored docs/superpowers/ default with a gitignored .local/ root.
-# Tier-independent. Offline-safe: no network, no repo reads.
+# SessionStart hook for the delivery-superpowers method: inject the per-repo adaptations that bend
+# vendored superpowers to THIS harness. Two blocks: (1) where the skills write FILE artifacts
+# (specs/plans -> gitignored .local/, overriding the docs/superpowers/ default), and (2) a
+# worktree-teardown correction for finishing-a-development-branch Step 6 (the native ExitWorktree
+# remove-guard trips on already-integrated work). Tier-independent. Offline-safe: no network, no
+# repo reads (the teardown block is static text; the agent reads .repo-visibility itself at finish).
 set -euo pipefail
 
 # Raw text -> JSON additionalContext (Claude Code hook shape). printf, not heredoc
@@ -26,5 +29,33 @@ fails, add a \`.local/\` line to \`.gitignore\` and commit it. Do NOT commit any
 
 Worktrees are unaffected — keep them at superpowers' own \`.worktrees/\` default (it self-ignores
 and self-cleans). Do not move worktrees under \`.local/\`.
-</superpowers-artifact-locations>"
+</superpowers-artifact-locations>
+
+<worktree-teardown-correction skill=\"finishing-a-development-branch\" step=\"6\">
+Harness adaptation for the delivery-superpowers method (the worktree flow is this method's). At
+worktree teardown AFTER you have integrated the work, the native ExitWorktree(action:\"remove\")
+guard WILL trip: it refuses because the worktree branch still holds commit(s) not reachable from
+the branch's creation-time base, and reports them as work that would be \"discarded.\" Post-
+integration that wording is misleading — the commit is safely on the integration target; nothing is
+at risk. Do NOT hand-run a verify-then-confirm dance each time, and do NOT reflexively pass
+discard_changes:true (that WOULD lose work if integration had not actually happened).
+
+Run ONE codified teardown: confirm integration with the tier oracle (read the tier from
+.repo-visibility, as everywhere), then go straight to the force-remove. If the oracle FAILS, stop
+loudly — the work is not integrated and the guard's safety net stands.
+
+- private (in-session, at finish; push is deferred to the user, so origin/main lags):
+    git merge-base --is-ancestor HEAD main      # LOCAL main; run from inside the worktree
+    -> ExitWorktree(action:\"remove\", discard_changes:true)
+
+- public (deferred until AFTER the PR lands; keep the worktree alive through review per
+  finishing-a-development-branch Option 2):
+    [ \"\$(gh pr view <PR#> --json state -q .state)\" = \"MERGED\" ]   # squash/rebase-proof
+    -> ExitWorktree(action:\"remove\", discard_changes:true)
+
+Why the oracles differ: a squash/rebase merge destroys commit identity, so an ancestry check is
+invalid on the public path — ask the integration source of truth (gh) instead. On public the work
+is safe the moment it is PUSHED (the remote PR branch holds it); the MERGED check is a \"don't tear
+down until it lands\" procedural gate, not the data-loss guard.
+</worktree-teardown-correction>"
 exit 0

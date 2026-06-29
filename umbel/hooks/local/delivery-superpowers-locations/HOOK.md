@@ -1,6 +1,6 @@
 ---
 name: delivery-superpowers-locations
-description: Inject the superpowers per-repo artifact-location override at session start — specs/plans go to a gitignored .local/ root instead of the vendored docs/superpowers/ default. Leaves vendored skills untouched.
+description: Inject the delivery-superpowers method's per-repo adaptations of vendored superpowers to this harness at session start — (1) the artifact-location override (specs/plans -> gitignored .local/ instead of the vendored docs/superpowers/ default) and (2) a worktree-teardown correction for finishing-a-development-branch Step 6. Leaves vendored skills untouched.
 event: SessionStart
 matcher: "startup|clear|compact"
 command: ./inject
@@ -19,5 +19,15 @@ superpowers-owned worktrees by a hardcoded provenance list (`.worktrees/`, `work
 `~/.config/superpowers/worktrees/`); a custom worktree dir would be created but never
 auto-cleaned. Worktrees stay at `.worktrees/`.
 
-Same machinery as `delivery-base-ruleset`'s `inject`, minus the tier branch (the override is
-tier-independent).
+The same hook also injects a **worktree-teardown correction**. After integration, the native
+`ExitWorktree(action:"remove")` guard trips — it flags the worktree branch's commit(s) as work
+that would be "discarded," because they aren't reachable from the branch's creation-time base,
+even though they're safely on the integration target. The injected block tells the agent to run
+one codified teardown: confirm integration with the tier oracle (private: `git merge-base
+--is-ancestor HEAD main`; public: `gh pr view <PR#>` is `MERGED`; tier read from `.repo-visibility`)
+and only then force-remove — loud-failing if not integrated, so the safety net stands. The hook's
+purpose is "adapt vendored superpowers to this harness", spanning both blocks.
+
+Same machinery as `delivery-base-ruleset`'s `inject`, minus the tier branch — both injected blocks
+are tier-independent static text (the teardown block carries both oracles; the agent reads
+`.repo-visibility` itself to pick).

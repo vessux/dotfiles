@@ -19,15 +19,18 @@ which owns the invariant lifecycle contract (scope / claim / capture-escalate / 
 - **`superpowers`** — the 14-skill discipline + its own SessionStart announce-hook, which
   is what carries this method's prep + execution.
 
-One method inject hook, for **config only** — `local/delivery-superpowers-locations`. It
+One method inject hook — `local/delivery-superpowers-locations` — carrying this method's
+adaptations of vendored superpowers to **this harness**, in two blocks. **(1) Config:** it
 redirects superpowers' file artifacts (specs/plans) to a gitignored `.local/superpowers/`
 root, because the vendored skill defaults (`docs/superpowers/…`, committed) can't be edited
 upstream and nothing else carries per-repo config: `delivery-base`'s seed is method-agnostic
-and superpowers' own hook only announces the discipline. It carries **no procedure** —
-superpowers already injects its discipline (its SessionStart announce-hook + interlinked
-skills) and `delivery-base` supplies the contract, so a method *procedure* block would be
-redundant. This is the "method injects its own hook if it has one" door, used here for
-location config, not procedure.
+and superpowers' own hook only announces the discipline. **(2) One narrow procedure
+correction:** a worktree-teardown fix for `finishing-a-development-branch` Step 6, where the
+native `ExitWorktree` remove-guard trips on already-integrated work (the agent is told to
+confirm integration via a tier oracle, then force-remove). This is **not** the method's general
+discipline — superpowers injects that (its announce-hook + interlinked skills) and `delivery-base`
+supplies the contract — but a harness-specific correction neither covers, so it lives with the
+method that owns the worktree flow.
 
 ## Applying
 

@@ -13,7 +13,7 @@ plan/spec location override this default."* Nothing in the bundle carried that p
 `delivery-base`'s `seed.<tier>.md` is method-agnostic (it must not name superpowers paths), and
 `superpowers/session-start` injects only the `using-superpowers` discipline announce.
 
-**Decision.** `delivery-superpowers` carries one method inject-hook, **for config only** —
+**Decision.** `delivery-superpowers` carries one method inject-hook —
 `local/delivery-superpowers-locations`. A SessionStart `additionalContext` block declares the
 per-repo "user preference" the skills defer to: specs/plans go under a gitignored,
 machine-local `.local/superpowers/{specs,plans}/` root, and the agent self-heals `.gitignore`
@@ -22,10 +22,11 @@ override survives re-vendor, and it travels with the bundle so every adopting re
 Worktrees are deliberately **not** redirected (see guardrail below). The root is the generic
 `.local/`, namespaced `.local/superpowers/`, to stay open for future per-repo file artifacts.
 
-This **refines ADR-0002**: that record's "a method adds a procedure block only if needed (so
-`delivery-superpowers` adds none)" was about *procedure* hooks. Superpowers still carries the
-procedure; this is a distinct, second door — a *config* inject-hook — which `delivery-superpowers`
-now uses for location config only.
+This sits alongside **ADR-0002**'s "a method adds a procedure block only if needed (so
+`delivery-superpowers` adds none)" — that was about the *discipline* procedure, which superpowers
+still carries. This hook is a distinct door: the method's per-repo adaptation of vendored
+superpowers to the harness. This ADR owns the artifact-location override it declares (the door
+later took one further, narrow item — see **History**).
 
 ## Considered options
 
@@ -60,3 +61,10 @@ now uses for location config only.
 - Bundle-body reasoning and the `## Applying` sections of `delivery-superpowers` and
   `delivery-base` are updated to state this (and `delivery-base`'s shipped tooling prerequisites:
   `plannotator` on PATH, the `tuidriver` MCP runtime).
+
+## History
+
+- Originally framed this hook as carrying config **only** (the artifact-location override). It later
+  also took one narrow item — a worktree-teardown correction (its own topic, **ADR-0014**) — so the
+  "config-only" exclusivity is retired. The hook's standing purpose is "adapt vendored superpowers to
+  this harness"; this ADR owns the artifact-location half.
