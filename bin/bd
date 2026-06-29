@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+# bd — a transparent PATH shim around the real `bd` that auto-syncs the private beads
+# inbox (ADR 0013, dotfiles-zao). After a MUTATING `bd`, it flushes captures to the Dolt
+# remote via a DEBOUNCED, NONBLOCKING, CRASH-SAFE background coordinator — so captures sync
+# with zero operating-rule discipline and no git hooks. Reads/sync-plumbing pass straight
+# through (exec, no overhead). PULLS stay explicit (`bd dolt pull`) — a freshness read can't
+# be debounced and is not this shim's job.
+#
+# Lives at ~/.config/bin/bd (ADR 0001's `bin/` stow package, prepended to PATH in .zshenv),
+# so it shadows the real bd (e.g. /usr/local/bin/bd). It locates the real bd as the next
+# `bd` on PATH that isn't itself; set BD_REAL_BIN to skip that scan on the hot path.
+#
+# Why a detached coordinator and not `bd … && bd dolt push &`: the naive form is exactly the
+# racy fire-and-forget `dolt.auto-push` that sp0 found broken — the push dies when the
+# short-lived bd process (and shell) exits before the network round-trip. The fix (proven
+# 6/6 incl. crash-recovery in the zao prototype) is a setsid-detached coordinator holding a
+# kernel flock(2) for its life: it survives the triggering shell's exit, coalesces a burst
+# into one push, and self-heals after a SIGKILL (the kernel releases the lock — no stale
+# artifact, no pid-reaping race).
+#
+# BD_SHIM_SYNC=1 switches the push from detached to SYNCHRONOUS (push-and-wait). Use it for
+# an automated devbox delivery job: the harness SIGKILLs the job's whole process tree at exit
+# (container/cgroup), which setsid does NOT escape, so a pending background push would die
+# with the job — the correctness-critical write (esp. `close`) must land on the remote first.
+#
+# Portability bar (this runs on macOS discovery + Linux devbox): bash + perl + `date +%s`
+# only. No flock(1) (macOS has none), no GNU-only flags, no md5/sha (cksum is POSIX). bash
+# 3.2-safe (macOS system bash) — no associative arrays, no ${x,,}.
+set -uo pipefail
+
+# Marker arg the coordinator re-execs itself with (see _flush_trigger). Plain var, not
+# readonly, so sourcing this file (the test harness does) more than once can't error.
+_BD_SHIM_COORD_ARG="__bd_shim_coordinator_loop"
+# Path to THIS file, captured whether executed or sourced; resolved lazily by _self_path.
+_BD_SHIM_SRC="${BASH_SOURCE[0]}"
+_BD_SHIM_SELF=""
+
+_now() { date +%s; }
+
+# Absolute, symlink-resolved path of $1 without GNU `realpath`/`readlink -f` (macOS ships
+# neither). Bare one-arg `readlink` is POSIX and present on macOS + Linux.
+_resolve() {
+	local p="$1" t
+	while [ -L "$p" ]; do
+		t=$(readlink "$p")
+		case "$t" in
+			/*) p="$t" ;;
+			*) p="$(cd "$(dirname "$p")" && pwd)/$t" ;;
+		esac
+	done
+	printf '%s/%s\n' "$(cd "$(dirname "$p")" && pwd)" "$(basename "$p")"
+}
+
+_self_path() {
+	[ -n "$_BD_SHIM_SELF" ] && { printf '%s\n' "$_BD_SHIM_SELF"; return 0; }
+	_BD_SHIM_SELF=$(_resolve "$_BD_SHIM_SRC")
+	printf '%s\n' "$_BD_SHIM_SELF"
+}
+
+# The real bd = first executable `bd` on PATH whose symlink-resolved path isn't ours
+# (~/.config/bin/bd resolves to this very file). Pure-bash scan, no `which` subprocess.
+_find_real_bd() {
+	local self d cand oldifs
+	self=$(_self_path)
+	oldifs=$IFS; IFS=:; set -- $PATH; IFS=$oldifs
+	for d in "$@"; do
+		[ -n "$d" ] || d="."
+		cand="$d/bd"
+		if [ -x "$cand" ] && [ ! -d "$cand" ] && [ "$(_resolve "$cand")" != "$self" ]; then
+			printf '%s\n' "$cand"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Trigger-by-default classifier. A spurious debounced push is a cheap, coalesced, idempotent
+# no-op; a MISSED mutation is a silently-unsynced capture — the exact bug the shim kills. So
+# the default is "mutating", and only known reads / sync-plumbing / setup are excluded.
+# `dolt` MUST be excluded: the coordinator's own `bd dolt push` would otherwise re-trigger.
+_is_mutating() {
+	local s="$1"
+	[ -n "$s" ] || return 1
+	case "$s" in
+		# reads / views — nothing to sync
+		list|show|query|search|count|diff|history|lint|stale|status|statuses|types|\
+		graph|blocked|children|comments|state|where|info|context|prime|onboard|\
+		quickstart|human|preflight|find-duplicates|duplicates|memories|recall|\
+		export|backup|ping|doctor|ready|help|completion|version)
+			return 1 ;;
+		# sync plumbing / setup / local-only config — not an issue-data mutation to sync
+		dolt|vc|branch|federation|repo|hooks|setup|init|bootstrap|migrate|upgrade|rules|config)
+			return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+# Populate the coordinator's environment. State (lock/dirty/ts/log) is machine-local under
+# $XDG_STATE_HOME and keyed per beads database — a global PATH shim must not let one repo's
+# coordinator (holding the single-instance lock) swallow another repo's pending push. Key by
+# the git toplevel (where the db lives) with a $PWD fallback; cksum keeps it POSIX.
+_setup_state() {
+	local root key
+	root=$(git rev-parse --show-toplevel 2>/dev/null) || root=""
+	[ -n "$root" ] || root="$PWD"
+	key=$(printf '%s' "$root" | cksum | cut -d' ' -f1)
+	STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/bd-shim/$key"
+	mkdir -p "$STATE_DIR" 2>/dev/null || true
+	QUIET="${BD_SHIM_QUIET:-2}"
+	LOCKFILE="$STATE_DIR/coord.lock"
+	# Push payload is the REAL bd (never the shim -> no recursion). Log it so a failed
+	# background push is diagnosable. %q quotes the path safely for the eval'd string.
+	PUSH_CMD="$(printf '%q dolt push >>%q 2>&1' "$REAL_BD" "$STATE_DIR/push.log")"
+	export STATE_DIR QUIET LOCKFILE PUSH_CMD
+}
+
+# Mark work owed, refresh the debounce anchor, and (re)spawn the detached coordinator.
+# Returns instantly; safe to call on every trigger (the flock guard keeps one coordinator).
+# setsid -> its own session, outlives this shell. perl takes a kernel flock(2) (portable;
+# macOS has no flock(1)) HELD for the coordinator's whole life, with close-on-exec cleared so
+# the lock survives the exec into bash. Any death (incl. SIGKILL) releases it — no stale
+# artifact, no reaping race. A trigger whose perl can't take the lock exits 0 (stands down).
+_flush_trigger() {
+	: > "$STATE_DIR/dirty"
+	_now > "$STATE_DIR/ts"
+	local self; self=$(_self_path)
+	( setsid perl -e '
+		use Fcntl qw(:flock F_SETFD);
+		open(my $f, ">", $ENV{LOCKFILE}) or exit 1;
+		flock($f, LOCK_EX|LOCK_NB) or exit 0;
+		fcntl($f, F_SETFD, 0);
+		exec(@ARGV); exit 1;
+	  ' bash "$self" "$_BD_SHIM_COORD_ARG" >/dev/null 2>&1 </dev/null & )
+}
+
+# Synchronous backstop: if a push is owed, run it to completion and wait. Used where a
+# background coordinator won't survive (devbox cgroup teardown) or confirmation is required.
+_flush_now() {
+	if [ -e "$STATE_DIR/dirty" ]; then
+		eval "$PUSH_CMD"
+		local prc=$?
+		rm -f "$STATE_DIR/dirty"
+		return "$prc"
+	fi
+	return 1
+}
+
+# Coordinator body. Single-instance is guaranteed UPSTREAM by the perl flock guard, so there
+# is no lock logic here. Debounce on (dirty flag + last-trigger ts) in integer seconds (no
+# %N — portable). Loop until a full QUIET window passes with nothing owed; re-checking after
+# each push absorbs triggers that raced the push (no tail loss). Exit releases the flock.
+_coordinator_loop() {
+	: "${STATE_DIR:?bd-shim coordinator: STATE_DIR unset}"
+	: "${QUIET:=2}"
+	: "${PUSH_CMD:?bd-shim coordinator: PUSH_CMD unset}"
+	while :; do
+		local now last
+		now=$(_now)
+		last=$(cat "$STATE_DIR/ts" 2>/dev/null || echo 0)
+		if [ "$(( now - last ))" -ge "$QUIET" ]; then
+			if [ -e "$STATE_DIR/dirty" ]; then
+				eval "$PUSH_CMD"
+				rm -f "$STATE_DIR/dirty"
+			else
+				exit 0
+			fi
+		fi
+		sleep 1
+	done
+}
+
+_bd_shim_main() {
+	# Coordinator re-exec entrypoint (spawned detached by _flush_trigger).
+	if [ "${1:-}" = "$_BD_SHIM_COORD_ARG" ]; then
+		_coordinator_loop
+		exit $?
+	fi
+
+	# Fork-bomb backstop. Self-exclusion in _find_real_bd relies on argv[0] being our
+	# invocation path (true for zsh/bash PATH lookup — verified). Were a shell to pass a
+	# bare argv[0], self-exclusion could misfire and the scan return THIS shim, recursing.
+	# This turns that pathological case into a clean error. Normal nesting never nears 8.
+	_BD_SHIM_DEPTH=$(( ${_BD_SHIM_DEPTH:-0} + 1 )); export _BD_SHIM_DEPTH
+	if [ "$_BD_SHIM_DEPTH" -gt 8 ]; then
+		printf 'bd-shim: aborting — recursive self-invocation (no real bd distinct from this shim). Set BD_REAL_BIN=/path/to/real/bd.\n' >&2
+		exit 70
+	fi
+
+	REAL_BD="${BD_REAL_BIN:-$(_find_real_bd || true)}"
+	if [ -z "$REAL_BD" ]; then
+		printf 'bd-shim: cannot locate the real bd on PATH (set BD_REAL_BIN)\n' >&2
+		exit 127
+	fi
+
+	# First non-flag token is the subcommand (cobra-style: global flags are --x=y).
+	local a sub=""
+	for a in "$@"; do
+		case "$a" in
+			-*) ;;
+			*) sub="$a"; break ;;
+		esac
+	done
+
+	# Reads / sync-plumbing / setup: exec the real bd — zero post-overhead and a perfect
+	# passthrough of stdin/stdout/stderr/tty (matters for create-form and edit-in-$EDITOR).
+	if ! _is_mutating "$sub"; then
+		exec "$REAL_BD" "$@"
+	fi
+
+	# Mutating: run, preserve the real exit code, then flush — but only on success, since a
+	# failed mutation changed nothing to sync.
+	"$REAL_BD" "$@"
+	local rc=$?
+	if [ "$rc" -eq 0 ]; then
+		_setup_state
+		if [ -n "${BD_SHIM_SYNC:-}" ]; then
+			: > "$STATE_DIR/dirty"; _now > "$STATE_DIR/ts"
+			_flush_now >/dev/null 2>&1 || true   # local write already succeeded; sync is best-effort-but-awaited
+		else
+			_flush_trigger
+		fi
+	fi
+	exit "$rc"
+}
+
+# Run main only when executed. When sourced (the test harness), just expose the functions.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+	_bd_shim_main "$@"
+fi
