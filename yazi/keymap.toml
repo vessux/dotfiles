@@ -7,6 +7,7 @@ prepend_keymap = [
   { on = "<C-p>" , run = 'open -g -a "Quick Look" "$@"', desc = "Preview in the macos quicklook" },
   { on = "b", run = 'shell --block "bat --pager=\"less -R --mouse +g\" \"$0\""', desc = "Display current file with bat" },
   { on = "A", run = 'shell --block "plannotate \"$0\""', desc = "Annotate hovered path in Plannotator, copy result to clipboard" },
+  { on = ["c", "y"], run = 'shell --block "clip < \"$0\""', desc = "Copy hovered file contents to clipboard (OSC 52)" },
 ]
 
 [input]
