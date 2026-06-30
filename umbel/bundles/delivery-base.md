@@ -50,7 +50,10 @@ Tooling prerequisites: `plannotator` on PATH (the `annotate`/`last` skills shell
 and the `tuidriver` MCP runtime — alongside `gh` (public PRs) and `bd` (private claim/close).
 
 beads (used for private-tier claim/close) is wired by discovery's **"Wire beads"** step —
-Dolt-remote-backed on the git origin (`bd dolt push` → `refs/dolt/data`), with beads' config
+per-machine embedded Dolt synced to the git origin's `refs/dolt/data`: pushes ride the `bd`
+shim after every mutating `bd` (`dolt.auto-push` off) and pulls are explicit `bd dolt pull`,
+with a synchronous flush (`BD_SHIM_SYNC=1`) landing the claim/close before an automated job's
+process tree is torn down (ADR 0013). beads' config
 + portable hook shims committed and the DB/export/logs gitignored, and `bd bootstrap` on a
 fresh clone. `issues.jsonl` is an export, **never** the git backing. Install hooks with
 `bd hooks install --beads` so they work across the worktrees delivery methods create.

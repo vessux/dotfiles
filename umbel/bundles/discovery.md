@@ -105,9 +105,10 @@ Setup steps:
      checkouts** — essential because delivery methods (e.g. superpowers) routinely spin up
      worktrees, and every worktree must reach the one shared inbox and run the same hooks.
      `core.hooksPath` is local config, so this stays per-machine opt-in; forks are
-     unaffected. Hooks bridge `bd dolt pull` onto `git pull` and auto-**commit** Dolt
-     locally, but they do **not** push Dolt on `git push` — reaching the remote is
-     `dolt.auto-push` or a manual `bd dolt push` (see the sync note below).
+     unaffected. The hooks auto-**commit** Dolt locally, but — verified on this machine —
+     they do **not** bridge `bd dolt pull` onto `git pull` (there is no `refs/dolt/*` fetch
+     refspec) and do **not** push Dolt. So **pulls are explicit `bd dolt pull`** and the push
+     side rides the `bd` shim with `dolt.auto-push` off (ADR 0013) — see the sync note below.
    - **Set your beads role — per-clone, machine-local: `git config beads.role maintainer`.**
      beads tags git operations with a role; left unset it nags and `bd doctor` flags it
      (`Fix: git config beads.role maintainer`). Set it the same way as `core.hooksPath` —
@@ -121,26 +122,24 @@ Setup steps:
    keep reaching the remote*: `bd list` returns the beads inbox *and* a throwaway test capture
    **advances** `git ls-remote origin 'refs/dolt/*'` (then delete it). `ls-remote` merely *showing*
    refs proves a past push, not that today's captures still sync — that's the silent-dead-sync
-   trap. The git hooks do **not** push Dolt; the remote advances only via `dolt.auto-push` (the
-   cross-machine default, below) or a manual `bd dolt push`. On a single machine remote sync is
+   trap. The git hooks do **not** push Dolt; the remote advances via the `bd` shim's debounced
+   background push after a mutating `bd` (`dolt.auto-push` is **off** — racy in embedded mode,
+   ADR 0013) or a forced `bd dolt push`. Because the shim's push is debounced, give it a beat —
+   or flush synchronously — before asserting the ref advanced. On a single machine remote sync is
    backup-only and optional. A repo where `.repo-visibility=private` exists but a test capture
    fails to advance the remote is **not** set up — don't claim discovery setup is done.
 
-   *Sync is **git-style async, not real-time**: a capture/claim is a local commit that
-   reaches the remote on push and other machines on pull — **a claim is not a lock**.
-   `dolt.auto-commit=on` (default) + these hooks auto-**commit** Dolt locally at git
-   push/pull boundaries, but do **not** push it — so ending a session with a code push
-   does *not* carry your captures to the remote; that needs `dolt.auto-push` or a manual
-   `bd dolt push`.
-   `dolt.auto-push` (newer bd) adds per-command pushing so captures reach the
-   remote without a code push — enable it when you run discovery across machines
-   and want capture-only sessions to self-sync; it's single-writer-only and adds
-   remote churn, so on one machine leave it off (concurrent writers → server mode,
-   below). There is no background auto-pull in any version; the receive side is
-   always `git pull`/`bd dolt pull`. For a
-   **concurrent multi-agent / multi-machine** flow this single-writer model is the wrong
-   fit — switch beads to a shared `dolt sql-server` (server mode: `bd init --server` /
-   `bd dolt start`) per the beads docs.*
+   *Sync is **git-style async, not real-time**: a capture/claim is a local commit on a
+   per-machine **embedded** Dolt that reaches the origin's `refs/dolt/data` on push and other
+   machines on an explicit pull — **a claim is not a lock**. The push side rides the **`bd`
+   shim** — a debounced, crash-safe background coordinator that flushes after every mutating
+   `bd` (ADR 0013); `dolt.auto-push` is **off** because in embedded mode it's racy/best-effort
+   (a short-lived `bd` can exit before the push's round-trip). The receive side is **explicit
+   `bd dolt pull`** (at presort/triage open and before each delivery claim) — `git pull` does
+   **not** carry it (no `refs/dolt/*` fetch refspec, no bridge hook) and there is no background
+   auto-pull. Concurrent delivery workers on one machine share that machine's embedded Dolt and
+   so serialize locally; a shared `dolt sql-server` is an optional, reversible **devbox-internal**
+   toggle for that local contention only — never the cross-machine path.*
 3. **Stand up the decision record.** Both tiers record decisions the same way:
    **ADRs** under `docs/adr/` plus a root **`CONTEXT.md`** glossary, created *lazily*
    by the sharpening skills (`grill-with-docs`, `improve-codebase-architecture`) when

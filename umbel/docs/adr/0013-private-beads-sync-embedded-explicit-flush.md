@@ -91,6 +91,13 @@ death, so there's no stale artifact and no reaping race.
 - The shim (dotfiles-zao) must be built and installed on **both** machines; it is the lead work,
   and sp0 (config `auto-push false` + encoding the pull points and the scoped synchronous-push
   points in the discovery/delivery seeds + correcting the stale bundle docs) sits on top of it.
+- **The shim must win `PATH`, not merely sit on it.** It only shadows the real `bd` while
+  `~/.config/bin` *precedes* the real binary (e.g. `/usr/local/bin`). `.zshenv` prepends it for
+  non-interactive callers, but an interactive shell then rebuilds `PATH` with the system defaults
+  and tool managers (mise) ahead of it — dropping `~/.config/bin` behind `/usr/local/bin` and
+  silently un-shadowing the shim; with `auto-push` off that means *nothing* pushes. `.zshrc`
+  re-prepends `~/.config/bin` last (after mise) to fix it. zao's hand-off assumed "on `PATH` in
+  `.zshenv`" sufficed — it doesn't for interactive / Claude Code shells.
 - The discovery bundle's sync note is wrong on two counts now — it calls `auto-push` "the
   cross-machine default" and claims `git pull` bridges `bd dolt pull` — and is corrected to this model.
 - Dead-agent stranded claims remain — automatic stale-claim reclaim is tracked separately
@@ -109,3 +116,10 @@ death, so there's no stale artifact and no reaping race.
   explicit form required. `flush_now` (synchronous push) was simultaneously narrowed from a blanket
   session-end backstop to the scoped teardown/verification role — the surviving detached coordinator
   makes it redundant on the persistent Mac shell.
+- 2026-06-30: delivered (dotfiles-sp0). Delivery found the shim was installed but **shadowed** —
+  `~/.config/bin` lost `PATH` ordering to `/usr/local/bin` in interactive / Claude Code shells, so
+  `bd` resolved to the real binary and *nothing* would push once `auto-push` went off. Fixed by
+  re-prepending `~/.config/bin` in `.zshrc` (the last `PATH` writer) so the shim wins everywhere
+  (see the PATH consequence above). Also flipped `auto-push` off, encoded the explicit-pull and
+  scoped synchronous-push points into the discovery+delivery seeds, and corrected the stale bundle
+  sync notes.

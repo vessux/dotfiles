@@ -206,3 +206,14 @@ export PATH="${XDG_DATA_HOME}/umbel/bin:$PATH"
 # so it's silent on every box without a manual `mise trust` per machine.
 export MISE_TRUSTED_CONFIG_PATHS="${HOME}/dotfiles"
 command -v mise >/dev/null && eval "$(mise activate zsh)"
+
+# ~/.config/bin — re-prepended LAST so it wins interactively too. .zshenv already puts it on
+# PATH (for non-interactive callers, same reason as the mise shims), but an interactive shell
+# then rebuilds PATH with the system defaults — /usr/local/bin et al. — and the tool managers
+# above (mise, cargo) ahead of it, dropping ~/.config/bin behind /usr/local/bin. That SHADOWS
+# the `bd` shim (~/.config/bin/bd) behind the real /usr/local/bin/bd, silently defeating the
+# private-beads auto-sync (ADR 0013, dotfiles-sp0/zao): with dolt.auto-push off, an unshadowed
+# shim is the ONLY thing that pushes captures to the remote. Re-prepending here (after mise,
+# the last PATH writer) is the same non-interactive-.zshenv / interactive-.zshrc split mise
+# uses above. The three scripts here (bd/clip/plannotate) don't collide with any mise tool.
+export PATH="$HOME/.config/bin:$PATH"

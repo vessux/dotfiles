@@ -58,9 +58,10 @@ sync.remote: "git+https://github.com/vessux/dotfiles.git"
 
 export.git-add: false
 
-# Auto-push Dolt (refs/dolt/data) to sync.remote after writes — beads git hooks
-# auto-COMMIT Dolt changes but never auto-PUSH; this opt-in closes that gap so
-# cross-machine sync no longer needs a manual `bd dolt push`. Beads scopes this
-# to single-writer setups: concurrent writers to a git-protocol Dolt remote can
-# race and strand remote history (debounced by auto-push-interval, default 5m).
-dolt.auto-push: true
+# Auto-push Dolt (refs/dolt/data) to sync.remote after writes. OFF: in embedded mode it is
+# best-effort/racy — a short-lived `bd` process can exit before the push's network round-trip,
+# so identical ops disagree and some captures never reach the remote (dotfiles-sp0). The push
+# side now rides the `bd` shim (~/.config/bin/bd) — a debounced, crash-safe background
+# coordinator that flushes after every mutating `bd` — per ADR 0013. Leaving auto-push on would
+# just add a redundant, racy double-push. Pulls stay explicit (`bd dolt pull`).
+dolt.auto-push: false
