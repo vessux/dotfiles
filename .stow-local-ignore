@@ -6,3 +6,12 @@ README.md
 
 backup/
 tmp_config.json
+
+# repo-meta: repo plumbing, never app config — keep off ~/.config on every machine
+^\.beads$
+^\.claude$
+^CLAUDE\.md$
+^docs$
+^\.repo-visibility$
+^\.umbel-bundle$
+^\.worktrees$

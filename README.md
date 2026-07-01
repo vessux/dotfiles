@@ -111,6 +111,7 @@ All configurations are symlinked to `~/.config/` via Stow:
 ~/.config/
 ├── atuin/          # Shell history configuration
 ├── bat/            # Syntax highlighter configuration  
+├── bin/            # Reusable repo scripts on PATH (see ADR 0001)
 ├── ghostty/        # Terminal emulator configuration
 ├── git/            # Git configuration and global gitignore
 ├── karabiner/      # Keyboard customization
