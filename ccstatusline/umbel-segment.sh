@@ -5,7 +5,7 @@
 # Source of truth is SESSION-RESOLVED, not the .umbel-bundle pin file (the pin
 # can lie: a vanilla `claude` launched in a pinned dir still reads a name).
 #   name    = $UMBEL_BUNDLE, trusted only when $UMBEL_RESOLVED=1
-#   version = STOPGAP, scraped from PATH (see below)
+#   version = $UMBEL_BUNDLE_VERSION, set by umbel on the bundle run path
 #
 # A real bundle requires BOTH vars: `umbel run` spawns claude with
 # UMBEL_RESOLVED=1 on EVERY launch (it's the shim's re-entrancy guard), and
@@ -21,14 +21,11 @@
 # "vanilla" covers an explicit vanilla pick (RESOLVED=1, no name) AND a claude
 # not launched via umbel at all (RESOLVED unset) — both mean no bundle governs.
 #
-# VERSION SOURCE IS FRAGILE — graduates via dotfiles-cbt / umbel-ri9:
-# Claude appends each --plugin-dir's bin/ to PATH (umbel src/bundle/
-# claude-args.ts), so the session-resolved bundle dir
-# ".../umbel/bundles/<name>-<hash>/bin" lands in PATH. We scrape <hash> there
-# and truncate to 7 (git-style). This leans on Claude's plugin->PATH behaviour,
-# NOT an umbel contract, so version is best-effort and NAME always comes from
-# the solid $UMBEL_BUNDLE env. dotfiles-cbt replaces this scrape with a
-# umbel-provided env var once umbel-ri9 ships it.
+# Version comes from $UMBEL_BUNDLE_VERSION, exported by `umbel run` on the
+# bundle path (format "0.0.0+<hash>" — a semver placeholder until real
+# versioning lands; the vanilla path drops it, matching the name's vanilla
+# behaviour). We render the short hash git-style; a real semver would render
+# verbatim. Was a PATH-scrape before umbel-ri9 shipped the var (dotfiles-cbt).
 
 ICON='󰏗'
 ESC=$(printf '\033')
@@ -44,24 +41,12 @@ if [ "${UMBEL_RESOLVED:-}" != 1 ] || [ -z "$name" ]; then
 	exit 0
 fi
 
-# Best-effort version: find THIS bundle's PATH entry and read its hash.
-hash=
-oldifs=$IFS
-IFS=:
-for entry in $PATH; do
-	case $entry in
-	*/umbel/bundles/"$name"-*/bin)
-		base=${entry%/bin}     # .../umbel/bundles/<name>-<hash>
-		base=${base##*/}       # <name>-<hash>
-		hash=${base#"$name"-}  # <hash>  (literal "name-" prefix stripped)
-		break
-		;;
-	esac
-done
-IFS=$oldifs
-
-if [ -n "$hash" ]; then
+# Version from umbel's env var. Strip the "0.0.0+" semver prefix to the short
+# hash for the git-style render; a real semver (no "+") passes through unchanged.
+v=${UMBEL_BUNDLE_VERSION:-}
+hash=${v##*+}          # "0.0.0+<hash>" -> <hash>; no-op on a real semver like 1.2.3
+if [ -n "$v" ]; then
 	printf '%s%s %s@%.7s%s' "$MAGENTA" "$ICON" "$name" "$hash" "$RESET"
 else
-	printf '%s%s %s%s' "$MAGENTA" "$ICON" "$name" "$RESET"
+	printf '%s%s %s%s' "$MAGENTA" "$ICON" "$name" "$RESET"   # best-effort: name only
 fi

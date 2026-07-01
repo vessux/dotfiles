@@ -2,10 +2,10 @@
 # Tests for umbel-segment.sh — the ccstatusline umbel-bundle widget.
 # Run:  ./umbel-segment.test.sh   (exit 0 = all pass)
 #
-# Hermetic: the segment script uses only shell builtins, so PATH can be a
-# synthetic value here without affecting it. We exercise both output states
-# (resolved bundle vs vanilla) by setting UMBEL_RESOLVED / UMBEL_BUNDLE / PATH
-# per case via `env`.
+# Hermetic: every output state is driven purely by the umbel env vars, set per
+# case via `env`. Version now comes from $UMBEL_BUNDLE_VERSION (was a PATH-scrape
+# before umbel-ri9); we exercise the semver-placeholder form "0.0.0+<hash>", a
+# real semver, the no-version fallback, and vanilla.
 set -u
 
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -28,31 +28,38 @@ check() {
 	fi
 }
 
-# State 1: resolved + version readable, dash-in-name (the live `delivery-superpowers` shape)
+# State 1: resolved + version (semver-placeholder form), dash-in-name
+#          (the live `delivery-superpowers` shape)
 out=$(env UMBEL_RESOLVED=1 UMBEL_BUNDLE=delivery-superpowers \
-	PATH="/opt/umbel/bundles/delivery-superpowers-4124ef534311/bin:/usr/bin:/bin" "$SUT")
+	UMBEL_BUNDLE_VERSION="0.0.0+4124ef534311" "$SUT")
 check "resolved+version, dash-in-name -> name@7hash magenta" \
 	"${M}󰏗 delivery-superpowers@4124ef5${R}" "$out"
 
-# State 2: resolved + version readable, simple name
+# State 2: resolved + version (semver-placeholder form), simple name
 out=$(env UMBEL_RESOLVED=1 UMBEL_BUNDLE=discovery \
-	PATH="/opt/umbel/bundles/discovery-abcdef1234567/bin:/usr/bin:/bin" "$SUT")
+	UMBEL_BUNDLE_VERSION="0.0.0+abcdef1234567" "$SUT")
 check "resolved+version, simple name -> name@7hash magenta" \
 	"${M}󰏗 discovery@abcdef1${R}" "$out"
 
-# State 3: resolved but version unreadable — a decoy other-bundle entry must NOT match
+# State 3: resolved + a REAL semver (no "+" prefix) -> passes through verbatim
+#          (forward-compatible once real versioning lands)
 out=$(env UMBEL_RESOLVED=1 UMBEL_BUNDLE=discovery \
-	PATH="/opt/umbel/bundles/other-zzz9999/bin:/usr/bin:/bin" "$SUT")
-check "resolved, no matching PATH entry -> bare name magenta" \
+	UMBEL_BUNDLE_VERSION="1.2.3" "$SUT")
+check "resolved + real semver -> name@semver magenta" \
+	"${M}󰏗 discovery@1.2.3${R}" "$out"
+
+# State 4: resolved but version var absent -> bare name magenta (best-effort)
+out=$(env -u UMBEL_BUNDLE_VERSION UMBEL_RESOLVED=1 UMBEL_BUNDLE=discovery "$SUT")
+check "resolved, no version var -> bare name magenta" \
 	"${M}󰏗 discovery${R}" "$out"
 
-# State 4: not launched via umbel — UMBEL_RESOLVED unset (stale name ignored)
-out=$(env -u UMBEL_RESOLVED UMBEL_BUNDLE=discovery PATH="/usr/bin:/bin" "$SUT")
+# State 5: not launched via umbel — UMBEL_RESOLVED unset (stale name ignored)
+out=$(env -u UMBEL_RESOLVED UMBEL_BUNDLE=discovery "$SUT")
 check "no umbel (UMBEL_RESOLVED unset) -> dim grey vanilla" \
 	"${G}󰏗 vanilla${R}" "$out"
 
-# State 5: explicit vanilla pick — resolved (RESOLVED=1) but no name -> dim grey
-out=$(env -u UMBEL_BUNDLE UMBEL_RESOLVED=1 PATH="/usr/bin:/bin" "$SUT")
+# State 6: explicit vanilla pick — resolved (RESOLVED=1) but no name -> dim grey
+out=$(env -u UMBEL_BUNDLE UMBEL_RESOLVED=1 "$SUT")
 check "vanilla pick (resolved, no name) -> dim grey vanilla" \
 	"${G}󰏗 vanilla${R}" "$out"
 
