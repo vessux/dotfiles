@@ -97,7 +97,12 @@ death, so there's no stale artifact and no reaping race.
   and tool managers (mise) ahead of it — dropping `~/.config/bin` behind `/usr/local/bin` and
   silently un-shadowing the shim; with `auto-push` off that means *nothing* pushes. `.zshrc`
   re-prepends `~/.config/bin` last (after mise) to fix it. zao's hand-off assumed "on `PATH` in
-  `.zshenv`" sufficed — it doesn't for interactive / Claude Code shells.
+  `.zshenv`" sufficed — it doesn't for interactive / Claude Code shells. Worse, a session's `PATH`
+  is a **snapshot captured at launch**: a session launched from a context predating this `.zshrc`
+  fix carries a stale `PATH` where the shim isn't first, silently bypassing `BD_SHIM_SYNC`
+  (reloading the session refreshes the snapshot). The delivery close therefore uses an explicit
+  `bd dolt push` — which pushes regardless of shim ordering — plus the `ls-remote` confirm as
+  backstop, rather than trusting `BD_SHIM_SYNC` (dotfiles-y7m).
 - The discovery bundle's sync note is wrong on two counts now — it calls `auto-push` "the
   cross-machine default" and claims `git pull` bridges `bd dolt pull` — and is corrected to this model.
 - Dead-agent stranded claims remain — automatic stale-claim reclaim is tracked separately
@@ -123,3 +128,7 @@ death, so there's no stale artifact and no reaping race.
   (see the PATH consequence above). Also flipped `auto-push` off, encoded the explicit-pull and
   scoped synchronous-push points into the discovery+delivery seeds, and corrected the stale bundle
   sync notes.
+- 2026-07-01: dotfiles-y7m — the 9sq close's non-advance was a **stale-session PATH snapshot**
+  (shim bypassed, `BD_SHIM_SYNC` no-op), not a mechanism failure; verified the shim pushes
+  synchronously in a fresh session. Hardened the delivery close to an explicit `bd dolt push`
+  (stale-proof) + the `ls-remote` confirm, promoting the recovery memory into the seed.
