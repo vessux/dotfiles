@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# cc-cost — token usage + API-price cost report from Claude Code transcript JSONL.
+#
+# Usage:
+#   cc-cost PATH...            PATHs are .jsonl transcript files or directories
+#                              (directories are scanned recursively for *.jsonl:
+#                              session transcripts, subagent + workflow agent files)
+#   cc-cost --json PATH...     raw aggregation as JSON (for scripting)
+#   cc-cost --no-price PATH... token counts only, no cost columns
+#
+# What counts as hard data: per-request `message.usage` records in the JSONL.
+# A message's usage can appear on several lines (streaming snapshots share one
+# message.id, and multi-block messages repeat it) — summing lines naively
+# over-counts input massively. This script dedupes to ONE final snapshot per
+# message id (max output_tokens) before summing.
+#
+# What is NOT hard data: the price sheet below, hardcoded per MTok USD.
+# Cache pricing: write = 1.25x input rate (5m TTL), read = 0.1x input rate.
+# Verify against https://platform.claude.com/docs/en/pricing before trusting
+# the dollar column for anything that matters.
+set -euo pipefail
+
+PRICES_ASOF="2026-07-06"
+# Longest-prefix match against message.model, so dated IDs resolve too.
+PRICES_JSON='{
+  "claude-fable-5":   {"in": 10.0, "out": 50.0},
+  "claude-mythos-5":  {"in": 10.0, "out": 50.0},
+  "claude-opus-4-8":  {"in": 5.0,  "out": 25.0},
+  "claude-opus-4-7":  {"in": 5.0,  "out": 25.0},
+  "claude-opus-4-6":  {"in": 5.0,  "out": 25.0},
+  "claude-opus-4-5":  {"in": 5.0,  "out": 25.0},
+  "claude-sonnet-5":  {"in": 3.0,  "out": 15.0},
+  "claude-sonnet-4-6":{"in": 3.0,  "out": 15.0},
+  "claude-sonnet-4-5":{"in": 3.0,  "out": 15.0},
+  "claude-haiku-4-5": {"in": 1.0,  "out": 5.0}
+}'
+
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; }
+
+json_out=0
+no_price=0
+paths=()
+for arg in "$@"; do
+  case "$arg" in
+    --json) json_out=1 ;;
+    --no-price) no_price=1 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) echo "cc-cost: unknown flag '$arg'" >&2; usage >&2; exit 2 ;;
+    *) paths+=("$arg") ;;
+  esac
+done
+if [ "${#paths[@]}" -eq 0 ]; then
+  echo "cc-cost: no transcript paths given" >&2; usage >&2; exit 2
+fi
+
+files=()
+for p in "${paths[@]}"; do
+  if [ -d "$p" ]; then
+    while IFS= read -r f; do files+=("$f"); done < <(find "$p" -name '*.jsonl' -type f | sort)
+  elif [ -f "$p" ]; then
+    files+=("$p")
+  else
+    echo "cc-cost: no such file or directory: $p" >&2; exit 2
+  fi
+done
+if [ "${#files[@]}" -eq 0 ]; then
+  echo "cc-cost: no .jsonl files found under given paths" >&2; exit 2
+fi
+
+# 16-color ANSI only, and only on a TTY.
+if [ -t 1 ] && [ "$json_out" -eq 0 ]; then
+  B=$'\e[1m'; CY=$'\e[36m'; GN=$'\e[32m'; YL=$'\e[33m'; DM=$'\e[2m'; R=$'\e[0m'
+else
+  B=''; CY=''; GN=''; YL=''; DM=''; R=''
+fi
+
+jq -rs \
+  --argjson prices "$PRICES_JSON" \
+  --argjson json_out "$json_out" \
+  --argjson no_price "$no_price" \
+  --arg asof "$PRICES_ASOF" \
+  --arg B "$B" --arg CY "$CY" --arg GN "$GN" --arg YL "$YL" --arg DM "$DM" --arg R "$R" '
+  def commas: tostring
+    | if test("^[0-9]+$") and length > 3
+      then (.[:length-3] | commas) + "," + .[length-3:]
+      else . end;
+  def money: (. * 100 | round) as $c
+    | "$" + (($c / 100 | floor) | commas) + "." + ((($c % 100) + 100 | tostring)[1:]);
+  def rpad($n): tostring | . + (" " * ([$n - length, 0] | max));
+  def lpad($n): tostring | (" " * ([$n - length, 0] | max)) + .;
+
+  # --- aggregate: one final usage snapshot per message id ---
+  ( to_entries
+    | map(.value
+        | select(type == "object")
+        | select(((.message? // null) | type) == "object")
+        | select((.message.usage? // empty) and (.message.model? // empty)
+                 and (.message.model | startswith("<") | not))
+        | {id: (.message.id // .uuid // null), model: .message.model, u: .message.usage})
+    | to_entries
+    | map({id: (.value.id // "noid-\(.key)"), model: .value.model, u: .value.u})
+    | group_by(.id) | map(max_by(.u.output_tokens // 0))
+    | group_by(.model)
+    | map({
+        model: .[0].model,
+        api_calls: length,
+        input_uncached: (map(.u.input_tokens // 0) | add),
+        cache_write: (map(.u.cache_creation_input_tokens // 0) | add),
+        cache_read: (map(.u.cache_read_input_tokens // 0) | add),
+        output: (map(.u.output_tokens // 0) | add)
+      })
+  ) as $agg
+
+  # --- price lookup: longest matching key prefix ---
+  | ($agg | map(
+      . as $m
+      | ($prices | to_entries | map(select(.key as $k | $m.model | startswith($k)))
+         | (max_by(.key | length) | .value)?) as $p
+      | . + (if $p and ($no_price == 0) then
+          { cost_input: (.input_uncached * $p.in / 1e6),
+            cost_cache_write: (.cache_write * $p.in * 1.25 / 1e6),
+            cost_cache_read: (.cache_read * $p.in * 0.1 / 1e6),
+            cost_output: (.output * $p.out / 1e6),
+            cost_uncached_equiv:
+              (((.input_uncached + .cache_write + .cache_read) * $p.in
+                + .output * $p.out) / 1e6),
+            rates: $p }
+          | . + {cost_total: (.cost_input + .cost_cache_write + .cost_cache_read + .cost_output)}
+        else {} end)
+    )) as $rows
+
+  | if $json_out == 1 then ($rows | tojson) else
+    ( [ $rows[] |
+        "\($B)\($CY)\(.model)\($R)\($DM) — \(.api_calls) API calls\($R)",
+        ( [ ["input (uncached)", .input_uncached, (.rates.in? // null), (.cost_input? // null)],
+            ["cache write 1.25x", .cache_write, (if .rates then .rates.in * 1.25 else null end), (.cost_cache_write? // null)],
+            ["cache read 0.1x", .cache_read, (if .rates then .rates.in * 0.1 else null end), (.cost_cache_read? // null)],
+            ["output", .output, (.rates.out? // null), (.cost_output? // null)]
+          ][]
+          | "  \(.[0] | rpad(18)) \(.[1] | commas | lpad(12))"
+            + (if .[2] != null then "  @ \(.[2] | lpad(6))/M  \(.[3] | money | lpad(10))" else "" end)
+        ),
+        (if .cost_total? then
+          "  \($B)\("subtotal" | rpad(18)) \((.input_uncached + .cache_write + .cache_read + .output) | commas | lpad(12))\(" " * 12)\(.cost_total | money | lpad(10))\($R)"
+         else empty end),
+        ""
+      ]
+      + (if ($no_price == 0) and ([ $rows[] | select(.cost_total?) ] | length) > 0 then
+          ([ $rows[] | .cost_total? // 0 ] | add) as $total
+          | ([ $rows[] | .cost_uncached_equiv? // 0 ] | add) as $unc
+          | [ "\($B)\($GN)TOTAL \($total | money)\($R)"
+                + (if $unc > $total then
+                    "   \($DM)(uncached would be \($unc | money) — caching saved \((100 * ($unc - $total) / $unc) | round)%)\($R)"
+                   else "" end),
+              "\($YL)prices hardcoded as of \($asof) — verify at platform.claude.com/docs/en/pricing\($R)"
+            ]
+         else [] end)
+      + ( [ $rows[] | select((.rates? // null) == null and ($no_price == 0)) | .model ]
+          | if length > 0 then ["\($YL)no price entry for: \(join(", ")) — token counts only\($R)"] else [] end )
+    ) | .[]
+    end
+' "${files[@]}"
