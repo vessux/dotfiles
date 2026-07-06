@@ -1,0 +1,461 @@
+#!/usr/bin/env bash
+# clerk — the workflow's single keyless verb facade (ADR 0015). The agent speaks workflow
+# verbs; the clerk executes mechanism exactly, in code that cannot drift from itself.
+#
+# This is the CORE (unit dotfiles-dft.1): noun-verb dispatch, `.clerk` marker resolution
+# (ADR 0017: backlog location is a committed marker at the repo root), `doctor`, and
+# `--explain`. Every other roster verb refuses with exit 3 until its unit in the
+# dotfiles-dft epic lands — a refusal distinct from an unknown verb (exit 2 + roster).
+#
+# Exit codes:
+#   0  success
+#   1  doctor found problems
+#   2  usage error / unknown verb (roster printed)
+#   3  known verb, not yet implemented in this generation
+#   4  dispatch refused: no git repo, or .clerk marker missing/invalid
+#
+# Output discipline (ADR 0015): printed output is load-bearing — every refusal prescribes
+# the next action, and everything is tested verbatim. 16-color ANSI only (30-37/90-97,
+# bold, reset; never 38;5/38;2) so terminal themes recolor it.
+set -uo pipefail
+
+CLERK_VERSION="0.1.0" # single source of truth: --version and doctor both read this line
+
+C_BOLD=$'\033[1m'
+C_RED=$'\033[31m'
+C_GRN=$'\033[32m'
+C_YLW=$'\033[33m'
+C_RST=$'\033[0m'
+
+ADR15="ADR 0015 — umbel/docs/adr/0015-clerk-opaque-workflow-verb-facade.md"
+ADR16="ADR 0016 — umbel/docs/adr/0016-delivery-gate-acceptance-proof-and-judgment-loops.md"
+ADR17="ADR 0017 — umbel/docs/adr/0017-tier-retired-backlog-location-and-merge-gate-axes.md"
+
+print_roster() {
+	printf '%s\n' \
+		'Known verbs:' \
+		'  capture "<title>" [--stdin|--impediment]' \
+		'  inbox list|show|dups|ready|drop|pregrill' \
+		'  backlog next|show|claim|release|submit|finish|return' \
+		'  sync' \
+		'  doctor [--fix --backend bd|gh]' \
+		'  glean' \
+		"Next: run 'clerk --explain <verb>' to see what a verb does."
+}
+
+usage_error() {
+	printf '%s\n' "$1" >&2
+	exit 2
+}
+
+unknown_verb() {
+	printf "clerk: unknown verb '%s'\n" "$1" >&2
+	print_roster >&2
+	exit 2
+}
+
+not_implemented() {
+	printf "clerk: '%s' is not yet implemented in this generation (see dotfiles-dft epic)\n" "$1" >&2
+	exit 3
+}
+
+repo_root() {
+	git rev-parse --show-toplevel 2>/dev/null
+}
+
+# Parse the .clerk marker at $1. Echoes the backend (bd|gh) on success.
+# Returns 1 when the file is missing, 2 when present but invalid.
+# Format (ADR 0017 manifest v0): a single directive line `backlog: bd|gh`;
+# surrounding whitespace and `#` comments are tolerated.
+read_marker() {
+	local file="$1" line content=""
+	[ -f "$file" ] || return 1
+	while IFS= read -r line || [ -n "$line" ]; do
+		line="${line%%#*}"                       # strip comments
+		line="${line#"${line%%[![:space:]]*}"}"  # ltrim
+		line="${line%"${line##*[![:space:]]}"}"  # rtrim
+		[ -n "$line" ] || continue
+		[ -z "$content" ] || return 2            # more than one directive line
+		content="$line"
+	done <"$file"
+	case "$content" in
+		backlog:*) ;;
+		*) return 2 ;;
+	esac
+	content="${content#backlog:}"
+	content="${content#"${content%%[![:space:]]*}"}"
+	case "$content" in
+		bd | gh) printf '%s\n' "$content" ;;
+		*) return 2 ;;
+	esac
+}
+
+# Dispatch gate: every verb except doctor and --explain forms passes through here.
+# Refuses (exit 4) unless we are in a git repo with a valid .clerk marker — and always
+# prescribes `clerk doctor`, which owns diagnosis and provisioning (ADR 0017).
+marker_gate() {
+	local root rc=0
+	if ! root=$(repo_root); then
+		printf "clerk: not inside a git repository — cd into the target repo, then run 'clerk doctor'\n" >&2
+		exit 4
+	fi
+	read_marker "$root/.clerk" >/dev/null || rc=$?
+	case "$rc" in
+		0) ;;
+		1)
+			printf "clerk: missing .clerk marker at %s/.clerk — run 'clerk doctor' to provision it\n" "$root" >&2
+			exit 4
+			;;
+		*)
+			printf "clerk: invalid .clerk marker at %s/.clerk — run 'clerk doctor' to diagnose it\n" "$root" >&2
+			exit 4
+			;;
+	esac
+}
+
+# --explain: the human-terminal window into the facade (ADR 0015) — prints the underlying
+# commands a verb runs plus its ADR pointer. Works for every roster verb, implemented or
+# not, marker or no marker.
+explain_verb() {
+	case "$1" in
+		capture)
+			printf '%s\n' \
+				'clerk capture — file one raw capture into the inbox' \
+				'  runs: bd create "<title>" [--stdin]           (backlog: bd)' \
+				'        gh issue create --title "<title>"       (backlog: gh)' \
+				"  see:  $ADR15"
+			;;
+		sync)
+			printf '%s\n' \
+				'clerk sync — reconcile every open claim (authorship-free phases only)' \
+				'  runs: gh pr view --json state,mergedAt per open claim; then bd close / bd update' \
+				'        (backlog: bd) or gh issue close / gh issue edit (backlog: gh) per reconciled' \
+				'        state; reclaims stale claims; files reports for judgment-needing states' \
+				"  see:  $ADR15"
+			;;
+		doctor)
+			printf '%s\n' \
+				'clerk doctor — check and provision workflow plumbing' \
+				'  runs: git rev-parse --show-toplevel; reads .clerk; command -v bd vs the shim locations; gh auth status' \
+				'        --fix --backend bd|gh writes the .clerk marker' \
+				"  see:  $ADR17"
+			;;
+		glean)
+			printf '%s\n' \
+				'clerk glean — watermark sweep of session transcripts into captures' \
+				'  runs: flock-guarded sweep over per-transcript line offsets (state in ~/.local/state/clerk/); spawns the judgment fork per unharvested chunk' \
+				"  see:  $ADR15"
+			;;
+		'inbox list')
+			printf '%s\n' \
+				'clerk inbox list — list the unrefined pool' \
+				'  runs: bd list, filtered to open minus stage:ready         (backlog: bd)' \
+				'        gh issue list, filtered to minus ready-for-agent    (backlog: gh)' \
+				"  see:  $ADR15"
+			;;
+		'inbox show')
+			printf '%s\n' \
+				'clerk inbox show — show one inbox item' \
+				'  runs: bd show <id>          (backlog: bd)' \
+				'        gh issue view <id>    (backlog: gh)' \
+				"  see:  $ADR15"
+			;;
+		'inbox dups')
+			printf '%s\n' \
+				'clerk inbox dups — cluster duplicate captures for pre-sort' \
+				'  runs: bd duplicates         (backlog: bd)' \
+				'        gh issue list + a similarity pass    (backlog: gh)' \
+				"  see:  $ADR16"
+			;;
+		'inbox ready')
+			printf '%s\n' \
+				'clerk inbox ready — promote a groomed unit into the ready backlog' \
+				'  runs: refuses units without acceptance criteria (ADR 0016), then:' \
+				'        bd update <id> --label stage:ready              (backlog: bd)' \
+				'        gh issue edit <id> --add-label ready-for-agent  (backlog: gh)' \
+				"  see:  $ADR16"
+			;;
+		'inbox drop')
+			printf '%s\n' \
+				'clerk inbox drop — close a capture as not worth doing' \
+				'  runs: bd close <id> --reason wontfix    (backlog: bd)' \
+				'        gh issue close <id>               (backlog: gh)' \
+				"  see:  $ADR15"
+			;;
+		'inbox pregrill')
+			printf '%s\n' \
+				'clerk inbox pregrill — append prep notes onto a unit before its grill' \
+				'  runs: bd update <id> --notes "<dated, state-neutral prep note>"    (backlog: bd)' \
+				'        gh issue comment <id> --body "<prep note>"                   (backlog: gh)' \
+				'        note carries open decisions, premises with suggested verifications, draft criteria' \
+				"  see:  $ADR16"
+			;;
+		'backlog next')
+			printf '%s\n' \
+				'clerk backlog next — pick the next ready unit' \
+				'  runs: bd ready                              (backlog: bd)' \
+				'        gh issue list --label ready-for-agent  (backlog: gh)' \
+				"  see:  $ADR17"
+			;;
+		'backlog show')
+			printf '%s\n' \
+				'clerk backlog show — show one backlog unit' \
+				'  runs: bd show <id>          (backlog: bd)' \
+				'        gh issue view <id>    (backlog: gh)' \
+				"  see:  $ADR15"
+			;;
+		'backlog claim')
+			printf '%s\n' \
+				'clerk backlog claim — take the claim lock on a unit' \
+				'  runs: git push of the canonical delivery/<id> branch (first push wins — the universal lock); plus the bd status transition as the online fast path (backlog: bd)' \
+				"  see:  $ADR17"
+			;;
+		'backlog release')
+			printf '%s\n' \
+				'clerk backlog release — give a claim back without finishing' \
+				'  runs: git push origin --delete delivery/<id>; then bd update <id> --status open' \
+				'        (backlog: bd) or gh issue edit <id> (backlog: gh) reverts the status the claim set' \
+				"  see:  $ADR15"
+			;;
+		'backlog submit')
+			printf '%s\n' \
+				'clerk backlog submit — open the unit'"'"'s PR (once per unit; iteration repeats finish)' \
+				'  runs: the delivery-gate script as a local preflight, then gh pr create with the unit'"'"'s acceptance criteria stamped into the body, one evidence entry per criterion' \
+				"  see:  $ADR16"
+			;;
+		'backlog finish')
+			printf '%s\n' \
+				'clerk backlog finish — reconcile a submitted unit to done' \
+				'  runs: gh pr view --json state,mergedAt (merge detected via PR state, never ancestry); closes the unit; tears down the worktree; --watch wraps gh pr checks --watch' \
+				"  see:  $ADR15"
+			;;
+		'backlog return')
+			printf '%s\n' \
+				'clerk backlog return — send a unit back to discovery' \
+				'  runs: bd reopen <id> + bd create (mandatory reason auto-filed as a capture)    (backlog: bd)' \
+				'        gh issue reopen <id> + gh issue create                                   (backlog: gh)' \
+				"  see:  $ADR16"
+			;;
+		*)
+			unknown_verb "$1"
+			;;
+	esac
+}
+
+# ---------------------------------------------------------------- doctor ----
+
+DOCTOR_FAILS=0
+
+d_ok() { printf '  %s[ ok ]%s %s\n' "$C_GRN" "$C_RST" "$1"; }
+d_warn() { printf '  %s[warn]%s %s\n' "$C_YLW" "$C_RST" "$1"; }
+d_fail() {
+	printf '  %s[fail]%s %s\n' "$C_RED" "$C_RST" "$1"
+	DOCTOR_FAILS=$((DOCTOR_FAILS + 1))
+}
+d_hint() { printf '         %s\n' "$1"; }
+
+# Symlink-resolved path for comparisons only; raw paths are what we print.
+canon() {
+	readlink -f -- "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
+cmd_doctor() {
+	local fix=0 backend=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--fix) fix=1 ;;
+			--backend)
+				[ $# -ge 2 ] || usage_error "clerk doctor: --backend needs a value — use --backend bd or --backend gh"
+				backend="$2"
+				shift
+				;;
+			--backend=*) backend="${1#--backend=}" ;;
+			*) usage_error "clerk doctor: unknown argument '$1' — usage: clerk doctor [--fix --backend bd|gh]" ;;
+		esac
+		shift
+	done
+	if [ "$fix" -eq 1 ]; then
+		case "$backend" in
+			bd | gh) ;;
+			'') usage_error "clerk doctor: --fix requires --backend bd|gh — rerun as 'clerk doctor --fix --backend bd' (or gh)" ;;
+			*) usage_error "clerk doctor: unknown backend '$backend' — use --backend bd or --backend gh" ;;
+		esac
+	fi
+
+	local root=""
+	root=$(repo_root) || root=""
+	if [ -n "$root" ]; then
+		printf '%sclerk doctor%s — %s\n' "$C_BOLD" "$C_RST" "$root"
+	else
+		printf '%sclerk doctor%s\n' "$C_BOLD" "$C_RST"
+	fi
+
+	# (a) .clerk marker — doctor owns provisioning (ADR 0017)
+	if [ -z "$root" ]; then
+		d_fail ".clerk marker: not inside a git repository"
+		d_hint "cd into the target repo, then rerun 'clerk doctor'"
+	else
+		local found="" mrc=0
+		found=$(read_marker "$root/.clerk") || mrc=$?
+		if [ "$mrc" -eq 0 ]; then
+			d_ok ".clerk marker: backlog: $found ($root/.clerk)"
+		elif [ "$fix" -eq 1 ]; then
+			# Guard the write AND re-validate through read_marker before claiming success —
+			# a false "all clear" here dead-ends the dispatch→doctor→dispatch recovery loop.
+			if printf 'backlog: %s\n' "$backend" >"$root/.clerk" 2>/dev/null &&
+				found=$(read_marker "$root/.clerk"); then
+				d_ok ".clerk marker: provisioned backlog: $found ($root/.clerk)"
+				d_hint "commit .clerk so worktrees and clones see it: git add .clerk && git commit"
+			else
+				d_fail ".clerk marker: could not provision ($root/.clerk)"
+				d_hint "check that $root is writable and .clerk is not a directory"
+			fi
+		elif [ "$mrc" -eq 1 ]; then
+			d_fail ".clerk marker: missing ($root/.clerk)"
+			d_hint "provision it: clerk doctor --fix --backend bd   (or --backend gh)"
+		else
+			d_fail ".clerk marker: invalid ($root/.clerk)"
+			d_hint "expected a single line 'backlog: bd' or 'backlog: gh' (comments after # are fine)"
+			d_hint "rewrite it: clerk doctor --fix --backend bd   (or --backend gh)"
+		fi
+	fi
+
+	# (b) bd shim PATH ordering — a system bd that wins over the shim silently drops the
+	# auto-sync the shim exists for (ADR 0013), so a shadowed shim is a hard fail.
+	local resolved shim="" cand is_shim=0
+	local -a candidates=("$HOME/.config/bin/bd")
+	[ -n "$root" ] && candidates+=("$root/bin/bd")
+	resolved=$(command -v bd 2>/dev/null || true)
+	for cand in "${candidates[@]}"; do
+		[ -x "$cand" ] && { shim="$cand"; break; }
+	done
+	if [ -z "$resolved" ]; then
+		d_warn "bd shim: no 'bd' on PATH — bd-backed verbs will not work until one is installed"
+	else
+		for cand in "${candidates[@]}"; do
+			if [ "$(canon "$resolved")" = "$(canon "$cand")" ]; then
+				is_shim=1
+				break
+			fi
+		done
+		if [ "$is_shim" -eq 1 ]; then
+			d_ok "bd shim: $resolved (shim wins PATH resolution)"
+		elif [ -n "$shim" ]; then
+			d_fail "bd shim: SHADOWED — 'bd' resolves to $resolved, expected shim $shim"
+			d_hint "fix: put $(dirname "$shim") before $(dirname "$resolved") in PATH"
+		else
+			d_warn "bd shim: 'bd' resolves to $resolved and no clerk-managed shim exists (~/.config/bin/bd or <repo>/bin/bd)"
+		fi
+	fi
+
+	# (c) version parity — one variable at the top of this script feeds both surfaces
+	d_ok "version: clerk $CLERK_VERSION (clerk --version reports the same string)"
+
+	# (d) gh auth — non-fatal report
+	if ! command -v gh >/dev/null 2>&1; then
+		d_warn "gh auth: gh not on PATH (non-fatal) — install gh before using gh-backed verbs"
+	elif gh auth status >/dev/null 2>&1; then
+		d_ok "gh auth: authenticated"
+	else
+		d_warn "gh auth: not authenticated (non-fatal) — run 'gh auth login' before gh-backed verbs"
+	fi
+
+	if [ "$DOCTOR_FAILS" -eq 0 ]; then
+		printf '%sclerk doctor: all clear%s\n' "$C_GRN" "$C_RST"
+		return 0
+	fi
+	printf '%sclerk doctor: %d problem(s) — fix the [fail] lines above%s\n' "$C_RED" "$DOCTOR_FAILS" "$C_RST"
+	return 1
+}
+
+# ------------------------------------------------------------------ main ----
+
+main() {
+	# --explain may sit anywhere in the argument list; strip it, keep the verb path.
+	local explain=0 a
+	local -a args=()
+	for a in "$@"; do
+		case "$a" in
+			--explain) explain=1 ;;
+			*) args+=("$a") ;;
+		esac
+	done
+	set -- ${args[@]+"${args[@]}"}
+
+	if [ $# -eq 0 ]; then
+		if [ "$explain" -eq 1 ]; then
+			usage_error "clerk: --explain needs a verb — e.g. 'clerk --explain backlog claim'"
+		fi
+		printf 'clerk: missing verb\n' >&2
+		print_roster >&2
+		exit 2
+	fi
+
+	case "$1" in
+		--version | -V)
+			printf 'clerk %s\n' "$CLERK_VERSION"
+			exit 0
+			;;
+		--help | -h)
+			printf 'clerk %s — workflow verb facade (ADR 0015)\n' "$CLERK_VERSION"
+			print_roster
+			exit 0
+			;;
+	esac
+
+	local verb="" noun sub roster w sub_known
+	case "$1" in
+		capture | sync | doctor | glean)
+			verb="$1"
+			shift
+			;;
+		inbox | backlog)
+			noun="$1"
+			shift
+			if [ $# -eq 0 ]; then
+				printf "clerk: '%s' needs a verb\n" "$noun" >&2
+				print_roster >&2
+				exit 2
+			fi
+			sub="$1"
+			if [ "$noun" = inbox ]; then
+				roster="list show dups ready drop pregrill"
+			else
+				roster="next show claim release submit finish return"
+			fi
+			# Exact-word match — a glob over " $roster " would misread one argument
+			# equal to two adjacent roster words (e.g. 'list show') as a known verb.
+			sub_known=0
+			for w in $roster; do
+				if [ "$sub" = "$w" ]; then
+					sub_known=1
+					break
+				fi
+			done
+			if [ "$sub_known" -eq 1 ]; then
+				verb="$noun $sub"
+				shift
+			else
+				unknown_verb "$noun $sub"
+			fi
+			;;
+		*) unknown_verb "$1" ;;
+	esac
+
+	if [ "$explain" -eq 1 ]; then
+		explain_verb "$verb"
+		exit 0
+	fi
+
+	if [ "$verb" = doctor ]; then
+		cmd_doctor "$@"
+		exit "$?"
+	fi
+
+	# Everything else dispatches on the .clerk marker (ADR 0017) …
+	marker_gate
+	# … and is delivered by a later unit of the dotfiles-dft epic.
+	not_implemented "$verb"
+}
+
+main "$@"
