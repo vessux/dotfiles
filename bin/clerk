@@ -10,9 +10,15 @@
 # Exit codes:
 #   0  success
 #   1  doctor found problems
-#   2  usage error / unknown verb (roster printed)
+#   2  usage error / verb-level refusal (bad args, unknown verb (roster printed), a
+#      criteria-less `backlog claim`, `backlog return` without --reason, `backlog release`
+#      of a branch that carries unsubmitted work)
 #   3  known verb, not yet implemented in this generation
 #   4  dispatch refused: no git repo, or .clerk marker missing/invalid
+#   5  a backend command failed / a mutation could not be confirmed (dft.2); for
+#      `backlog claim` specifically, a CLAIM CONFLICT — the unit is already occupied or the
+#      push-CAS race was lost (dft.3) — a refusal, not an operational failure, so it carries
+#      its own prescriptive text instead of backend_fail's "run clerk doctor"
 #
 # Output discipline (ADR 0015): printed output is load-bearing — every refusal prescribes
 # the next action, and everything is tested verbatim. 16-color ANSI only (30-37/90-97,
@@ -214,8 +220,8 @@ explain_verb() {
 		'backlog next')
 			printf '%s\n' \
 				'clerk backlog next — pick the next ready unit' \
-				'  runs: bd ready                              (backlog: bd)' \
-				'        gh issue list --label ready-for-agent  (backlog: gh)' \
+				'  runs: bd ready --readonly --label stage:ready --json     (backlog: bd)' \
+				'        gh issue list --label ready-for-agent              (backlog: gh)' \
 				"  see:  $ADR17"
 			;;
 		'backlog show')
@@ -228,14 +234,24 @@ explain_verb() {
 		'backlog claim')
 			printf '%s\n' \
 				'clerk backlog claim — take the claim lock on a unit' \
-				'  runs: git push of the canonical delivery/<id> branch (first push wins — the universal lock); plus the bd status transition as the online fast path (backlog: bd)' \
+				'  runs: refuses units with no Acceptance Criteria section (ADR 0016 C4); short-circuits' \
+				'        if you already hold it; else git push of the canonical delivery/<id> branch' \
+				'        (first push wins — the universal CAS lock, exit 5 if occupied or the race is' \
+				'        lost); on success, bd update <id> --claim as the online fast-path record' \
+				'        (backlog: bd); offline: local-only branch + claim, attended only; finally' \
+				'        git worktree add .worktrees/<id>, printing its absolute path' \
 				"  see:  $ADR17"
 			;;
 		'backlog release')
 			printf '%s\n' \
-				'clerk backlog release — give a claim back without finishing' \
-				'  runs: git push origin --delete delivery/<id>; then bd update <id> --status open' \
-				'        (backlog: bd) or gh issue edit <id> (backlog: gh) reverts the status the claim set' \
+				'clerk backlog release — give a claim back without finishing (unit stays stage:ready)' \
+				'  runs: refuses if delivery/<id> carries commits beyond main (prescribes submit or' \
+				'        return instead); else git worktree remove + git branch -D delivery/<id>,' \
+				'        plus git push origin --delete delivery/<id> when reachable; then' \
+				'        bd update <id> --status open --assignee ""        (backlog: bd)' \
+				'        gh issue edit <id> --remove-assignee              (backlog: gh)' \
+				'        offline: local teardown only, remote delete deferred to sync; job-context refuses;' \
+				'        idempotent (exit 0) on a unit not claimed here' \
 				"  see:  $ADR15"
 			;;
 		'backlog submit')
@@ -252,9 +268,16 @@ explain_verb() {
 			;;
 		'backlog return')
 			printf '%s\n' \
-				'clerk backlog return — send a unit back to discovery' \
-				'  runs: bd reopen <id> + bd create (mandatory reason auto-filed as a capture)    (backlog: bd)' \
-				'        gh issue reopen <id> + gh issue create                                   (backlog: gh)' \
+				'clerk backlog return — send a unit back to discovery (verdict: cannot be fulfilled as designed)' \
+				'  runs: requires --reason "<text>"; renames delivery/<id> -> returned/<id> (local; pushes' \
+				'        the new ref and deletes delivery/<id> on origin when reachable) so the attempt' \
+				'        survives as grill evidence, then git worktree remove; bd update <id> --status open' \
+				'        --remove-label stage:ready --assignee ""                (backlog: bd)' \
+				'        gh issue reopen <id> + edit --remove-label ready-for-agent --remove-assignee (backlog: gh)' \
+				'        then files the reason verbatim as an impediment-typed capture referencing' \
+				'        returned/<id>: bd create --type impediment (backlog: bd) / gh issue create' \
+				'        --label type:impediment (backlog: gh); offline: local rename only, remote' \
+				'        deferred to sync; job-context refuses' \
 				"  see:  $ADR16"
 			;;
 		*)
@@ -721,6 +744,604 @@ cmd_inbox_pregrill() {
 	esac
 }
 
+# ------------------------------------------------------------------ backlog ----
+# unit dotfiles-dft.3: `backlog next` + `backlog show` — read-only windows onto the ready
+# pool, invoked with the backend's read-only mode so a harness allowlisting reads-only can
+# safely run either verb. Mirrors `inbox list`/`inbox show`'s shape (dft.2): backlog's ready
+# pool is `bd ready` (blocker-aware) narrowed to the `stage:ready` label — the ADR 0016
+# definition of ready — rather than `bd list --label stage:ready`, so a labeled-but-blocked
+# unit never surfaces as pickable.
+
+# clerk backlog next — the ready pool: bd's blocker-aware `ready` set narrowed to
+# stage:ready (ADR 0016); gh's ready-for-agent label is the near-passthrough analogue.
+cmd_backlog_next() {
+	local backend="$1"
+	shift 2
+	case "$backend" in
+		bd)
+			local json
+			if ! json=$(bd ready --readonly --label stage:ready --json); then
+				backend_fail "backlog next failed — bd ready did not succeed"
+			fi
+			local count
+			count=$(printf '%s' "$json" | jq 'length')
+			printf 'Backlog (ready) — %s item(s):\n' "$count"
+			if [ "$count" -eq 0 ]; then
+				printf '  (empty)\n'
+				return 0
+			fi
+			printf '%s' "$json" | jq -r '.[] | "  \(.id)  \(.title)"'
+			;;
+		gh)
+			local json
+			if ! json=$(gh issue list --label ready-for-agent --json number,title); then
+				backend_fail "backlog next failed — gh issue list did not succeed"
+			fi
+			local count
+			count=$(printf '%s' "$json" | jq 'length')
+			printf 'Backlog (ready) — %s item(s):\n' "$count"
+			if [ "$count" -eq 0 ]; then
+				printf '  (empty)\n'
+				return 0
+			fi
+			printf '%s' "$json" | jq -r '.[] | "  #\(.number)  \(.title)"'
+			;;
+	esac
+}
+
+# clerk backlog show <id>
+cmd_backlog_show() {
+	local backend="$1"
+	shift 2
+	local id="${1:-}"
+	if [ -z "$id" ]; then
+		usage_error 'clerk backlog show: missing id — usage: clerk backlog show <id>'
+	fi
+	case "$backend" in
+		bd) bd show "$id" --readonly ;;
+		gh) gh issue view "$id" ;;
+	esac
+}
+
+# unit dotfiles-dft.3: `backlog claim` — provisions the workspace for a ready unit. Resolves
+# the caller's id (short or full) to the project's canonical short token, gates on acceptance
+# criteria (C4, reusing dft.2's structural detector), short-circuits an idempotent re-claim,
+# then uses a first-push-wins git branch (`delivery/<short>`) as the universal CAS lock before
+# recording the claim on the backend (`bd update --claim`) and provisioning
+# `.worktrees/<short>`. Exit 5 here means CLAIM CONFLICT (unit occupied, or the push-CAS race
+# was lost) — distinct from backend_fail's exit 5 (an outright backend failure) — so it is
+# never routed through backend_fail, which would wrongly tell the caller to run `clerk doctor`
+# over a normal contention outcome.
+
+# The identity bd's own `--claim` records as assignee absent an explicit --actor (bd's actor
+# resolution order per `bd update --help`: $BEADS_ACTOR, git user.name, $USER) — mirrored here
+# so re-claim / holder comparisons need no extra bd round-trip.
+claim_current_actor() { # $1=root
+	if [ -n "${BEADS_ACTOR:-}" ]; then
+		printf '%s\n' "$BEADS_ACTOR"
+		return 0
+	fi
+	local name
+	name=$(git -C "$1" config user.name 2>/dev/null)
+	if [ -n "$name" ]; then
+		printf '%s\n' "$name"
+	else
+		printf '%s\n' "${USER:-}"
+	fi
+}
+
+claim_current_gh_login() {
+	gh api user --jq .login 2>/dev/null
+}
+
+# JOB-CONTEXT: env CLERK_JOB non-empty, or CI truthy (anything but unset/empty/a falsy word).
+claim_in_job_context() {
+	[ -n "${CLERK_JOB:-}" ] && return 0
+	case "${CI:-}" in
+		'' | 0 | false | False | FALSE | no | No | NO) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+# Resolves $2 (a bd/gh id, short or full — either form is accepted, ADR 0017) against backend
+# $1. On success sets CLAIM_SHORT/CLAIM_FULL/CLAIM_HOLDER/CLAIM_DESC/CLAIM_DESIGN/CLAIM_AC and
+# returns 0; on not-found returns 1 and leaves those cleared. Never exits — the caller owns the
+# refusal (usage_error), so this stays safe to call directly (no subshell-swallowed exit).
+claim_resolve_id() {
+	local backend="$1" id_arg="$2"
+	CLAIM_SHORT="" CLAIM_FULL="" CLAIM_HOLDER="" CLAIM_DESC="" CLAIM_DESIGN="" CLAIM_AC=""
+	case "$backend" in
+		bd)
+			local json
+			json=$(bd show "$id_arg" --readonly --json 2>/dev/null)
+			# Same not-found shape `inbox ready` guards against (C-e sibling check): bd 1.0.4
+			# signals a missing id with an error OBJECT on stdout, not empty output or `null`.
+			if [ -z "$json" ] || [ "$json" = null ] ||
+				! printf '%s' "$json" | jq -e 'if type != "array" then false else (length > 0) end' >/dev/null 2>&1; then
+				return 1
+			fi
+			CLAIM_FULL=$(printf '%s' "$json" | jq -r '.[0].id')
+			CLAIM_SHORT="${CLAIM_FULL#*-}"
+			CLAIM_DESC=$(printf '%s' "$json" | jq -r '.[0].description // ""')
+			CLAIM_DESIGN=$(printf '%s' "$json" | jq -r '.[0].design // ""')
+			CLAIM_AC=$(printf '%s' "$json" | jq -r '.[0].acceptance_criteria // ""')
+			CLAIM_HOLDER=$(printf '%s' "$json" | jq -r '.[0].assignee // .[0].owner // ""')
+			;;
+		gh)
+			local json
+			json=$(gh issue view "$id_arg" --json number,body,assignees 2>/dev/null) || return 1
+			CLAIM_FULL=$(printf '%s' "$json" | jq -r '.number')
+			CLAIM_SHORT="$CLAIM_FULL"
+			CLAIM_DESC=$(printf '%s' "$json" | jq -r '.body // ""')
+			CLAIM_HOLDER=$(printf '%s' "$json" | jq -r '.assignees[0].login // ""')
+			;;
+	esac
+	[ -n "$CLAIM_SHORT" ] || return 1
+	return 0
+}
+
+# Ensures .worktrees/<short> exists off local branch delivery/<short>, echoing its absolute
+# path on success and returning 1 (never exiting — see the command-substitution note on
+# claim_resolve_id) on failure. `worktree prune` first: a worktree directory removed by hand
+# (`rm -rf` instead of `git worktree remove`) leaves git believing it is still checked out
+# there, so a bare `add` would otherwise refuse with "missing but already registered".
+claim_ensure_worktree() { # $1=root $2=short
+	local root="$1" short="$2"
+	local wt="$root/.worktrees/$short"
+	if [ -d "$wt" ]; then
+		printf '%s\n' "$wt"
+		return 0
+	fi
+	git -C "$root" worktree prune >/dev/null 2>&1
+	if git -C "$root" worktree add "$wt" "delivery/$short" >/dev/null 2>&1; then
+		printf '%s\n' "$wt"
+		return 0
+	fi
+	# Local branch missing (rare — e.g. bd still shows the claim as yours but the branch was
+	# lost) — fall back to a remote copy if the sync-check step found one.
+	if git -C "$root" show-ref --verify --quiet "refs/remotes/origin/delivery/$short" &&
+		git -C "$root" worktree add -b "delivery/$short" "$wt" "origin/delivery/$short" >/dev/null 2>&1; then
+		printf '%s\n' "$wt"
+		return 0
+	fi
+	return 1
+}
+
+# CLAIM CONFLICT (exit 5): unit occupied, or the push-CAS race was lost. Its own prescriptive
+# text (never backend_fail's "run clerk doctor" — the backend is not broken, someone else just
+# got there first).
+claim_conflict() { # $1=short $2=holder $3=reason-phrase, e.g. "is already claimed"/"was just claimed"
+	local short="$1" holder="${2:-someone else}" reason="$3"
+	printf 'clerk: backlog claim refused — delivery/%s %s by %s\n' "$short" "$reason" "$holder" >&2
+	printf "       wait for %s to release or finish it, or pick a different unit ('clerk backlog next')\n" "$holder" >&2
+	exit 5
+}
+
+# bd's online/offline claim record: `--claim` (atomic, idempotent-if-yours), then a mutation
+# self-verify (ADR 0015) before letting the caller report success.
+claim_record_bd() { # $1=root $2=full-id
+	local root="$1" full="$2"
+	bd update "$full" --claim >/dev/null 2>&1 || return 1
+	local check
+	check=$(bd show "$full" --readonly --json 2>/dev/null | jq -r '.[0].assignee // .[0].owner // ""')
+	[ "$check" = "$(claim_current_actor "$root")" ]
+}
+
+# clerk backlog claim <id>
+cmd_backlog_claim() {
+	local backend="$1" root="$2"
+	shift 2
+	if [ $# -eq 0 ]; then
+		usage_error 'clerk backlog claim: missing id — usage: clerk backlog claim <id>'
+	fi
+	local id_arg="$1"
+	shift
+	if [ $# -gt 0 ]; then
+		usage_error "clerk backlog claim: unknown argument '$1' — usage: clerk backlog claim <id>"
+	fi
+
+	# 1. Resolve to the canonical short id -----------------------------------------
+	if ! claim_resolve_id "$backend" "$id_arg"; then
+		usage_error "clerk backlog claim: $id_arg not found — check the id ('clerk backlog next' shows ready units)"
+	fi
+	local short="$CLAIM_SHORT" full="$CLAIM_FULL" holder="$CLAIM_HOLDER"
+
+	# 2. C4 GATE (ADR 0016): presence-only structural check — never a quality judgment.
+	if [ -z "$CLAIM_AC" ] && ! has_acceptance_criteria_section "$CLAIM_DESC"$'\n'"$CLAIM_DESIGN"; then
+		usage_error "clerk backlog claim: $full has no 'Acceptance Criteria' section — it needs a grill pass first (e.g. 'clerk inbox pregrill $full', then add the section) before it can be claimed"
+	fi
+
+	# 3. RE-CLAIM short-circuit: backend assignee already you, or a local branch you hold —
+	# no network touched, so this works offline too.
+	local me=""
+	case "$backend" in
+		bd) me=$(claim_current_actor "$root") ;;
+		gh) me=$(claim_current_gh_login) ;;
+	esac
+	local mine=0
+	if [ -n "$holder" ] && [ -n "$me" ] && [ "$holder" = "$me" ]; then
+		mine=1
+	fi
+	if git -C "$root" show-ref --verify --quiet "refs/heads/delivery/$short"; then
+		mine=1
+	fi
+	if [ "$mine" -eq 1 ]; then
+		local wt
+		if ! wt=$(claim_ensure_worktree "$root" "$short"); then
+			backend_fail "claim failed — could not provision the worktree at $root/.worktrees/$short for delivery/$short"
+		fi
+		printf '%sclerk:%s %s already claimed by you — worktree ready\n' "$C_GRN" "$C_RST" "$full"
+		printf '%s\n' "$wt"
+		return 0
+	fi
+
+	# 4. SYNC-CHECK: `git fetch origin`'s failure (bounded by a short timeout, so an
+	# unreachable remote refuses promptly instead of hanging the claim) is the OFFLINE signal.
+	local offline=0
+	if ! (GIT_TERMINAL_PROMPT=0 timeout 10 git -C "$root" fetch origin >/dev/null 2>&1); then
+		offline=1
+	fi
+
+	if [ "$offline" -eq 1 ]; then
+		if claim_in_job_context; then
+			printf "clerk: OFFLINE in a job context - refusing %s: the claim lock needs the remote and no attendant can accept the staleness hazard. Retry when origin is reachable.\n" "$short" >&2
+			return 2
+		fi
+		# ATTENDED: proceed locally-only — the branch is the lock, CAS'd at first reconnect.
+		if ! git -C "$root" show-ref --verify --quiet refs/heads/main; then
+			backend_fail "claim failed — no local 'main' branch to base delivery/$short on"
+		fi
+		if ! git -C "$root" branch "delivery/$short" main 2>/dev/null; then
+			backend_fail "claim failed — could not create local branch delivery/$short from main"
+		fi
+		if [ "$backend" = bd ] && ! claim_record_bd "$root" "$full"; then
+			backend_fail "claim failed — delivery/$short was created locally but the bd claim did not confirm for $full"
+		fi
+		local wt
+		if ! wt=$(claim_ensure_worktree "$root" "$short"); then
+			backend_fail "claim failed — could not provision the worktree at $root/.worktrees/$short for delivery/$short"
+		fi
+		printf "clerk: OFFLINE - 'delivery/%s' claimed LOCALLY ONLY (not pushed). The branch is the lock; it is compare-and-swapped at first reconnect (clerk submit/sync). If another machine claimed %s meanwhile, that push wins and this local work is discarded. Proceeding, attended.\n" "$short" "$short" >&2
+		printf '%s\n' "$wt"
+		return 0
+	fi
+
+	# ONLINE: occupied? (holder was already read fresh in step 1, before any of this ran)
+	if git -C "$root" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"; then
+		claim_conflict "$short" "$holder" 'is already claimed'
+	fi
+
+	# 5. PUSH = the universal CAS lock (first-push-wins). Pushed from a raw SHA, not a local
+	# branch, so a lost race leaves nothing local to clean up (no orphan worktree/claim).
+	local base_sha
+	base_sha=$(git -C "$root" rev-parse origin/main 2>/dev/null) || base_sha=$(git -C "$root" rev-parse main 2>/dev/null)
+	if [ -z "$base_sha" ]; then
+		backend_fail "claim failed — could not resolve a base commit (origin/main or main) for delivery/$short"
+	fi
+	if ! git -C "$root" push origin "$base_sha:refs/heads/delivery/$short" 2>/dev/null; then
+		git -C "$root" fetch origin >/dev/null 2>&1
+		claim_conflict "$short" "$holder" 'was just claimed'
+	fi
+
+	# 6+7. Record the win locally (branch), then on the backend, then provision the worktree.
+	if ! git -C "$root" branch "delivery/$short" "$base_sha" 2>/dev/null; then
+		backend_fail "claim failed — delivery/$short is pushed but the local branch could not be created"
+	fi
+	git -C "$root" branch --set-upstream-to="origin/delivery/$short" "delivery/$short" >/dev/null 2>&1 || true
+
+	case "$backend" in
+		bd)
+			if ! claim_record_bd "$root" "$full"; then
+				backend_fail "claim failed — delivery/$short is pushed but the bd claim did not confirm for $full"
+			fi
+			;;
+		gh)
+			local login
+			login=$(claim_current_gh_login)
+			[ -n "$login" ] && gh issue edit "$full" --add-assignee "$login" >/dev/null 2>&1
+			;;
+	esac
+
+	local wt
+	if ! wt=$(claim_ensure_worktree "$root" "$short"); then
+		backend_fail "claim failed — could not provision the worktree at $root/.worktrees/$short for delivery/$short"
+	fi
+
+	# 8. Print the absolute worktree path as the LAST stdout line.
+	printf '%sclerk:%s claimed %s — delivery/%s pushed, worktree ready\n' "$C_GRN" "$C_RST" "$full" "$short"
+	printf '%s\n' "$wt"
+	return 0
+}
+
+# unit dotfiles-dft.3 (this group): `backlog release` and `backlog return` — the two ways to
+# give a claim back. `release` is the no-verdict path (unit stays exactly as ready as it
+# was); `return` is the verdict path (the unit could not be fulfilled as designed, so it goes
+# back to discovery with a mandatory, verbatim-preserved reason). Both reuse
+# `claim_resolve_id`/`claim_current_actor`/`claim_current_gh_login`/`claim_in_job_context`
+# from `backlog claim` above rather than re-deriving id/holder/offline logic.
+
+# True (exit 0) iff the caller already holds this unit's claim from here — either the
+# backend-recorded holder is them, or a local delivery/<short> branch exists. Mirrors
+# `cmd_backlog_claim`'s own "already yours" test (step 3 there) so release/return agree with
+# claim about what "held" means, without claim having to expose its internals for reuse.
+backlog_is_mine() { # $1=backend $2=root $3=short $4=holder
+	local backend="$1" root="$2" short="$3" holder="$4" me=""
+	case "$backend" in
+		bd) me=$(claim_current_actor "$root") ;;
+		gh) me=$(claim_current_gh_login) ;;
+	esac
+	if [ -n "$holder" ] && [ -n "$me" ] && [ "$holder" = "$me" ]; then
+		return 0
+	fi
+	git -C "$root" show-ref --verify --quiet "refs/heads/delivery/$short"
+}
+
+# Commits sitting on delivery/<short> beyond its base — the signal `release` uses to tell "a
+# clean claim, safe to fold up" from "unsubmitted work, do not discard it silently". The base
+# MUST agree with what `cmd_backlog_claim` actually built delivery/<short> from: claim pushes
+# it from origin/main (falling back to local main only when origin/main is unresolvable), so
+# release measures against the same ref — never bare local `main`, which routinely lags
+# origin/main and would miscount a clean claim as "carrying work" (dotfiles-dft.3 review).
+# Echoes 0 (never errors) when the branch does not exist, so callers need no extra guard.
+delivery_ahead_count() { # $1=root $2=short
+	local root="$1" short="$2" base=main
+	if git -C "$root" show-ref --verify --quiet refs/remotes/origin/main; then
+		base=origin/main
+	fi
+	git -C "$root" rev-list --count "$base..delivery/$short" 2>/dev/null || printf '0'
+}
+
+# clerk backlog release <id> — give the claim back without finishing (ADR 0015): only claim
+# state moves here, never triage state, so stage:ready is left exactly as it was. Refuses if
+# delivery/<short> carries commits beyond main — that is real work, and a silent release must
+# never be how it gets discarded — pointing the caller at `submit` (save it) or `return`
+# (abandon it on purpose, with a lesson) instead. Idempotent: releasing a unit not claimed
+# here reports cleanly (exit 0) rather than erroring, the same way `claim`'s own re-claim
+# short-circuit treats "already in the state you asked for" as success. Offline mirrors
+# `claim`'s SYNC-CHECK: local teardown proceeds attended (only the remote branch delete is
+# deferred to the next sync); a job context refuses outright, the same staleness hazard
+# `claim` refuses on.
+cmd_backlog_release() {
+	local backend="$1" root="$2"
+	shift 2
+	if [ $# -eq 0 ]; then
+		usage_error 'clerk backlog release: missing id — usage: clerk backlog release <id>'
+	fi
+	local id_arg="$1"
+	shift
+	if [ $# -gt 0 ]; then
+		usage_error "clerk backlog release: unknown argument '$1' — usage: clerk backlog release <id>"
+	fi
+
+	if ! claim_resolve_id "$backend" "$id_arg"; then
+		usage_error "clerk backlog release: $id_arg not found — check the id ('clerk backlog next' shows ready units)"
+	fi
+	local short="$CLAIM_SHORT" full="$CLAIM_FULL" holder="$CLAIM_HOLDER"
+
+	if ! backlog_is_mine "$backend" "$root" "$short" "$holder"; then
+		printf '%sclerk:%s %s is not claimed here (no local delivery/%s) — nothing to release\n' "$C_GRN" "$C_RST" "$full" "$short"
+		return 0
+	fi
+
+	# SYNC-CHECK (mirrors claim), run BEFORE the ahead-count check below: a reachable origin
+	# refreshes the same origin/main ref `cmd_backlog_claim` based delivery/<short> on, so a
+	# clean claim is never miscounted as "carrying work" just because local `main` has drifted
+	# behind origin/main (dotfiles-dft.3 review).
+	local offline=0
+	if ! (GIT_TERMINAL_PROMPT=0 timeout 10 git -C "$root" fetch origin >/dev/null 2>&1); then
+		offline=1
+	fi
+
+	local ahead
+	ahead=$(delivery_ahead_count "$root" "$short")
+	if [ "$ahead" -gt 0 ]; then
+		printf 'clerk: backlog release refused — delivery/%s has %s commit(s) beyond main\n' "$short" "$ahead" >&2
+		printf "       run 'clerk backlog submit %s' to save the work, or 'clerk backlog return %s --reason \"<text>\"' to abandon it\n" "$full" "$full" >&2
+		return 2
+	fi
+
+	if [ "$offline" -eq 1 ] && claim_in_job_context; then
+		printf "clerk: OFFLINE in a job context - refusing to release %s: the remote teardown needs origin and no attendant can accept the staleness hazard. Retry when origin is reachable.\n" "$short" >&2
+		return 2
+	fi
+
+	# Worktree removal is the fail-prone step (git refuses on any uncommitted/untracked file)
+	# so it MUST run before any remote mutation: deleting the origin branch first and then
+	# failing here would release the CAS lock while this side still holds the local
+	# branch/worktree/bd claim — the exact double-claim the lock exists to prevent
+	# (dotfiles-dft.3 review). It also must precede the local branch delete: git refuses to
+	# delete a branch checked out in a linked worktree.
+	local wt="$root/.worktrees/$short"
+	if [ -d "$wt" ]; then
+		if ! git -C "$root" worktree remove "$wt" 2>/dev/null; then
+			backend_fail "release failed — could not remove the worktree at $wt (commit or stash local changes first)"
+		fi
+	else
+		git -C "$root" worktree prune >/dev/null 2>&1
+	fi
+
+	if [ "$offline" -eq 0 ] && git -C "$root" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"; then
+		if ! git -C "$root" push origin --delete "delivery/$short" >/dev/null 2>&1; then
+			backend_fail "release failed — could not delete origin delivery/$short"
+		fi
+	fi
+
+	if git -C "$root" show-ref --verify --quiet "refs/heads/delivery/$short"; then
+		if ! git -C "$root" branch -D "delivery/$short" >/dev/null 2>&1; then
+			backend_fail "release failed — could not delete local branch delivery/$short"
+		fi
+	fi
+
+	case "$backend" in
+		bd)
+			if ! bd update "$full" --status open --assignee "" >/dev/null; then
+				backend_fail "release failed — bd update did not succeed for $full"
+			fi
+			# mutation self-verify (ADR 0015)
+			local json status assignee
+			json=$(bd show "$full" --readonly --json 2>/dev/null)
+			status=$(printf '%s' "$json" | jq -r '.[0].status // ""')
+			assignee=$(printf '%s' "$json" | jq -r '.[0].assignee // ""')
+			if [ "$status" != open ] || [ -n "$assignee" ]; then
+				backend_fail "release failed — $full was not confirmed open/unassigned after release"
+			fi
+			;;
+		gh)
+			local login
+			login=$(claim_current_gh_login)
+			[ -n "$login" ] && gh issue edit "$full" --remove-assignee "$login" >/dev/null 2>&1
+			;;
+	esac
+
+	if [ "$offline" -eq 1 ]; then
+		printf 'clerk: OFFLINE - delivery/%s deleted locally only; the remote branch delete is deferred to sync (clerk claim/sync will finish it at the next reconnect).\n' "$short" >&2
+	fi
+	printf '%sclerk:%s released %s — delivery/%s torn down, unit reopened (stage:ready kept)\n' "$C_GRN" "$C_RST" "$full" "$short"
+	return 0
+}
+
+# clerk backlog return <id> --reason "<text>" — verdict: the unit cannot be fulfilled as
+# designed (ADR 0016's counterpart to `submit`'s C4 evidence path). Unlike `release`, this
+# never discards anything: delivery/<short> is renamed to returned/<short> so the attempt
+# survives as grill evidence (`sync`/`finish` must never touch returned/* — only a grill,
+# once it has extracted the lesson, deletes it). The reason is mandatory and is filed
+# verbatim as an impediment-typed capture (reusing dft.2's `bd_ensure_impediment_type`/
+# `--type impediment` path) so it re-enters the ordinary inbox pipeline instead of sitting as
+# free-floating prose on the reopened unit.
+cmd_backlog_return() {
+	local backend="$1" root="$2"
+	shift 2
+	if [ $# -eq 0 ]; then
+		usage_error 'clerk backlog return: missing id — usage: clerk backlog return <id> --reason "<text>"'
+	fi
+	local id_arg="$1"
+	shift
+	local reason=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--reason)
+				[ $# -ge 2 ] || usage_error "clerk backlog return: --reason needs a value"
+				reason="$2"
+				shift
+				;;
+			*) usage_error "clerk backlog return: unknown argument '$1' — usage: clerk backlog return <id> --reason \"<text>\"" ;;
+		esac
+		shift
+	done
+	if [ -z "$reason" ]; then
+		usage_error "clerk backlog return: missing --reason — usage: clerk backlog return $id_arg --reason \"<text>\""
+	fi
+
+	if ! claim_resolve_id "$backend" "$id_arg"; then
+		usage_error "clerk backlog return: $id_arg not found — check the id ('clerk backlog next' shows ready units)"
+	fi
+	local short="$CLAIM_SHORT" full="$CLAIM_FULL"
+
+	if ! git -C "$root" show-ref --verify --quiet "refs/heads/delivery/$short"; then
+		usage_error "clerk backlog return: no local delivery/$short — claim it first ('clerk backlog claim $full')"
+	fi
+
+	# SYNC-CHECK (mirrors claim): fetch's failure within a short timeout is the OFFLINE signal.
+	local offline=0
+	if ! (GIT_TERMINAL_PROMPT=0 timeout 10 git -C "$root" fetch origin >/dev/null 2>&1); then
+		offline=1
+	fi
+
+	if [ "$offline" -eq 1 ] && claim_in_job_context; then
+		printf "clerk: OFFLINE in a job context - refusing to return %s: preserving the branch needs origin and no attendant can accept the staleness hazard. Retry when origin is reachable.\n" "$short" >&2
+		return 2
+	fi
+
+	local sha
+	sha=$(git -C "$root" rev-parse "delivery/$short")
+
+	# The checkout itself is disposable — the worktree only ever pointed at the branch, which
+	# will go on living as returned/<short> regardless. Removal is the fail-prone step (git
+	# refuses on any uncommitted/untracked file), so it MUST run BEFORE the rename/remote
+	# mutation below: doing the rename+push first and failing here would half-return the unit —
+	# delivery/<short> gone, returned/<short> live, but the unit never reopened, stage:ready
+	# never stripped, and the mandatory reason never filed, with no way to re-run return
+	# (dotfiles-dft.3 review). Running it first means a failure here leaves delivery/<short>
+	# completely untouched — fix the worktree, rerun `return` normally.
+	local wt="$root/.worktrees/$short"
+	if [ -d "$wt" ]; then
+		if ! git -C "$root" worktree remove "$wt" 2>/dev/null; then
+			backend_fail "return failed — could not remove the worktree at $wt (commit or stash local changes first)"
+		fi
+	else
+		git -C "$root" worktree prune >/dev/null 2>&1
+	fi
+
+	# PRESERVE THE ATTEMPT: rename, never delete — the commits are the grill evidence.
+	if ! git -C "$root" branch -m "delivery/$short" "returned/$short" 2>/dev/null; then
+		backend_fail "return failed — could not rename delivery/$short to returned/$short"
+	fi
+
+	if [ "$offline" -eq 0 ]; then
+		if ! git -C "$root" push origin "returned/$short" >/dev/null 2>&1; then
+			backend_fail "return failed — could not push returned/$short to origin"
+		fi
+		if git -C "$root" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"; then
+			if ! git -C "$root" push origin --delete "delivery/$short" >/dev/null 2>&1; then
+				backend_fail "return failed — could not delete origin delivery/$short"
+			fi
+		fi
+	fi
+
+	case "$backend" in
+		bd)
+			if ! bd update "$full" --status open --remove-label stage:ready --assignee "" >/dev/null; then
+				backend_fail "return failed — bd update did not succeed for $full"
+			fi
+			# mutation self-verify (ADR 0015)
+			local json status has_label
+			json=$(bd show "$full" --readonly --json 2>/dev/null)
+			status=$(printf '%s' "$json" | jq -r '.[0].status // ""')
+			has_label=$(printf '%s' "$json" | jq -r '(.[0].labels // []) | index("stage:ready")')
+			if [ "$status" != open ] || [ "$has_label" != null ]; then
+				backend_fail "return failed — $full was not confirmed open/not-ready after return"
+			fi
+			;;
+		gh)
+			gh issue reopen "$full" >/dev/null 2>&1
+			gh issue edit "$full" --remove-label ready-for-agent >/dev/null 2>&1
+			local login
+			login=$(claim_current_gh_login)
+			[ -n "$login" ] && gh issue edit "$full" --remove-assignee "$login" >/dev/null 2>&1
+			;;
+	esac
+
+	# The reason capture: verbatim reason, plus the delivery/evidence trail back to
+	# returned/<short> (ADR 0016 — this is the grill's raw material, so nothing is summarized).
+	local body
+	body="$reason"$'\n\n'"returned from delivery of $full"$'\n'"evidence: returned/$short @ $sha"
+	local capture_id=""
+	case "$backend" in
+		bd)
+			bd_ensure_impediment_type
+			if ! capture_id=$(bd create "backlog return: $full" --description "$body" --type impediment --silent); then
+				backend_fail "return failed — could not file the reason capture for $full"
+			fi
+			local seen
+			seen=$(bd show "$capture_id" --readonly --json 2>/dev/null | jq -r '.[0].id // empty')
+			if [ "$seen" != "$capture_id" ]; then
+				backend_fail "return failed — reason capture $capture_id was not confirmed after filing"
+			fi
+			;;
+		gh)
+			if ! capture_id=$(gh issue create --title "backlog return: $full" --body "$body" --label type:impediment 2>/dev/null); then
+				backend_fail "return failed — could not file the reason capture for $full"
+			fi
+			;;
+	esac
+
+	if [ "$offline" -eq 1 ]; then
+		printf 'clerk: OFFLINE - returned/%s created locally only; pushing it and deleting delivery/%s on origin is deferred to sync (clerk claim/sync will finish it at the next reconnect).\n' "$short" "$short" >&2
+	fi
+	printf '%sclerk:%s returned %s — returned/%s preserved, reopened, reason filed as %s\n' "$C_GRN" "$C_RST" "$full" "$short" "$capture_id"
+	return 0
+}
+
 # ---------------------------------------------------------------- doctor ----
 
 DOCTOR_FAILS=0
@@ -970,6 +1591,26 @@ main() {
 			;;
 		"inbox pregrill")
 			cmd_inbox_pregrill "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"backlog next")
+			cmd_backlog_next "$backend" "$root"
+			exit "$?"
+			;;
+		"backlog show")
+			cmd_backlog_show "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"backlog claim")
+			cmd_backlog_claim "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"backlog release")
+			cmd_backlog_release "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"backlog return")
+			cmd_backlog_return "$backend" "$root" "$@"
 			exit "$?"
 			;;
 	esac
