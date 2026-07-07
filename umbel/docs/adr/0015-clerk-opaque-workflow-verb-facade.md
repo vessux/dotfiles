@@ -63,10 +63,13 @@ reasons); the clerk executes mechanism exactly, in code that cannot drift from i
   independent implementations both passed all seven acceptance criteria yet diverged on behaviours
   the criteria never pinned — the signature of an underspecified contract, not a coding slip:
   - **Exit-code taxonomy, one meaning each**: `0` success; `1` `doctor` found problems (below);
-    `2` usage error / unknown verb (roster printed); `3` a known verb not implemented in this
-    generation; `4` `.clerk` unresolvable (missing / invalid / not in a git repo). Dispatch
-    distinguishes unknown (`2`) from not-yet-implemented (`3`) — a grammar error is not a
-    generation gap.
+    `2` usage error / unknown verb / bad-or-missing id (roster or corrected invocation printed);
+    `3` a known verb not implemented in this generation; `4` `.clerk` unresolvable (missing /
+    invalid / not in a git repo); `5` a backend command (`bd`/`gh`) failed or a mutation could not
+    be confirmed. Dispatch distinguishes unknown (`2`) from not-yet-implemented (`3`) — a grammar
+    error is not a generation gap; and a broken backend (`5`) from a caller who named a
+    non-existent unit (`2`) — "the tracker is down" is not "you passed a bad id". `1` is scoped to
+    `doctor`'s health check; every other verb signals operational failure through `5`, never `1`.
   - **`doctor` is a health check, not a diagnostic that always succeeds**: it exits `0` iff every
     check passes and non-zero (`1`) if any fails. This is the contract the zero-token systemd-timer
     caller depends on — a timer can only alert on a non-zero exit; a `doctor` that always exits `0`
@@ -130,3 +133,8 @@ reasons); the clerk executes mechanism exactly, in code that cannot drift from i
   criteria (which cannot enumerate every failure path). The neutral referee confirmed both
   behaviours; the cost/quality data and the resulting model-tier policy live in the epic
   dotfiles-dft experiment note.
+- 2026-07-07: taxonomy extended with exit `5` (a backend command failed, or a mutation could not be
+  confirmed) and not-found folded into `2` (a non-existent id is a bad-id usage error, like a
+  missing one). Surfaced delivering unit dotfiles-dft.2 (the inbox verbs are the first to invoke
+  `bd`/`gh`): the review caught backend failures returning `1`, which collides with `doctor`'s `1`.
+  Same contracts-not-instances move as the row above — decided once here, not per verb.

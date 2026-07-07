@@ -60,6 +60,15 @@ usage_error() {
 	exit 2
 }
 
+# A backend command (bd/gh) failed, or a mutation could not be confirmed. Exit 5 keeps
+# this distinct from doctor's exit 1 (health check) and usage errors (exit 2) — a scripted
+# caller can tell "the tracker backend is broken" from "you passed a bad id" (ADR 0015).
+backend_fail() {
+	printf 'clerk: %s\n' "$1" >&2
+	printf "       run 'clerk doctor' to check the backend\n" >&2
+	exit 5
+}
+
 unknown_verb() {
 	printf "clerk: unknown verb '%s'\n" "$1" >&2
 	print_roster >&2
@@ -250,6 +259,464 @@ explain_verb() {
 			;;
 		*)
 			unknown_verb "$1"
+			;;
+	esac
+}
+
+# ---------------------------------------------------------- capture + inbox ----
+# unit dotfiles-dft.2: `capture` and the six `inbox` verbs. The `.clerk` marker's backend
+# (already validated by marker_gate before any of this runs) selects the per-backend branch
+# in each cmd_* function below. Contract points C-a..C-g referenced in comments are this
+# unit's resolved divergence points (see the unit body / delivery notes for the full list).
+
+# C-e (acceptance-criteria detection, `inbox ready`): presence of a structural section only
+# — never a quality judgment, which stays grill's job (ADR 0016 C4). A markdown heading (any
+# '#' depth) or a bare "Acceptance Criteria[:]" line counts; prose that merely mentions the
+# phrase does not, so a capture whose body says "no acceptance criteria yet" is still refused.
+has_acceptance_criteria_section() {
+	grep -qiE '^#{1,6}[[:space:]]*acceptance criteria|^acceptance criteria:?[[:space:]]*$' <<<"$1"
+}
+
+# C-c (impediment type): bd rejects any --type outside its built-in set unless the type is
+# registered via the `types.custom` config key (bd create --help: "custom types require
+# types.custom config" — verified empirically: `bd create --type impediment` fails
+# "invalid issue type: impediment" against a fresh db). Rather than push a one-time
+# repo-setup step onto `clerk doctor` (core, not this unit's to touch), capture
+# self-provisions the config idempotently the first time --impediment is used: `bd config
+# get` prints the literal sentinel "<key> (not set)" when absent (exit 0, not an error), so
+# we normalize that to empty, check whether "impediment" is already one of the
+# comma-separated values, and merge it in if not. This makes `capture --impediment` work
+# unconditionally, including against a brand-new bd db with zero prior setup — no separate
+# fixture step required (the test fixture may still pre-set it; either order works).
+bd_ensure_impediment_type() {
+	local current
+	current=$(bd config get types.custom 2>/dev/null)
+	case "$current" in
+		*'(not set)'*) current="" ;;
+	esac
+	local -a values=()
+	if [ -n "$current" ]; then
+		IFS=',' read -ra values <<<"$current"
+	fi
+	local v
+	for v in "${values[@]+"${values[@]}"}"; do
+		[ "$v" = impediment ] && return 0
+	done
+	if [ -z "$current" ]; then
+		bd config set types.custom impediment >/dev/null 2>&1
+	else
+		bd config set types.custom "$current,impediment" >/dev/null 2>&1
+	fi
+}
+
+# C-d (pregrill marker: absent|present|stale): derived cheaply from metadata already
+# present on every `bd list --json` / `gh issue list --json` row — no extra per-issue fetch.
+# A pregrill note carries a full-timestamp tag line ("clerk-pregrill: <ISO-8601>"); present
+# iff the issue's updated-at is within a few seconds of that tag (i.e. the pregrill append
+# itself was the most recent write — the tolerance absorbs that write's own commit latency,
+# empirically up to ~1s on the embedded Dolt engine, so a freshly-filed pregrill never reads
+# as stale against itself); stale iff updated-at moved meaningfully later, meaning some
+# other write landed since; absent iff no tag line exists at all. The other half of C-d's
+# staleness definition ("OR its dup-cluster gained members since") is deliberately not
+# implemented: computing cluster membership is a `bd find-duplicates` pass, and running
+# that on every `inbox list` call is exactly the expense "keep it cheap (metadata only)"
+# rules out — dup-driven staleness stays a documented gap, not a silent wrong answer.
+PREGRILL_STALE_TOLERANCE_S=3
+pregrill_marker() { # $1 = last pregrill-tag timestamp (or ""), $2 = issue updated-at
+	local note_ts="$1" upd_ts="$2" note_epoch upd_epoch
+	if [ -z "$note_ts" ]; then
+		printf 'absent'
+		return
+	fi
+	note_epoch=$(date -u -d "$note_ts" +%s 2>/dev/null) || { printf 'stale'; return; }
+	upd_epoch=$(date -u -d "$upd_ts" +%s 2>/dev/null) || { printf 'stale'; return; }
+	if [ $((upd_epoch - note_epoch)) -gt "$PREGRILL_STALE_TOLERANCE_S" ]; then
+		printf 'stale'
+	else
+		printf 'present'
+	fi
+}
+
+# Builds the dated, structured, state-neutral pregrill note body (ADR 0016): open
+# decisions, premises each with a suggested verification, draft acceptance criteria. Array
+# arguments are passed by name (nameref) since bash cannot pass arrays by value.
+build_pregrill_note() { # $1=ts $2=decisions-arrayname $3=premises-arrayname $4=criteria-arrayname
+	local -n _decisions="$2" _premises="$3" _criteria="$4"
+	local note="clerk-pregrill: $1"
+	note+=$'\n'"Open decisions:"
+	if [ "${#_decisions[@]}" -eq 0 ]; then
+		note+=$'\n'"- (none)"
+	else
+		local d
+		for d in "${_decisions[@]}"; do note+=$'\n'"- $d"; done
+	fi
+	note+=$'\n'"Premises:"
+	if [ "${#_premises[@]}" -eq 0 ]; then
+		note+=$'\n'"- (none)"
+	else
+		local p ptext pverify
+		for p in "${_premises[@]}"; do
+			case "$p" in
+				*'|'*)
+					ptext="${p%%|*}"
+					pverify="${p#*|}"
+					;;
+				*)
+					ptext="$p"
+					pverify="not yet specified"
+					;;
+			esac
+			note+=$'\n'"- $ptext (verify: $pverify)"
+		done
+	fi
+	note+=$'\n'"Draft acceptance criteria:"
+	if [ "${#_criteria[@]}" -eq 0 ]; then
+		note+=$'\n'"- (none)"
+	else
+		local c
+		for c in "${_criteria[@]}"; do note+=$'\n'"- $c"; done
+	fi
+	printf '%s' "$note"
+}
+
+# clerk capture "<title>" [--stdin|--impediment]
+cmd_capture() {
+	local backend="$1"
+	shift 2
+	if [ $# -eq 0 ]; then
+		usage_error 'clerk capture: missing title — usage: clerk capture "<title>" [--stdin|--impediment]'
+	fi
+	local title="$1"
+	shift
+	local use_stdin=0 use_impediment=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--stdin) use_stdin=1 ;;
+			--impediment) use_impediment=1 ;;
+			*) usage_error "clerk capture: unknown argument '$1' — usage: clerk capture \"<title>\" [--stdin|--impediment]" ;;
+		esac
+		shift
+	done
+
+	case "$backend" in
+		bd)
+			[ "$use_impediment" -eq 1 ] && bd_ensure_impediment_type
+			local -a args=(bd create "$title" --silent)
+			[ "$use_stdin" -eq 1 ] && args+=(--stdin)
+			[ "$use_impediment" -eq 1 ] && args+=(--type impediment)
+			local id
+			if ! id=$("${args[@]}"); then
+				backend_fail "capture failed — bd create did not succeed for \"$title\""
+			fi
+			# mutation self-verify (ADR 0015): confirm the id landed before declaring success
+			local seen
+			seen=$(bd show "$id" --readonly --json 2>/dev/null | jq -r '.[0].id // empty')
+			if [ "$seen" != "$id" ]; then
+				backend_fail "capture failed — $id was not confirmed after creation"
+			fi
+			if [ "$use_impediment" -eq 1 ]; then
+				printf '%sclerk:%s filed %s (type: impediment)\n' "$C_GRN" "$C_RST" "$id"
+			else
+				printf '%sclerk:%s filed %s\n' "$C_GRN" "$C_RST" "$id"
+			fi
+			;;
+		gh)
+			local -a args=(gh issue create --title "$title")
+			[ "$use_stdin" -eq 1 ] && args+=(--body-file -)
+			# gh has no first-class issue "type" reachable from `issue create`; a label is
+			# this backend's closest analogue to bd's `--type impediment` (documented choice).
+			[ "$use_impediment" -eq 1 ] && args+=(--label type:impediment)
+			local url
+			if ! url=$("${args[@]}"); then
+				backend_fail "capture failed — gh issue create did not succeed for \"$title\""
+			fi
+			if [ "$use_impediment" -eq 1 ]; then
+				printf '%sclerk:%s filed %s (type: impediment)\n' "$C_GRN" "$C_RST" "$url"
+			else
+				printf '%sclerk:%s filed %s\n' "$C_GRN" "$C_RST" "$url"
+			fi
+			;;
+	esac
+}
+
+# clerk inbox list — the pool is OPEN minus stage:ready (ADR 0015: the definition moves
+# from presort prose into this code), plus the per-unit pregrill marker (C-d).
+cmd_inbox_list() {
+	local backend="$1"
+	shift 2
+	case "$backend" in
+		bd)
+			# stdout only: stderr is left to flow straight to the terminal (bd's own error
+			# text lands there on failure) rather than being folded into $json, which must
+			# stay pure JSON on success — a stray warning on stderr would otherwise corrupt
+			# the jq parse below.
+			local json
+			if ! json=$(bd list --status open --exclude-label stage:ready --readonly --json); then
+				backend_fail "inbox list failed — bd list did not succeed"
+			fi
+			local count
+			count=$(printf '%s' "$json" | jq 'length')
+			printf 'Inbox (open, not ready) — %s item(s):\n' "$count"
+			if [ "$count" -eq 0 ]; then
+				printf '  (empty)\n'
+				return 0
+			fi
+			# Field separator is \x1f (ASCII unit separator), NOT a tab: bash's `read` always
+			# collapses runs of IFS *whitespace* characters (space/tab/newline) and trims
+			# them at the edges, even when IFS is set to just one of them — so a genuinely
+			# empty middle field (the common case here: no pregrill tag yet) silently merges
+			# with its neighbour and shifts every later field left. \x1f is not whitespace,
+			# so empty fields survive intact.
+			local id title note_ts upd_ts marker
+			while IFS=$'\x1f' read -r id title note_ts upd_ts; do
+				marker=$(pregrill_marker "$note_ts" "$upd_ts")
+				printf '  %s  [pregrill:%s]  %s\n' "$id" "$marker" "$title"
+			done < <(printf '%s' "$json" | jq -r '
+				def pregrill_ts: (.notes // "")
+					| [scan("clerk-pregrill: ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)")] as $m
+					| if ($m|length)==0 then "" else $m[-1][0] end;
+				.[] | [.id, .title, pregrill_ts, (.updated_at // "")] | join("\u001f")')
+			;;
+		gh)
+			local json
+			if ! json=$(gh issue list --state open --json number,title,labels,updatedAt,comments); then
+				backend_fail "inbox list failed — gh issue list did not succeed"
+			fi
+			json=$(printf '%s' "$json" | jq -c '[.[] | select((.labels | map(.name) | index("ready-for-agent")) == null)]')
+			local count
+			count=$(printf '%s' "$json" | jq 'length')
+			printf 'Inbox (open, not ready) — %s item(s):\n' "$count"
+			if [ "$count" -eq 0 ]; then
+				printf '  (empty)\n'
+				return 0
+			fi
+			local num title note_ts upd_ts marker
+			while IFS=$'\x1f' read -r num title note_ts upd_ts; do
+				marker=$(pregrill_marker "$note_ts" "$upd_ts")
+				printf '  #%s  [pregrill:%s]  %s\n' "$num" "$marker" "$title"
+			done < <(printf '%s' "$json" | jq -r '
+				def pregrill_ts: ([.comments[]?.body] | join("\n")) as $all
+					| [$all | scan("clerk-pregrill: ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)")] as $m
+					| if ($m|length)==0 then "" else $m[-1][0] end;
+				.[] | [.number, .title, pregrill_ts, (.updatedAt // "")] | join("\u001f")')
+			;;
+	esac
+}
+
+# clerk inbox show <id>
+cmd_inbox_show() {
+	local backend="$1"
+	shift 2
+	local id="${1:-}"
+	if [ -z "$id" ]; then
+		usage_error 'clerk inbox show: missing id — usage: clerk inbox show <id>'
+	fi
+	case "$backend" in
+		bd) bd show "$id" --readonly ;;
+		gh) gh issue view "$id" ;;
+	esac
+}
+
+# clerk inbox dups — cross-pool by design: a capture duplicating an already-ready bead is
+# a real duplicate, so this never pre-filters to the inbox pool (unlike `inbox list`).
+cmd_inbox_dups() {
+	local backend="$1"
+	shift 2
+	case "$backend" in
+		bd)
+			local json
+			if ! json=$(bd find-duplicates --readonly --json); then
+				backend_fail "inbox dups failed — bd find-duplicates did not succeed"
+			fi
+			local count
+			count=$(printf '%s' "$json" | jq -r '.count // 0')
+			printf 'Duplicate candidates — %s pair(s):\n' "$count"
+			if [ "$count" -eq 0 ]; then
+				printf '  (none)\n'
+				return 0
+			fi
+			printf '%s' "$json" | jq -r '.pairs[] | "  \(.issue_a_id) \"\(.issue_a_title)\"  ~  \(.issue_b_id) \"\(.issue_b_title)\"  (score: \(.similarity))"'
+			;;
+		gh)
+			# Documented stub (the unit spec explicitly allows this): gh has no
+			# `find-duplicates` analogue, and bd is this repo's real backend. A genuine
+			# text-similarity pass over `gh issue list` is deferred until a gh-backed repo
+			# actually needs it.
+			printf 'clerk: inbox dups (gh backend): not implemented — no similarity pass yet; see ADR 0016\n'
+			;;
+	esac
+}
+
+# clerk inbox ready <id> [--title "<title>" --body-file <file>]  (gh only)
+cmd_inbox_ready() {
+	local backend="$1"
+	shift 2
+	if [ $# -eq 0 ]; then
+		usage_error 'clerk inbox ready: missing id — usage: clerk inbox ready <id> [--title "<title>" --body-file <file>]'
+	fi
+	local id="$1"
+	shift
+	local title="" body_file=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--title)
+				[ $# -ge 2 ] || usage_error "clerk inbox ready: --title needs a value"
+				title="$2"
+				shift
+				;;
+			--body-file)
+				[ $# -ge 2 ] || usage_error "clerk inbox ready: --body-file needs a value"
+				body_file="$2"
+				shift
+				;;
+			*) usage_error "clerk inbox ready: unknown argument '$1'" ;;
+		esac
+		shift
+	done
+
+	case "$backend" in
+		bd)
+			local json
+			json=$(bd show "$id" --readonly --json 2>/dev/null)
+			# bd 1.0.4 signals a missing id not with empty stdout or literal `null` but with
+			# an ERROR OBJECT on stdout (`{"error":"no issues found...","schema_version":1}`,
+			# nonzero exit — discarded by `$(...)`). A successful lookup is always a non-empty
+			# JSON array. So "not an array, or an empty one" is the not-found test; checking
+			# for the object shape directly (rather than relying on the later jq calls to fail
+			# into empty strings) keeps this guard accurate instead of accidental.
+			if [ -z "$json" ] || [ "$json" = null ] ||
+				! printf '%s' "$json" | jq -e 'if type != "array" then false else (length > 0) end' >/dev/null 2>&1; then
+				usage_error "clerk inbox ready: $id not found — check the id ('clerk inbox list' shows open units)"
+			fi
+			# C-e also covers bd's first-class `acceptance_criteria` field (populated by
+			# `bd create --acceptance`/`--acceptance-file`), not just prose in description or
+			# design: that dedicated field IS the structural section by construction, so its
+			# mere non-empty presence satisfies C-e without re-scanning it for a heading.
+			local desc design ac
+			desc=$(printf '%s' "$json" | jq -r '.[0].description // ""')
+			design=$(printf '%s' "$json" | jq -r '.[0].design // ""')
+			ac=$(printf '%s' "$json" | jq -r '.[0].acceptance_criteria // ""')
+			if [ -z "$ac" ] && ! has_acceptance_criteria_section "$desc"$'\n'"$design"; then
+				usage_error "clerk inbox ready: $id has no 'Acceptance Criteria' section — add one (e.g. a '## Acceptance Criteria' heading in its description or design, or bd create --acceptance) before promoting it"
+			fi
+			if ! bd update "$id" --add-label stage:ready >/dev/null; then
+				backend_fail "inbox ready failed — bd update did not succeed for $id"
+			fi
+			# mutation self-verify (ADR 0015)
+			local has_label
+			has_label=$(bd show "$id" --readonly --json 2>/dev/null | jq -r '(.[0].labels // []) | index("stage:ready")')
+			if [ "$has_label" = null ]; then
+				backend_fail "inbox ready failed — $id was not confirmed stage:ready after promotion"
+			fi
+			printf '%sclerk:%s promoted %s to stage:ready\n' "$C_GRN" "$C_RST" "$id"
+			;;
+		gh)
+			if [ -z "$title" ] || [ -z "$body_file" ]; then
+				usage_error "clerk inbox ready: gh backend needs both --title \"<title>\" and --body-file <file> — rerun as 'clerk inbox ready $id --title \"<title>\" --body-file <file>'"
+			fi
+			local url
+			if ! url=$(gh issue create --title "$title" --body-file "$body_file"); then
+				backend_fail "inbox ready failed — gh issue create did not succeed"
+			fi
+			local num="${url##*/}"
+			# create, THEN close the capture referencing it — in that order (spec-mandated).
+			if ! gh issue close "$id" --comment "promoted: #$num" >/dev/null; then
+				backend_fail "inbox ready failed — gh issue close did not succeed for $id"
+			fi
+			printf '%sclerk:%s promoted %s to #%s (%s)\n' "$C_GRN" "$C_RST" "$id" "$num" "$url"
+			;;
+	esac
+}
+
+# clerk inbox drop <id>
+cmd_inbox_drop() {
+	local backend="$1"
+	shift 2
+	local id="${1:-}"
+	if [ -z "$id" ]; then
+		usage_error 'clerk inbox drop: missing id — usage: clerk inbox drop <id>'
+	fi
+	case "$backend" in
+		bd)
+			if ! bd close "$id" --reason wontfix >/dev/null; then
+				backend_fail "inbox drop failed — bd close did not succeed for $id"
+			fi
+			local status
+			status=$(bd show "$id" --readonly --json 2>/dev/null | jq -r '.[0].status // ""')
+			if [ "$status" != closed ]; then
+				backend_fail "inbox drop failed — $id was not confirmed closed"
+			fi
+			printf '%sclerk:%s dropped %s (wontfix)\n' "$C_GRN" "$C_RST" "$id"
+			;;
+		gh)
+			if ! gh issue close "$id" >/dev/null; then
+				backend_fail "inbox drop failed — gh issue close did not succeed for $id"
+			fi
+			printf '%sclerk:%s dropped %s\n' "$C_GRN" "$C_RST" "$id"
+			;;
+	esac
+}
+
+# clerk inbox pregrill <id> [--decision "<text>"]... [--premise "<text>|<verify>"]... [--criterion "<text>"]...
+# The SINGLE write verb of the inbox (ADR 0016 ruling 20): bd's only mutation is
+# --append-notes (C-b) and the result is self-verified state-neutral (status/labels
+# byte-identical before/after) before success is reported (ADR 0015 mutation self-verify).
+cmd_inbox_pregrill() {
+	local backend="$1"
+	shift 2
+	if [ $# -eq 0 ]; then
+		usage_error 'clerk inbox pregrill: missing id — usage: clerk inbox pregrill <id> [--decision "<text>"]... [--premise "<text>|<verification>"]... [--criterion "<text>"]...'
+	fi
+	local id="$1"
+	shift
+	local -a decisions=() premises=() criteria=()
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--decision)
+				[ $# -ge 2 ] || usage_error "clerk inbox pregrill: --decision needs a value"
+				decisions+=("$2")
+				shift
+				;;
+			--premise)
+				[ $# -ge 2 ] || usage_error "clerk inbox pregrill: --premise needs a value"
+				premises+=("$2")
+				shift
+				;;
+			--criterion)
+				[ $# -ge 2 ] || usage_error "clerk inbox pregrill: --criterion needs a value"
+				criteria+=("$2")
+				shift
+				;;
+			*) usage_error "clerk inbox pregrill: unknown argument '$1'" ;;
+		esac
+		shift
+	done
+
+	local ts note
+	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	note=$(build_pregrill_note "$ts" decisions premises criteria)
+
+	case "$backend" in
+		bd)
+			local before after
+			before=$(bd show "$id" --readonly --json 2>/dev/null | jq -c '.[0] | {status, labels}' 2>/dev/null)
+			if [ -z "$before" ] || [ "$before" = null ]; then
+				usage_error "clerk inbox pregrill: $id not found — check the id ('clerk inbox list' shows open units)"
+			fi
+			if ! bd update "$id" --append-notes "$note" >/dev/null; then
+				backend_fail "inbox pregrill failed — bd update --append-notes did not succeed for $id"
+			fi
+			after=$(bd show "$id" --readonly --json 2>/dev/null | jq -c '.[0] | {status, labels}' 2>/dev/null)
+			if [ "$before" != "$after" ]; then
+				backend_fail "inbox pregrill failed — $id status/labels changed (not state-neutral)"
+			fi
+			printf '%sclerk:%s pregrilled %s (dated %s)\n' "$C_GRN" "$C_RST" "$id" "$ts"
+			;;
+		gh)
+			if ! gh issue comment "$id" --body "$note" >/dev/null; then
+				backend_fail "inbox pregrill failed — gh issue comment did not succeed for $id"
+			fi
+			printf '%sclerk:%s pregrilled %s (dated %s)\n' "$C_GRN" "$C_RST" "$id" "$ts"
 			;;
 	esac
 }
@@ -470,7 +937,43 @@ main() {
 
 	# Everything else dispatches on the .clerk marker (ADR 0017) …
 	marker_gate
-	# … and is delivered by a later unit of the dotfiles-dft epic.
+	# … and, for the verbs this generation implements (dotfiles-dft.2), on the marker's
+	# backend. Every cmd_* callee takes (backend, root, …verb-args…) uniformly, even the
+	# ones that do not need root, so this dispatch line stays one shape for all seven.
+	local root backend
+	root=$(repo_root)
+	backend=$(read_marker "$root/.clerk")
+	case "$verb" in
+		capture)
+			cmd_capture "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox list")
+			cmd_inbox_list "$backend" "$root"
+			exit "$?"
+			;;
+		"inbox show")
+			cmd_inbox_show "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox dups")
+			cmd_inbox_dups "$backend" "$root"
+			exit "$?"
+			;;
+		"inbox ready")
+			cmd_inbox_ready "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox drop")
+			cmd_inbox_drop "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox pregrill")
+			cmd_inbox_pregrill "$backend" "$root" "$@"
+			exit "$?"
+			;;
+	esac
+	# … and the rest is delivered by a later unit of the dotfiles-dft epic.
 	not_implemented "$verb"
 }
 

@@ -20,6 +20,18 @@ setup() {
 		"backlog next" "backlog show" "backlog claim" "backlog release" "backlog submit"
 		"backlog finish" "backlog return"
 	)
+	# dotfiles-dft.2 replaced capture + the six inbox verbs' exit-3 stubs with real
+	# implementations (bin/clerk), so exit 3 ("known verb, not yet implemented in this
+	# generation" — ADR 0015's own taxonomy) can no longer hold for them; a verb that is
+	# genuinely implemented must never again report itself as not-yet-implemented. This
+	# list narrows the not-implemented matrix (test below) to the verbs that remain stubs
+	# after dft.2; ALL_VERBS above is untouched and still drives the --explain / output
+	# discipline coverage tests, which are valid regardless of implementation status.
+	STUB_VERBS=(
+		"sync" "glean"
+		"backlog next" "backlog show" "backlog claim" "backlog release" "backlog submit"
+		"backlog finish" "backlog return"
+	)
 }
 
 # Scratch git repo with an optional .clerk marker, committed so worktrees see it
@@ -73,10 +85,10 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 
 # -------------------------------------------- dispatch: root vs worktree ----
 
-@test "matrix: every roster verb resolves the repo identically from root and worktree" {
+@test "matrix: every still-stubbed roster verb resolves the repo identically from root and worktree" {
 	repo=$(make_repo matrix "backlog: bd")
 	wt=$(make_worktree "$repo" wt1)
-	for v in "${ALL_VERBS[@]}"; do
+	for v in "${STUB_VERBS[@]}"; do
 		cd "$repo"
 		# shellcheck disable=SC2086 # word-split $v into noun + verb on purpose
 		run "$CLERK" $v
@@ -152,9 +164,11 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 		'' \
 		'   backlog:   bd   # bd for now' >"$repo/.clerk"
 	cd "$repo"
-	run "$CLERK" capture "a title"
+	# probe verb is any still-stubbed roster verb (dotfiles-dft.2 implemented capture for
+	# real, so it can no longer serve as a not-implemented probe here — see STUB_VERBS)
+	run "$CLERK" glean
 	[ "$status" -eq 3 ] # marker gate passed; refusal is the not-implemented one
-	[ "$output" = "clerk: 'capture' $NOT_IMPL" ]
+	[ "$output" = "clerk: 'glean' $NOT_IMPL" ]
 }
 
 @test "outside any git repo: dispatching verb refuses with exit 4" {
