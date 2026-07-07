@@ -109,11 +109,11 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	mkdir -p "$home"
 	home=$(phys "$home")
 	cd "$repo"
-	run env -i HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor
+	run env -i CLICOLOR_FORCE=1 HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"$OK_TAG .clerk marker: backlog: bd ($repo/.clerk)"* ]]
 	cd "$wt"
-	run env -i HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor
+	run env -i CLICOLOR_FORCE=1 HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"$OK_TAG .clerk marker: backlog: bd ($wt/.clerk)"* ]]
 }
@@ -283,7 +283,7 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	make_fake_bin "$home/.config/bin"
 	home=$(phys "$home")
 	cd "$repo"
-	run env -i HOME="$home" PATH="$home/.config/bin:/usr/bin:/bin" "$CLERK" doctor
+	run env -i CLICOLOR_FORCE=1 HOME="$home" PATH="$home/.config/bin:/usr/bin:/bin" "$CLERK" doctor
 	[ "$status" -eq 0 ]
 	[ "${lines[0]}" = "${ESC}[1mclerk doctor${ESC}[0m — $repo" ]
 	[[ "$output" == *"$OK_TAG .clerk marker: backlog: bd ($repo/.clerk)"* ]]
@@ -298,7 +298,7 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	mkdir -p "$home"
 	home=$(phys "$home")
 	cd "$repo"
-	run env -i HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor
+	run env -i CLICOLOR_FORCE=1 HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor
 	[ "$status" -eq 1 ]
 	[[ "$output" == *"$FAIL_TAG .clerk marker: missing ($repo/.clerk)"* ]]
 	[[ "$output" == *"         provision it: clerk doctor --fix --backend bd   (or --backend gh)"* ]]
@@ -311,7 +311,7 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	mkdir -p "$home"
 	home=$(phys "$home")
 	cd "$repo"
-	run env -i HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor --fix --backend gh
+	run env -i CLICOLOR_FORCE=1 HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor --fix --backend gh
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"$OK_TAG .clerk marker: provisioned backlog: gh ($repo/.clerk)"* ]]
 	[[ "$output" == *"         commit .clerk so worktrees and clones see it: git add .clerk && git commit"* ]]
@@ -329,7 +329,7 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	mkdir -p "$home"
 	home=$(phys "$home")
 	cd "$repo"
-	run env -i HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor --fix --backend bd
+	run env -i CLICOLOR_FORCE=1 HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor --fix --backend bd
 	[ "$status" -eq 1 ]
 	[[ "$output" == *"$FAIL_TAG .clerk marker: could not provision ($repo/.clerk)"* ]]
 	[[ "$output" == *"         check that $repo is writable and .clerk is not a directory"* ]]
@@ -376,12 +376,12 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	mkdir -p "$home"
 	home=$(phys "$home")
 	cd "$repo"
-	run env -i HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor
+	run env -i CLICOLOR_FORCE=1 HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor
 	[ "$status" -eq 1 ]
 	[[ "$output" == *"$FAIL_TAG .clerk marker: invalid ($repo/.clerk)"* ]]
 	[[ "$output" == *"         expected a single line 'backlog: bd' or 'backlog: gh' (comments after # are fine)"* ]]
 	[[ "$output" == *"         rewrite it: clerk doctor --fix --backend bd   (or --backend gh)"* ]]
-	run env -i HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor --fix --backend bd
+	run env -i CLICOLOR_FORCE=1 HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor --fix --backend bd
 	[ "$status" -eq 0 ]
 	[ "$(cat "$repo/.clerk")" = "backlog: bd" ]
 }
@@ -395,7 +395,7 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	home=$(phys "$home")
 	sysbin=$(phys "$sysbin")
 	cd "$repo"
-	run env -i HOME="$home" PATH="$sysbin:$home/.config/bin:/usr/bin:/bin" "$CLERK" doctor
+	run env -i CLICOLOR_FORCE=1 HOME="$home" PATH="$sysbin:$home/.config/bin:/usr/bin:/bin" "$CLERK" doctor
 	[ "$status" -eq 1 ]
 	[[ "$output" == *"$FAIL_TAG bd shim: SHADOWED — 'bd' resolves to $sysbin/bd, expected shim $home/.config/bin/bd"* ]]
 	[[ "$output" == *"         fix: put $home/.config/bin before $sysbin in PATH"* ]]
@@ -408,7 +408,7 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	home=$(phys "$home")
 	make_fake_bin "$repo/bin"
 	cd "$repo"
-	run env -i HOME="$home" PATH="$repo/bin:/usr/bin:/bin" "$CLERK" doctor
+	run env -i CLICOLOR_FORCE=1 HOME="$home" PATH="$repo/bin:/usr/bin:/bin" "$CLERK" doctor
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"$OK_TAG bd shim: $repo/bin/bd (shim wins PATH resolution)"* ]]
 }
@@ -442,16 +442,16 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	cd "$repo"
 	run "$CLERK" capture "a title"
 	all+="$output"$'\n'
-	run env -i HOME="$home" PATH="$home/.config/bin:/usr/bin:/bin" "$CLERK" doctor
+	run env -i CLICOLOR_FORCE=1 HOME="$home" PATH="$home/.config/bin:/usr/bin:/bin" "$CLERK" doctor
 	all+="$output"$'\n'
-	run env -i HOME="$home" PATH="$sysbin:$home/.config/bin:/usr/bin:/bin" "$CLERK" doctor
+	run env -i CLICOLOR_FORCE=1 HOME="$home" PATH="$sysbin:$home/.config/bin:/usr/bin:/bin" "$CLERK" doctor
 	all+="$output"$'\n'
 	cd "$norepo"
 	run "$CLERK" sync
 	all+="$output"$'\n'
-	run env -i HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor
+	run env -i CLICOLOR_FORCE=1 HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor
 	all+="$output"$'\n'
-	run env -i HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor --fix --backend bd
+	run env -i CLICOLOR_FORCE=1 HOME="$home" PATH="/usr/bin:/bin" "$CLERK" doctor --fix --backend bd
 	all+="$output"$'\n'
 
 	# no 256-color / truecolor SGR anywhere (38;5 / 38;2 / 48;5 / 48;2)
@@ -469,4 +469,28 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 			return 1
 		fi
 	done <<<"$seqs"
+}
+
+@test "output discipline: colour is suppressed off a TTY and by NO_COLOR" {
+	repo=$(make_repo ansisuppress "backlog: bd")
+	home="$BATS_TEST_TMPDIR/ansisuppress-home"
+	make_fake_bin "$home/.config/bin"
+	home=$(phys "$home")
+	cd "$repo"
+
+	# bats captures through a pipe, so stdout is not a TTY. With no CLICOLOR_FORCE the
+	# doctor report must be escape-free — downstream parsers/logs must never see escapes
+	# (ADR 0015 output discipline) — while the plain-text status lines keep their meaning.
+	run env -i HOME="$home" PATH="$home/.config/bin:/usr/bin:/bin" "$CLERK" doctor
+	[ "$status" -eq 0 ]
+	[[ "$output" != *"$ESC["* ]]
+	[[ "$output" == *"[ ok ] .clerk marker: backlog: bd ($repo/.clerk)"* ]]
+	[ "${lines[0]}" = "clerk doctor — $repo" ]
+	[ "${lines[${#lines[@]} - 1]}" = "clerk doctor: all clear" ]
+
+	# NO_COLOR wins even when colour is force-enabled: a consumer that sets NO_COLOR must
+	# never receive escapes, whatever CLICOLOR_FORCE says.
+	run env -i HOME="$home" PATH="$home/.config/bin:/usr/bin:/bin" NO_COLOR=1 CLICOLOR_FORCE=1 "$CLERK" doctor
+	[ "$status" -eq 0 ]
+	[[ "$output" != *"$ESC["* ]]
 }

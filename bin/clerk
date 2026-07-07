@@ -16,16 +16,28 @@
 #
 # Output discipline (ADR 0015): printed output is load-bearing — every refusal prescribes
 # the next action, and everything is tested verbatim. 16-color ANSI only (30-37/90-97,
-# bold, reset; never 38;5/38;2) so terminal themes recolor it.
+# bold, reset; never 38;5/38;2) so terminal themes recolor it. Colour is capability-gated:
+# the refusal / roster / doctor strings are parsed and logged downstream, so they must never
+# carry escapes into a pipe or file — emit colour only for a real TTY, NO_COLOR (set, any
+# value) suppresses it unconditionally, and CLICOLOR_FORCE re-enables it on a non-TTY.
 set -uo pipefail
 
 CLERK_VERSION="0.1.0" # single source of truth: --version and doctor both read this line
 
-C_BOLD=$'\033[1m'
-C_RED=$'\033[31m'
-C_GRN=$'\033[32m'
-C_YLW=$'\033[33m'
-C_RST=$'\033[0m'
+if [ -n "${NO_COLOR+x}" ]; then
+	_clerk_color=0
+elif [ -n "${CLICOLOR_FORCE:-}" ] && [ "$CLICOLOR_FORCE" != 0 ]; then
+	_clerk_color=1
+elif [ -t 1 ]; then
+	_clerk_color=1
+else
+	_clerk_color=0
+fi
+if [ "$_clerk_color" -eq 1 ]; then
+	C_BOLD=$'\033[1m' C_RED=$'\033[31m' C_GRN=$'\033[32m' C_YLW=$'\033[33m' C_RST=$'\033[0m'
+else
+	C_BOLD='' C_RED='' C_GRN='' C_YLW='' C_RST=''
+fi
 
 ADR15="ADR 0015 — umbel/docs/adr/0015-clerk-opaque-workflow-verb-facade.md"
 ADR16="ADR 0016 — umbel/docs/adr/0016-delivery-gate-acceptance-proof-and-judgment-loops.md"
