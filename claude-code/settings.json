@@ -1,5 +1,8 @@
 {
   "includeCoAuthoredBy": false,
+  "attribution": {
+    "sessionUrl": false
+  },
   "permissions": {
     "defaultMode": "auto"
   },
