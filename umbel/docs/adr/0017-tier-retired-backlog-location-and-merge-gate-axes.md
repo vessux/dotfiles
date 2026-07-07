@@ -18,6 +18,12 @@ review-required vs auto-merge-on-green). They get opposite storage treatments on
   **manifest v0**: when a third binding arrives (jira/linear/gt; promote and claim styles), roles
   become new keys in an existing file, not a migration (ADR 0010's interface-now instinct;
   ADR 0015's presets ride this key).
+- **The marker is strict, and ambiguity is refused, never resolved.** A valid `.clerk` is a single
+  directive line (surrounding whitespace and `#`-comment lines tolerated). More than one directive,
+  or trailing non-comment content, makes it *invalid* — the parser does not take first-match-wins.
+  An ambiguous manifest is a `doctor`-diagnosed fault, not a silent backend choice (dotfiles-dft.1
+  experiment: a lenient parser accepted `backlog: bd` + `backlog: gh` and silently dispatched to
+  `bd`).
 - **Merge gate = never a marker.** The gate *is* branch protection + auto-merge settings —
   server-enforced, so the reconciler reads it live (`gh api`) at exactly the phases that need the
   remote anyway. A committed copy could only ever lie; `.repo-visibility` is the proof.
@@ -47,3 +53,11 @@ during cutover, each generation reading only its own.
   and the gate is discovered live, so the graduated-autonomy ladder is a per-repo platform
   setting, not seed prose.
 - This repo's `.clerk` says `backlog: bd` — unchanged behavior under retired vocabulary.
+
+## History
+
+- 2026-07-06: strict-marker clause added (ambiguous / multi-directive `.clerk` is invalid, not
+  first-match-wins). The dotfiles-dft.1 small-model experiment shipped a lenient parser that
+  accepted two conflicting directives and silently picked the first; "one key" always implied a
+  single directive, now stated so the contract is testable. Marker-format details otherwise
+  unchanged.

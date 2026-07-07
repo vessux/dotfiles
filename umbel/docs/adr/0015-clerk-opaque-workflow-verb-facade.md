@@ -58,8 +58,30 @@ reasons); the clerk executes mechanism exactly, in code that cannot drift from i
 - **Offline claim = attended-only degraded mode**: proceed with a quantified LOCAL-ONLY warning;
   the canonical branch is the CAS at reconnect (second push rejected → collision detected, never
   silent). Job contexts refuse offline claims.
-- **Error text is prompt engineering**: every refusal prescribes the next verb. Printed output is
-  load-bearing (the agent's next action follows it) — tested like exit codes. 16-color ANSI only.
+- **Operational contracts (every verb, asserted verbatim in bats — including the failure paths).**
+  Surfaced by the small-model delivery experiment on unit dotfiles-dft.1 (History), where two
+  independent implementations both passed all seven acceptance criteria yet diverged on behaviours
+  the criteria never pinned — the signature of an underspecified contract, not a coding slip:
+  - **Exit-code taxonomy, one meaning each**: `0` success; `1` `doctor` found problems (below);
+    `2` usage error / unknown verb (roster printed); `3` a known verb not implemented in this
+    generation; `4` `.clerk` unresolvable (missing / invalid / not in a git repo). Dispatch
+    distinguishes unknown (`2`) from not-yet-implemented (`3`) — a grammar error is not a
+    generation gap.
+  - **`doctor` is a health check, not a diagnostic that always succeeds**: it exits `0` iff every
+    check passes and non-zero (`1`) if any fails. This is the contract the zero-token systemd-timer
+    caller depends on — a timer can only alert on a non-zero exit; a `doctor` that always exits `0`
+    is silent on exactly the failures it exists to catch.
+  - **Mutations self-verify before reporting success**: any state-changing action (`doctor --fix`
+    writing `.clerk`, `claim` creating the branch/worktree, `capture` filing) confirms its effect
+    landed before printing a success line, and on failure exits non-zero with a prescriptive
+    message — it never prints `[ ok ]` / "written" over a failed write. A false success dead-ends
+    the dispatch → `doctor` → dispatch recovery loop.
+  - **Error text is prompt engineering**: every refusal prescribes the next verb, names the
+    resolved path where one is at issue, and (for usage errors) shows the corrected invocation.
+    Printed output is load-bearing — the agent's next action follows it.
+  - **Output discipline**: 16-color ANSI only (30–37 / 90–97, bold/reset; never `38;5` / `38;2`).
+    Colour is suppressed when the stream is not a TTY or `NO_COLOR` is set — the refusal / roster /
+    `doctor` strings are parsed downstream and must never carry escape sequences into a pipe or log.
 
 ## Considered options
 
@@ -95,3 +117,16 @@ reasons); the clerk executes mechanism exactly, in code that cannot drift from i
   retires — enforced by structure instead of remembered (dotfiles-w0x).
 - `CLAUDE.md`'s "issues live in beads" line is Layer-1 text and becomes clerk wording;
   `docs/agents/issue-tracker.md` remains the one operator doc allowed to name beads.
+
+## History
+
+- 2026-07-06: operational-contracts bullet added (exit-code taxonomy, `doctor`-as-health-check,
+  mutation-self-verify, non-TTY/`NO_COLOR` output discipline). Surfaced by the small-model delivery
+  experiment on unit dotfiles-dft.1 — a fable baseline and a sonnet-implement/haiku-verify arm both
+  passed all seven acceptance criteria and shellcheck, yet diverged on `doctor`'s exit code
+  (health-check `1` vs always-`0`) and one shipped a `doctor --fix` that printed success over a
+  failed write. When two competent implementations of one spec diverge on a load-bearing behaviour,
+  the spec underspecified a *contract* — so it is written down here rather than left to per-unit
+  criteria (which cannot enumerate every failure path). The neutral referee confirmed both
+  behaviours; the cost/quality data and the resulting model-tier policy live in the epic
+  dotfiles-dft experiment note.
