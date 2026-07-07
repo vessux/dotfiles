@@ -11,6 +11,8 @@
 # a scratch db; resolving straight to the underlying bd binary keeps these tests hermetic.
 
 setup() {
+	source "$BATS_TEST_DIRNAME/helpers.bash"
+	git_sandbox
 	CLERK="$BATS_TEST_DIRNAME/../../bin/clerk"
 	# Excludes ~/.config/bin (the ADR 0013 auto-sync shim) on purpose — see header comment.
 	BD_MIN_PATH="/usr/local/bin:/usr/bin:/bin"

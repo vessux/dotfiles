@@ -9,6 +9,8 @@
 # auto-sync shim (ADR 0013) — same rationale as inbox.bats.
 
 setup() {
+	source "$BATS_TEST_DIRNAME/helpers.bash"
+	git_sandbox
 	CLERK="$BATS_TEST_DIRNAME/../../bin/clerk"
 	BD_MIN_PATH="/usr/local/bin:/usr/bin:/bin"
 	export PATH="$BD_MIN_PATH"

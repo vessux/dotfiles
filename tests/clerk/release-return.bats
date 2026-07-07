@@ -7,6 +7,8 @@
 # 0015): success/refusal text is asserted, not just exit codes.
 
 setup() {
+	source "$BATS_TEST_DIRNAME/helpers.bash"
+	git_sandbox
 	CLERK="$BATS_TEST_DIRNAME/../../bin/clerk"
 	BD_MIN_PATH="/usr/local/bin:/usr/bin:/bin"
 	export PATH="$BD_MIN_PATH"

@@ -7,6 +7,8 @@
 # test reads or writes this repo's own state.
 
 setup() {
+	source "$BATS_TEST_DIRNAME/helpers.bash"
+	git_sandbox
 	CLERK="$BATS_TEST_DIRNAME/../../bin/clerk"
 	ESC=$'\033'
 	OK_TAG="  ${ESC}[32m[ ok ]${ESC}[0m"
