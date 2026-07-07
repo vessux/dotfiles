@@ -280,6 +280,9 @@ cmd_doctor() {
 			'') usage_error "clerk doctor: --fix requires --backend bd|gh — rerun as 'clerk doctor --fix --backend bd' (or gh)" ;;
 			*) usage_error "clerk doctor: unknown backend '$backend' — use --backend bd or --backend gh" ;;
 		esac
+	elif [ -n "$backend" ]; then
+		# --backend without --fix would silently do nothing — refuse and prescribe the fix.
+		usage_error "clerk doctor: --backend applies only with --fix — rerun with --fix, e.g. 'clerk doctor --fix --backend bd'"
 	fi
 
 	local root=""
@@ -302,7 +305,7 @@ cmd_doctor() {
 		elif [ "$fix" -eq 1 ]; then
 			# Guard the write AND re-validate through read_marker before claiming success —
 			# a false "all clear" here dead-ends the dispatch→doctor→dispatch recovery loop.
-			if printf 'backlog: %s\n' "$backend" >"$root/.clerk" 2>/dev/null &&
+			if printf 'backlog: %s\n' "$backend" 2>/dev/null >"$root/.clerk" &&
 				found=$(read_marker "$root/.clerk"); then
 				d_ok ".clerk marker: provisioned backlog: $found ($root/.clerk)"
 				d_hint "commit .clerk so worktrees and clones see it: git add .clerk && git commit"
@@ -323,7 +326,8 @@ cmd_doctor() {
 	# (b) bd shim PATH ordering — a system bd that wins over the shim silently drops the
 	# auto-sync the shim exists for (ADR 0013), so a shadowed shim is a hard fail.
 	local resolved shim="" cand is_shim=0
-	local -a candidates=("$HOME/.config/bin/bd")
+	# ${HOME:-} so an unset HOME does not trip `set -u` (cron/systemd have no HOME).
+	local -a candidates=("${HOME:-}/.config/bin/bd")
 	[ -n "$root" ] && candidates+=("$root/bin/bd")
 	resolved=$(command -v bd 2>/dev/null || true)
 	for cand in "${candidates[@]}"; do

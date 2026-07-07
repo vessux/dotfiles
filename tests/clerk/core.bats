@@ -90,6 +90,18 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	done
 }
 
+@test "dispatch resolves the repo from a nested subdirectory of a worktree" {
+	repo=$(make_repo nested "backlog: bd")
+	wt=$(make_worktree "$repo" wt1)
+	mkdir -p "$wt/sub/deep"
+	cd "$wt/sub/deep"
+	# git rev-parse --show-toplevel must still find the worktree root from a nested cwd,
+	# so the marker gate passes and the verb reaches its not-implemented refusal (exit 3).
+	run "$CLERK" backlog claim
+	[ "$status" -eq 3 ]
+	[ "$output" = "clerk: 'backlog claim' $NOT_IMPL" ]
+}
+
 @test "matrix: doctor resolves the marker from root and from inside the worktree" {
 	repo=$(make_repo docmatrix "backlog: bd")
 	wt=$(make_worktree "$repo" wt1)
@@ -338,6 +350,24 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	run "$CLERK" doctor --fix --backend jira
 	[ "$status" -eq 2 ]
 	[ "$output" = "clerk doctor: unknown backend 'jira' — use --backend bd or --backend gh" ]
+}
+
+@test "doctor --backend without --fix is a usage error, not silently ignored" {
+	run "$CLERK" doctor --backend gh
+	[ "$status" -eq 2 ]
+	[ "$output" = "clerk doctor: --backend applies only with --fix — rerun with --fix, e.g. 'clerk doctor --fix --backend bd'" ]
+}
+
+@test "doctor survives an unset HOME without crashing (set -u safe)" {
+	repo=$(make_repo dochome "backlog: bd")
+	cd "$repo"
+	# No HOME in the environment — the shim-candidate construction must not trip `set -u`.
+	# Reaching the version line proves execution passed the HOME-derived shim candidate.
+	run env -i PATH="/usr/bin:/bin" "$CLERK" doctor
+	[ "$status" -eq 0 ]
+	[[ "$output" == *".clerk marker: backlog: bd ($repo/.clerk)"* ]]
+	[[ "$output" == *"version: clerk 0.1.0 (clerk --version reports the same string)"* ]]
+	[[ "$output" != *"unbound variable"* ]]
 }
 
 @test "doctor: invalid marker fails with format guidance; --fix rewrites it" {
