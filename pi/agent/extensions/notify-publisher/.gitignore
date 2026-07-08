@@ -1,0 +1,8 @@
+# Deny everything by default, then opt in what this extension should track
+
+# Everything else (build artifacts, local installs, etc.) stays ignored
+*
+
+# Opt in extension files
+!.gitignore
+!notify-publisher.ts

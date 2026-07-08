@@ -30,13 +30,13 @@ exec curl -sS -N --retry 999999 --retry-delay 5 "$SUB_URL" | while IFS= read -r 
 
   if command -v terminal-notifier >/dev/null 2>&1; then
     terminal-notifier \
-      -title "Claude Code" \
+      -title "Coding agent" \
       -message "$message" \
       -activate "com.mitchellh.ghostty" \
       >/dev/null 2>&1
   fi
 
   if [[ ! -f "$SILENT_FLAG" ]] && command -v say >/dev/null 2>&1; then
-    say -v Zarvox "Claude: $message"
+    say -v Zarvox "Agent: $message"
   fi
 done

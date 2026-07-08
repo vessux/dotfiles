@@ -13,8 +13,16 @@
   "lastChangelogVersion": "0.80.3",
   "theme": "dark",
   "defaultProvider": "nvidia",
-  "defaultModel": "deepseek-ai/deepseek-v4-pro",
-  "defaultThinkingLevel": "xhigh",
+  "defaultModel": "deepseek-ai/deepseek-v4-flash",
+  "defaultThinkingLevel": "high",
   "transport": "auto",
-  "hideThinkingBlock": false
+  "hideThinkingBlock": false,
+  "enabledModels": [
+    "openai-codex/gpt-5.5",
+    "nvidia/deepseek-ai/deepseek-v4-pro",
+    "nvidia/deepseek-ai/deepseek-v4-flash",
+    "nvidia/z-ai/glm-5.2",
+    "nvidia/minimaxai/minimax-m3",
+    "nvidia/nvidia/nemotron-3-ultra-550b-a55b"
+  ]
 }
