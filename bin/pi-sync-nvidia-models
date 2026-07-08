@@ -1,0 +1,378 @@
+#!/usr/bin/env bash
+# Refresh pi's custom NVIDIA model entries from NVIDIA's live /v1/models catalog.
+#
+# pi ships a static NVIDIA model list. This script fetches the live NVIDIA
+# catalog and writes pi/agent/models.json entries for live models that are not
+# already bundled by the installed pi version. Bundled models are intentionally
+# omitted so pi keeps its better built-in metadata/costs.
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+if REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"; then
+	:
+else
+	REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+fi
+
+python3 - "$REPO_ROOT" "$@" <<'PY'
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+REPO_ROOT = Path(sys.argv[1])
+DEFAULT_OUTPUT = REPO_ROOT / "pi" / "agent" / "models.json"
+DEFAULT_URL = "https://integrate.api.nvidia.com/v1/models"
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+
+DEFAULT_COMPAT: dict[str, Any] = {
+    "supportsStore": False,
+    "supportsDeveloperRole": False,
+    "supportsReasoningEffort": False,
+    "maxTokensField": "max_tokens",
+    "supportsStrictMode": False,
+    "supportsLongCacheRetention": False,
+}
+
+DEEPSEEK_COMPAT: dict[str, Any] = {
+    "supportsReasoningEffort": True,
+    "requiresReasoningContentOnAssistantMessages": True,
+    "thinkingFormat": "deepseek",
+}
+
+DEEPSEEK_THINKING_LEVELS: dict[str, str | None] = {
+    "minimal": None,
+    "low": None,
+    "medium": None,
+    "high": "high",
+    "xhigh": "max",
+}
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Regenerate pi/agent/models.json NVIDIA custom models from NVIDIA's live catalog.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_OUTPUT,
+        help=f"models.json to update (default: {DEFAULT_OUTPUT.relative_to(REPO_ROOT)})",
+    )
+    parser.add_argument(
+        "--catalog-url",
+        default=os.environ.get("NVIDIA_MODELS_URL", DEFAULT_URL),
+        help=f"NVIDIA models endpoint (default: {DEFAULT_URL})",
+    )
+    parser.add_argument(
+        "--from-file",
+        type=Path,
+        help="Read a saved NVIDIA /v1/models JSON response instead of fetching.",
+    )
+    parser.add_argument(
+        "--pi-package-dir",
+        type=Path,
+        default=Path(os.environ["PI_CODING_AGENT_PACKAGE_DIR"])
+        if os.environ.get("PI_CODING_AGENT_PACKAGE_DIR")
+        else None,
+        help="Path to @earendil-works/pi-coding-agent package. Auto-detected from `pi` by default.",
+    )
+    parser.add_argument(
+        "--include-builtins",
+        action="store_true",
+        help="Also write models already bundled by installed pi (normally omitted to preserve pi metadata).",
+    )
+    parser.add_argument("--timeout", type=float, default=20.0, help="HTTP timeout in seconds (default: 20).")
+    parser.add_argument("--dry-run", action="store_true", help="Print summary only; do not write.")
+    parser.add_argument("--print", dest="print_json", action="store_true", help="Print generated JSON to stdout.")
+    return parser.parse_args(sys.argv[2:])
+
+
+def resolve_pi_package_dir(explicit: Path | None) -> Path | None:
+    candidates: list[Path] = []
+    if explicit:
+        candidates.append(explicit)
+
+    pi_bin = shutil.which("pi")
+    if pi_bin:
+        resolved = Path(pi_bin).resolve()
+        # Homebrew's shim is a small shell wrapper that execs libexec/bin/pi.
+        try:
+            text = resolved.read_text(errors="ignore")[:4096]
+            match = re.search(r'exec\s+"([^"]+)"', text)
+            if match:
+                resolved = Path(match.group(1)).resolve()
+        except OSError:
+            pass
+
+        if resolved.name == "cli.js" and resolved.parent.name == "dist":
+            candidates.append(resolved.parent.parent)
+        candidates.append(resolved.parent)
+
+    for candidate in candidates:
+        package_json = candidate / "package.json"
+        try:
+            if json.loads(package_json.read_text()).get("name") == "@earendil-works/pi-coding-agent":
+                return candidate
+        except (OSError, json.JSONDecodeError):
+            continue
+    return None
+
+
+def load_bundled_nvidia_model_ids(pi_package_dir: Path | None) -> set[str]:
+    if not pi_package_dir:
+        return set()
+    models_js = (
+        pi_package_dir
+        / "node_modules"
+        / "@earendil-works"
+        / "pi-ai"
+        / "dist"
+        / "providers"
+        / "nvidia.models.js"
+    )
+    try:
+        content = models_js.read_text()
+    except OSError:
+        return set()
+    return set(re.findall(r'id:\s*"([^"]+)"', content))
+
+
+def load_catalog(args: argparse.Namespace) -> dict[str, Any]:
+    if args.from_file:
+        return json.loads(args.from_file.read_text())
+
+    request = urllib.request.Request(args.catalog_url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(request, timeout=args.timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def live_model_ids(catalog: dict[str, Any]) -> list[str]:
+    ids: set[str] = set()
+    for entry in catalog.get("data", []):
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+            ids.add(entry["id"])
+    return sorted(ids)
+
+
+def is_deepseek_reasoning_model(model_id: str) -> bool:
+    return model_id.lower().startswith("deepseek-ai/deepseek-v4-")
+
+
+def infer_reasoning(model_id: str) -> bool:
+    normalized = model_id.lower()
+    return (
+        is_deepseek_reasoning_model(model_id)
+        or "reason" in normalized
+        or "gpt-oss" in normalized
+        or "nemotron" in normalized
+        or "minimax-m" in normalized
+        or "kimi-k" in normalized
+        or "qwen3" in normalized
+        or "glm-" in normalized
+        or "seed-oss" in normalized
+        or "zamba2" in normalized
+    )
+
+
+def infer_input(model_id: str) -> list[str]:
+    normalized = model_id.lower()
+    image_signals = [
+        "vision",
+        "vl",
+        "vlm",
+        "multimodal",
+        "omni",
+        "neva",
+        "vila",
+        "fuyu",
+        "deplot",
+        "kosmos",
+        "nvclip",
+        "video",
+    ]
+    return ["text", "image"] if any(signal in normalized for signal in image_signals) else ["text"]
+
+
+def infer_context_window(model_id: str) -> int:
+    normalized = model_id.lower()
+    if "deepseek-v4" in normalized:
+        return 1_000_000
+    if "kimi-k" in normalized:
+        return 262_144
+    if "mistral-large-3" in normalized:
+        return 262_144
+    if "qwen3.5" in normalized or "qwen3-next" in normalized:
+        return 262_144
+    if "glm-5.2" in normalized:
+        return 262_144
+    if "maverick" in normalized:
+        return 1_000_000
+    if "palmyra" in normalized and "32k" in normalized:
+        return 32_768
+    if "128k" in normalized:
+        return 128_000
+    if "32k" in normalized:
+        return 32_768
+    if "8k" in normalized:
+        return 8_192
+    return 128_000
+
+
+def infer_max_tokens(model_id: str, context_window: int) -> int:
+    normalized = model_id.lower()
+    # NVIDIA currently returns an empty completion for very large max_tokens on
+    # DeepSeek V4; 131072 is accepted in smoke tests and still exposes a large cap.
+    if "deepseek-v4" in normalized:
+        return 131_072
+    if "kimi-k" in normalized:
+        return 262_144
+    if "qwen3.5" in normalized or "qwen3-next" in normalized:
+        return 65_536
+    if "gpt-oss-20b" in normalized:
+        return 32_768
+    if "gpt-oss-120b" in normalized:
+        return 8_192
+    return min(context_window, 16_384)
+
+
+ACRONYMS = {
+    "ai",
+    "bge",
+    "dbrx",
+    "glm",
+    "gpt",
+    "it",
+    "llm",
+    "moe",
+    "nv",
+    "oss",
+    "pii",
+    "qa",
+    "vl",
+    "vlm",
+}
+SPECIAL_TOKENS = {
+    "deepseek": "DeepSeek",
+    "starcoder2": "StarCoder2",
+}
+
+
+def format_name_token(token: str) -> str:
+    lower = token.lower()
+    if lower in SPECIAL_TOKENS:
+        return SPECIAL_TOKENS[lower]
+    if re.match(r"^\d+(?:\.\d+)?[a-z]?$", token, re.IGNORECASE):
+        return token.upper()
+    if re.match(r"^\d+[bk]$", token, re.IGNORECASE):
+        return token.upper()
+    if lower in ACRONYMS:
+        return lower.upper()
+    return lower[:1].upper() + lower[1:]
+
+
+def name_from_id(model_id: str) -> str:
+    raw_name = model_id.split("/")[-1]
+    return " ".join(format_name_token(token) for token in re.split(r"[-_]", raw_name) if token)
+
+
+def infer_model_config(model_id: str) -> dict[str, Any]:
+    context_window = infer_context_window(model_id)
+    model: dict[str, Any] = {
+        "id": model_id,
+        "name": name_from_id(model_id),
+        "reasoning": infer_reasoning(model_id),
+        "input": infer_input(model_id),
+        "contextWindow": context_window,
+        "maxTokens": infer_max_tokens(model_id, context_window),
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+    }
+    if is_deepseek_reasoning_model(model_id):
+        model["thinkingLevelMap"] = DEEPSEEK_THINKING_LEVELS
+        model["compat"] = DEEPSEEK_COMPAT
+    elif model["reasoning"]:
+        model["thinkingLevelMap"] = {"minimal": None, "low": None, "medium": None}
+    return model
+
+
+def load_existing(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"failed to parse existing {path}: {exc}") from exc
+
+
+def build_models_json(existing: dict[str, Any], models: list[dict[str, Any]]) -> dict[str, Any]:
+    output = dict(existing)
+    output["$schemaComment"] = (
+        f"Generated by bin/pi-sync-nvidia-models from {DEFAULT_URL}. "
+        "Bundled NVIDIA models are omitted so pi keeps its built-in metadata; "
+        "this file adds the rest of NVIDIA's live catalog."
+    )
+    providers = dict(output.get("providers") or {})
+    providers["nvidia"] = {
+        "apiKey": "$NVIDIA_API_KEY",
+        "headers": {"NVCF-POLL-SECONDS": "3600"},
+        "compat": DEFAULT_COMPAT,
+        "models": models,
+    }
+    output["providers"] = providers
+    return output
+
+
+def main() -> int:
+    args = parse_args()
+    pi_package_dir = resolve_pi_package_dir(args.pi_package_dir)
+    bundled_ids = set() if args.include_builtins else load_bundled_nvidia_model_ids(pi_package_dir)
+    if not args.include_builtins and not bundled_ids:
+        print(
+            "warning: could not find installed pi NVIDIA catalog; output will include all live models",
+            file=sys.stderr,
+        )
+
+    catalog = load_catalog(args)
+    live_ids = live_model_ids(catalog)
+    custom_ids = [model_id for model_id in live_ids if args.include_builtins or model_id not in bundled_ids]
+    models = [infer_model_config(model_id) for model_id in custom_ids]
+
+    existing = load_existing(args.output)
+    output = build_models_json(existing, models)
+    rendered = json.dumps(output, indent=2) + "\n"
+
+    if args.print_json:
+        sys.stdout.write(rendered)
+
+    if args.dry_run:
+        print(
+            f"live={len(live_ids)} bundled={len(bundled_ids)} custom={len(models)} output={args.output}",
+            file=sys.stderr,
+        )
+        return 0
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    old = args.output.read_text() if args.output.exists() else None
+    if old != rendered:
+        args.output.write_text(rendered)
+        changed = "updated"
+    else:
+        changed = "unchanged"
+    print(f"{changed}: {args.output} (live={len(live_ids)} bundled={len(bundled_ids)} custom={len(models)})")
+    if pi_package_dir:
+        print(f"bundled catalog: {pi_package_dir}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PY

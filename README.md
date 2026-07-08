@@ -70,6 +70,65 @@ Bundles live in `~/.config/umbel/bundles/*.md`. Some declare external binary
 prerequisites (e.g. `plannotator`, `tuidriver`) — each bundle's `.md`
 documents its own install step.
 
+## Pi Setup
+
+[Pi](https://pi.dev/) is installed as the Homebrew formula
+`pi-coding-agent`, which provides the `pi` CLI. This mirrors the Claude Code
+setup policy: Homebrew owns fast-moving coding-agent CLIs, while dotfiles own
+shell/config glue.
+
+Global Pi config is redirected with `PI_CODING_AGENT_DIR` to
+`~/.config/pi/agent`, so Stow can manage it alongside the rest of this repo.
+Pi sessions are kept out of the stowed config tree with
+`PI_CODING_AGENT_SESSION_DIR=~/.local/share/pi/sessions` (set as an absolute
+path by Nix because Pi settings support absolute/relative paths and `~`, but
+not `$XDG_DATA_HOME` interpolation). `PI_SKIP_VERSION_CHECK=1` keeps version
+prompting aligned with that policy: Homebrew/Brew Bundle owns upgrades, not
+Pi's startup check.
+
+Tracked Pi config lives under `pi/agent/`. The whitelist in `.gitignore`
+tracks `settings.json`, future config files such as `keybindings.json`, system
+prompt files, plus the user-authored `skills/`, `prompts/`, `themes/`, and
+opt-in extension directories. Each tracked extension directory should include
+its own `.gitignore` to re-include source/lockfiles and ignore installed or
+generated local artifacts such as `node_modules/`. The regenerable model
+catalog `pi/agent/models.json` stays ignored; refresh it with
+`bin/pi-sync-nvidia-models`. Runtime state such as `auth.json`, `trust.json`,
+`npm/`, `git/`, logs, temp files, extension dependencies, and ad-hoc installed
+extensions stays ignored by default.
+
+Directory-style extensions under `pi/agent/extensions/<name>/index.ts` are
+auto-discovered by Pi after Stow links them into `~/.config/pi/agent/extensions/`.
+
+After applying the Nix Darwin config, run Pi from a project directory:
+
+```bash
+pi
+```
+
+### Gondolin
+
+Gondolin runs Pi's built-in tools and `!` commands inside a local Linux
+micro-VM while keeping Pi auth/config on the host. The extension source is
+tracked at `pi/agent/extensions/gondolin` and stowed to
+`~/.config/pi/agent/extensions/gondolin`. The Nix Darwin config installs the
+required QEMU runtime through Homebrew; Node >= 23.6.0 is provided by mise and
+by Homebrew's Pi dependency.
+
+Install the extension dependencies after Stow has linked the dotfiles:
+
+```bash
+pi_agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.config/pi/agent}"
+cd "$pi_agent_dir/extensions/gondolin"
+npm ci --ignore-scripts
+```
+
+Run Pi with Gondolin from the project you want mounted into the VM:
+
+```bash
+pi
+```
+
 ## What's Included
 
 ### 🛠️ Development Tools
@@ -82,6 +141,7 @@ documents its own install step.
 - **Yazi** - Terminal file manager with plugins and catppuccin theme
 - **Zsh** - Shell configuration with custom setup
 - **Umbel** - Claude Code bundle config: skills, hooks, and MCP servers (see [Umbel Setup](#umbel-setup))
+- **Pi** - Minimal terminal coding agent installed through Homebrew
 
 ### 🎨 Terminal & UI
 - **Ghostty** - Terminal emulator configuration
@@ -118,6 +178,7 @@ All configurations are symlinked to `~/.config/` via Stow:
 ├── lazydocker/     # Docker TUI configuration
 ├── lazygit/        # Git TUI configuration
 ├── linearmouse/    # Mouse configuration
+├── pi/             # Pi coding agent config (PI_CODING_AGENT_DIR)
 ├── qBittorrent/    # BitTorrent client configuration
 ├── starship/       # Shell prompt configuration
 ├── tmux/           # Terminal multiplexer configuration

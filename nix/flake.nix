@@ -79,6 +79,9 @@
           XDG_STATE_HOME = "${homeDirectory}/.local/state";
           ZDOTDIR = "$XDG_CONFIG_HOME/zsh";
           CLAUDE_CONFIG_DIR = "${homeDirectory}/.config/claude-code";
+          PI_CODING_AGENT_DIR = "${homeDirectory}/.config/pi/agent";
+          PI_CODING_AGENT_SESSION_DIR = "${homeDirectory}/.local/share/pi/sessions";
+          PI_SKIP_VERSION_CHECK = "1";
         };
       };
 

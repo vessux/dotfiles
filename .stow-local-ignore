@@ -12,6 +12,8 @@ tmp_config.json
 ^\.claude$
 ^CLAUDE\.md$
 ^docs$
+^\.local$
 ^\.repo-visibility$
+^tests$
 ^\.umbel-bundle$
 ^\.worktrees$

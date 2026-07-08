@@ -1,0 +1,20 @@
+{
+  "defaultProjectTrust": "ask",
+  "enableAnalytics": false,
+  "enableInstallTelemetry": false,
+  "extensions": [],
+  "npmCommand": [
+    "mise",
+    "exec",
+    "node@24",
+    "--",
+    "npm"
+  ],
+  "lastChangelogVersion": "0.80.3",
+  "theme": "dark",
+  "defaultProvider": "nvidia",
+  "defaultModel": "deepseek-ai/deepseek-v4-pro",
+  "defaultThinkingLevel": "xhigh",
+  "transport": "auto",
+  "hideThinkingBlock": false
+}

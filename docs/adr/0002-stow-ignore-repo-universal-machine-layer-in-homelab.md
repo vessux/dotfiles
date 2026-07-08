@@ -11,8 +11,9 @@ of thing need excluding, and they had been fused into one file:
 
 - **repo-universal** — repo plumbing that is not app config and must never land in
   `~/.config` on *any* machine: `.beads`, `.claude`, `CLAUDE.md`, `docs`, `.repo-visibility`,
-  `.umbel-bundle`, `.worktrees` (collectively, **repo-meta**). Some are tracked (present on
-  every checkout); the rest are created at runtime wherever the agent workflow runs.
+  `.umbel-bundle`, `.worktrees`, `.local`, `tests` (collectively, **repo-meta**). Some are
+  tracked (present on every checkout); the rest are created at runtime wherever the agent
+  workflow runs.
 - **machine/OS-specific** — modules that exist only on one platform, e.g. the Mac-only
   `ghostty`/`karabiner`/`linearmouse`/`ideavimrc`/`nix`/`launchd`, skipped on the Linux devbox.
 

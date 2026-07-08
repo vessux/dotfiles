@@ -18,6 +18,32 @@ claude-code/*
 !claude-code/scripts/
 !claude-code/setup/
 
+# pi: whitelist, not blacklist. PI_CODING_AGENT_DIR points at
+# ~/.config/pi/agent; auth, trust, sessions, package installs, logs, ad-hoc
+# extensions, and future agent state should stay out of git by default.
+pi/*
+!pi/agent/
+pi/agent/*
+!pi/agent/settings.json
+!pi/agent/keybindings.json
+!pi/agent/AGENTS.md
+!pi/agent/SYSTEM.md
+!pi/agent/APPEND_SYSTEM.md
+!pi/agent/extensions/
+# Extension dirs are opt-in. Keep installed/generated extension contents ignored
+# by default; a user-authored extension must include its own .gitignore that
+# re-includes the source/lockfiles it wants tracked and ignores local artifacts.
+pi/agent/extensions/*
+!pi/agent/extensions/*/
+pi/agent/extensions/*/*
+!pi/agent/extensions/*/.gitignore
+!pi/agent/skills/
+pi/agent/skills/.gitkeep
+!pi/agent/prompts/
+pi/agent/prompts/.gitkeep
+!pi/agent/themes/
+pi/agent/themes/.gitkeep
+
 # .claude/: this repo's project-local harness dir — distinct from the tracked
 # claude-code/ global config above. The harness writes only transient state
 # here (worktrees from EnterWorktree at .claude/worktrees/<name>, session

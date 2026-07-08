@@ -114,17 +114,16 @@ in
   #   mas   — backs masApps during nix-darwin activation
   #   mise  — fast calver; brew stays fresher than nixpkgs
   #   beads — nixpkgs lags a major (steveyegge/beads); dolt + icu4c@78 ride along
-  #   z3    — openlock's build locates libz3/headers at the Homebrew prefix
-  #           (justfile: /opt/homebrew/opt/z3, -I/opt/homebrew/include); nix store
-  #           paths aren't on the default search path, so z3 must stay on brew
   #   llama.cpp — multiple builds/day; brew runs ~700 builds ahead of nixpkgs,
   #           and freshness matters for model/perf support (replaced ollama)
+  #   pi-coding-agent — fast-moving coding-agent CLI; Homebrew packages the
+  #           official npm tarball with npm lifecycle scripts disabled
   homebrewBrews = [
     "mas"
     "mise"
     "beads"
-    "z3"
     "llama.cpp"
+    "pi-coding-agent"
   ];
 
   # Homebrew applications organized by category
@@ -136,21 +135,18 @@ in
 
     # Development
     "claude"
-    "cursor"
     "ghostty"
-    "jetbrains-toolbox"
     "lens"
     "orbstack"
-    "postman"
     "sublime-text"
     "visual-studio-code"
-    "warp"
 
     # Productivity
     "raycast"
     "shortcat"
     "slack"
     "xmind"
+    "opensuperwhisper"
 
     # Media & Entertainment
     "calibre"
@@ -171,7 +167,6 @@ in
     "linearmouse"
     "mouseless"
     "nitroshare"
-    "qbittorrent"
     "sync"
     "thaw@beta"
   ];
