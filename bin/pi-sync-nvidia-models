@@ -163,14 +163,20 @@ def live_model_ids(catalog: dict[str, Any]) -> list[str]:
     return sorted(ids)
 
 
-def is_deepseek_reasoning_model(model_id: str) -> bool:
+def is_deepseek_v4_model(model_id: str) -> bool:
     return model_id.lower().startswith("deepseek-ai/deepseek-v4-")
+
+
+def supports_deepseek_thinking_controls(model_id: str) -> bool:
+    # NVIDIA accepts DeepSeek's `thinking` request object for V4 Pro, but V4
+    # Flash rejects it with: Unsupported parameter(s): `thinking`.
+    return model_id.lower() == "deepseek-ai/deepseek-v4-pro"
 
 
 def infer_reasoning(model_id: str) -> bool:
     normalized = model_id.lower()
     return (
-        is_deepseek_reasoning_model(model_id)
+        is_deepseek_v4_model(model_id)
         or "reason" in normalized
         or "gpt-oss" in normalized
         or "nemotron" in normalized
@@ -295,7 +301,7 @@ def infer_model_config(model_id: str) -> dict[str, Any]:
         "maxTokens": infer_max_tokens(model_id, context_window),
         "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
     }
-    if is_deepseek_reasoning_model(model_id):
+    if supports_deepseek_thinking_controls(model_id):
         model["thinkingLevelMap"] = DEEPSEEK_THINKING_LEVELS
         model["compat"] = DEEPSEEK_COMPAT
     elif model["reasoning"]:

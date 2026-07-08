@@ -34,15 +34,16 @@ pi/agent/*
 # by default; a user-authored extension must include its own .gitignore that
 # re-includes the source/lockfiles it wants tracked and ignores local artifacts.
 pi/agent/extensions/*
+!pi/agent/extensions/.gitkeep
 !pi/agent/extensions/*/
 pi/agent/extensions/*/*
 !pi/agent/extensions/*/.gitignore
 !pi/agent/skills/
-pi/agent/skills/.gitkeep
+!pi/agent/skills/.gitkeep
 !pi/agent/prompts/
-pi/agent/prompts/.gitkeep
+!pi/agent/prompts/.gitkeep
 !pi/agent/themes/
-pi/agent/themes/.gitkeep
+!pi/agent/themes/.gitkeep
 
 # .claude/: this repo's project-local harness dir — distinct from the tracked
 # claude-code/ global config above. The harness writes only transient state
