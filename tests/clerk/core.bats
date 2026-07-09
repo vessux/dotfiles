@@ -20,7 +20,7 @@ setup() {
 		"capture" "sync" "glean"
 		"inbox list" "inbox show" "inbox dups" "inbox ready" "inbox drop" "inbox pregrill"
 		"backlog next" "backlog show" "backlog claim" "backlog release" "backlog submit"
-		"backlog finish" "backlog return"
+		"backlog gate" "backlog finish" "backlog return"
 	)
 	# dotfiles-dft.2 replaced capture + the six inbox verbs' exit-3 stubs with real
 	# implementations (bin/clerk), so exit 3 ("known verb, not yet implemented in this
@@ -31,7 +31,7 @@ setup() {
 	# discipline coverage tests, which are valid regardless of implementation status.
 	STUB_VERBS=(
 		"sync" "glean"
-		"backlog submit" "backlog finish"
+		"backlog finish"
 	)
 }
 
@@ -69,7 +69,7 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	[ "${lines[i]}" = "Known verbs:" ]
 	[ "${lines[i + 1]}" = '  capture "<title>" [--stdin|--impediment]' ]
 	[ "${lines[i + 2]}" = '  inbox list|show|dups|ready|drop|pregrill' ]
-	[ "${lines[i + 3]}" = '  backlog next|show|claim|release|submit|finish|return' ]
+	[ "${lines[i + 3]}" = '  backlog next|show|claim|release|submit|gate|finish|return' ]
 	[ "${lines[i + 4]}" = '  sync' ]
 	[ "${lines[i + 5]}" = '  doctor [--fix --backend bd|gh]' ]
 	[ "${lines[i + 6]}" = '  glean' ]
@@ -110,9 +110,9 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	cd "$wt/sub/deep"
 	# git rev-parse --show-toplevel must still find the worktree root from a nested cwd,
 	# so the marker gate passes and the verb reaches its not-implemented refusal (exit 3).
-	run "$CLERK" backlog submit
+	run "$CLERK" backlog finish
 	[ "$status" -eq 3 ]
-	[ "$output" = "clerk: 'backlog submit' $NOT_IMPL" ]
+	[ "$output" = "clerk: 'backlog finish' $NOT_IMPL" ]
 }
 
 @test "matrix: doctor resolves the marker from root and from inside the worktree" {
@@ -332,9 +332,9 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	[[ "$output" == *"         commit .clerk so worktrees and clones see it: git add .clerk && git commit"* ]]
 	[ "$(cat "$repo/.clerk")" = "backlog: gh" ]
 	# the marker gate now passes: the same verb that would exit 4 reaches not-implemented
-	run "$CLERK" backlog submit
+	run "$CLERK" backlog finish
 	[ "$status" -eq 3 ]
-	[ "$output" = "clerk: 'backlog submit' $NOT_IMPL" ]
+	[ "$output" = "clerk: 'backlog finish' $NOT_IMPL" ]
 }
 
 @test "doctor --fix that cannot write the marker fails loudly, never 'all clear'" {

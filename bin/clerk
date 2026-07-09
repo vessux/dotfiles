@@ -19,6 +19,7 @@
 #      `backlog claim` specifically, a CLAIM CONFLICT — the unit is already occupied or the
 #      push-CAS race was lost (dft.3) — a refusal, not an operational failure, so it carries
 #      its own prescriptive text instead of backend_fail's "run clerk doctor"
+#   6  a delivery-gate ran successfully and found one or more failed proof classes
 #
 # Output discipline (ADR 0015): printed output is load-bearing — every refusal prescribes
 # the next action, and everything is tested verbatim. 16-color ANSI only (30-37/90-97,
@@ -54,7 +55,7 @@ print_roster() {
 		'Known verbs:' \
 		'  capture "<title>" [--stdin|--impediment]' \
 		'  inbox list|show|dups|ready|drop|pregrill' \
-		'  backlog next|show|claim|release|submit|finish|return' \
+		'  backlog next|show|claim|release|submit|gate|finish|return' \
 		'  sync' \
 		'  doctor [--fix --backend bd|gh]' \
 		'  glean' \
@@ -257,7 +258,14 @@ explain_verb() {
 		'backlog submit')
 			printf '%s\n' \
 				'clerk backlog submit — open the unit'"'"'s PR (once per unit; iteration repeats finish)' \
-				'  runs: the delivery-gate script as a local preflight, then gh pr create with the unit'"'"'s acceptance criteria stamped into the body, one evidence entry per criterion' \
+				'  runs: stamps the unit'"'"'s acceptance criteria into the PR body, runs clerk backlog gate as a local preflight, pushes delivery/<id>, then gh pr create; never arms auto-merge' \
+				"  see:  $ADR16"
+			;;
+		'backlog gate')
+			printf '%s\n' \
+				'clerk backlog gate — validate delivery proof classes C1-C4' \
+				'  runs: C1 branch/link/current protocol checks; C2 PR-body verification schema check; C3 bats tests/clerk plus shellcheck bin/; C4 one evidence line per acceptance criterion' \
+				'        local mode: --branch delivery/<id> --body-file <file>; CI mode: reads GITHUB_* and gh pr view' \
 				"  see:  $ADR16"
 			;;
 		'backlog finish')
@@ -844,12 +852,12 @@ claim_in_job_context() {
 }
 
 # Resolves $2 (a bd/gh id, short or full — either form is accepted, ADR 0017) against backend
-# $1. On success sets CLAIM_SHORT/CLAIM_FULL/CLAIM_HOLDER/CLAIM_DESC/CLAIM_DESIGN/CLAIM_AC and
-# returns 0; on not-found returns 1 and leaves those cleared. Never exits — the caller owns the
+# $1. On success sets CLAIM_SHORT/CLAIM_FULL/CLAIM_TITLE/CLAIM_HOLDER/CLAIM_DESC/CLAIM_DESIGN/
+# CLAIM_AC and returns 0; on not-found returns 1 and leaves those cleared. Never exits — the caller owns the
 # refusal (usage_error), so this stays safe to call directly (no subshell-swallowed exit).
 claim_resolve_id() {
 	local backend="$1" id_arg="$2"
-	CLAIM_SHORT="" CLAIM_FULL="" CLAIM_HOLDER="" CLAIM_DESC="" CLAIM_DESIGN="" CLAIM_AC=""
+	CLAIM_SHORT="" CLAIM_FULL="" CLAIM_TITLE="" CLAIM_HOLDER="" CLAIM_DESC="" CLAIM_DESIGN="" CLAIM_AC=""
 	case "$backend" in
 		bd)
 			local json
@@ -862,6 +870,7 @@ claim_resolve_id() {
 			fi
 			CLAIM_FULL=$(printf '%s' "$json" | jq -r '.[0].id')
 			CLAIM_SHORT="${CLAIM_FULL#*-}"
+			CLAIM_TITLE=$(printf '%s' "$json" | jq -r '.[0].title // .[0].id')
 			CLAIM_DESC=$(printf '%s' "$json" | jq -r '.[0].description // ""')
 			CLAIM_DESIGN=$(printf '%s' "$json" | jq -r '.[0].design // ""')
 			CLAIM_AC=$(printf '%s' "$json" | jq -r '.[0].acceptance_criteria // ""')
@@ -869,9 +878,10 @@ claim_resolve_id() {
 			;;
 		gh)
 			local json
-			json=$(gh issue view "$id_arg" --json number,body,assignees 2>/dev/null) || return 1
+			json=$(gh issue view "$id_arg" --json number,title,body,assignees 2>/dev/null) || return 1
 			CLAIM_FULL=$(printf '%s' "$json" | jq -r '.number')
 			CLAIM_SHORT="$CLAIM_FULL"
+			CLAIM_TITLE=$(printf '%s' "$json" | jq -r '.title // (.number | tostring)')
 			CLAIM_DESC=$(printf '%s' "$json" | jq -r '.body // ""')
 			CLAIM_HOLDER=$(printf '%s' "$json" | jq -r '.assignees[0].login // ""')
 			;;
@@ -1342,6 +1352,313 @@ cmd_backlog_return() {
 	return 0
 }
 
+# ------------------------------------------------------ submit + gate (dft.4) ----
+
+GATE_FAILED=0
+GATE_FAILURES=""
+
+gate_fail() { # $1 = already-prefixed failure line
+	GATE_FAILED=1
+	GATE_FAILURES="${GATE_FAILURES}  $1
+"
+}
+
+gate_finish() {
+	if [ "$GATE_FAILED" -eq 0 ]; then
+		printf '%sclerk:%s delivery gate passed\n' "$C_GRN" "$C_RST"
+		return 0
+	fi
+	printf 'clerk: delivery gate failed\n' >&2
+	printf '%s' "$GATE_FAILURES" >&2
+	return 6
+}
+
+extract_acceptance_section() {
+	awk '
+		BEGIN { in_section = 0 }
+		/^[[:space:]]{0,3}#{1,6}[[:space:]]*[Aa][Cc][Cc][Ee][Pp][Tt][Aa][Nn][Cc][Ee][[:space:]]+[Cc][Rr][Ii][Tt][Ee][Rr][Ii][Aa][[:space:]]*$/ || /^[[:space:]]*[Aa][Cc][Cc][Ee][Pp][Tt][Aa][Nn][Cc][Ee][[:space:]]+[Cc][Rr][Ii][Tt][Ee][Rr][Ii][Aa]:?[[:space:]]*$/ { in_section = 1; next }
+		in_section && /^[[:space:]]{0,3}#{1,6}[[:space:]]+/ { in_section = 0 }
+		in_section { print }
+	' <<<"$1"
+}
+
+criteria_bullets_from_text() {
+	awk '/^- / { print }' <<<"$1"
+}
+
+unit_acceptance_bullets() {
+	local text bullets
+	text="$CLAIM_AC"
+	bullets=$(criteria_bullets_from_text "$text")
+	if [ -z "$bullets" ]; then
+		text=$(extract_acceptance_section "$CLAIM_DESC"$'\n'"$CLAIM_DESIGN")
+		bullets=$(criteria_bullets_from_text "$text")
+	fi
+	printf '%s\n' "$bullets" | sed '/^$/d'
+}
+
+body_has_bullet() { # $1=body $2=literal bullet
+	grep -Fx -- "$2" <<<"$1" >/dev/null 2>&1
+}
+
+stamp_body_with_unit_criteria() { # $1=body-file $2=criteria-file $3=output-file
+	local body_file="$1" criteria_file="$2" out_file="$3" body missing=0 bullet
+	body=$(cat "$body_file")
+	cp "$body_file" "$out_file"
+	while IFS= read -r bullet || [ -n "$bullet" ]; do
+		[ -n "$bullet" ] || continue
+		if ! body_has_bullet "$body" "$bullet"; then
+			if [ "$missing" -eq 0 ]; then
+				{
+					printf '\n## Acceptance criteria\n'
+				} >>"$out_file"
+				missing=1
+			fi
+			printf '%s\n' "$bullet" >>"$out_file"
+		fi
+	done <"$criteria_file"
+}
+
+gate_load_body() { # echoes body, returns non-zero on failure
+	local body_file="$1"
+	[ -f "$body_file" ] || return 1
+	cat "$body_file"
+}
+
+gate_body_from_ci() { # echoes body, returns non-zero on failure
+	local pr="${GITHUB_EVENT_NUMBER:-}"
+	if [ -z "$pr" ] && [ -n "${GITHUB_EVENT_PATH:-}" ] && [ -f "$GITHUB_EVENT_PATH" ]; then
+		pr=$(jq -r '.pull_request.number // .number // empty' "$GITHUB_EVENT_PATH" 2>/dev/null)
+	fi
+	[ -n "$pr" ] || return 1
+	gh pr view "$pr" --json body --jq .body 2>/dev/null
+}
+
+gate_check_body_schema() { # $1=body
+	local body="$1"
+	grep -qiE '^#{1,6}[[:space:]]*verification[[:space:]]*$' <<<"$body" || gate_fail 'C2 verification: missing ## Verification section'
+	grep -qE '^Unit:[[:space:]]*dotfiles-[^[:space:]]+[[:space:]]*$' <<<"$body" || gate_fail 'C2 verification: missing Unit: dotfiles-<short>'
+	grep -qE '^Checks:[[:space:]]*$' <<<"$body" || gate_fail 'C2 verification: missing Checks: block'
+}
+
+gate_check_linkage() { # $1=branch $2=body
+	local branch="$1" body="$2" branch_short unit_lines unit_count unit_short
+	case "$branch" in
+		delivery/*) branch_short="${branch#delivery/}" ;;
+		*)
+			gate_fail "C1 protocol: branch must be delivery/<short> (got $branch)"
+			branch_short=""
+			;;
+	esac
+	unit_lines=$(grep -E '^Unit:[[:space:]]*dotfiles-[^[:space:]]+[[:space:]]*$' <<<"$body" || true)
+	unit_count=$(printf '%s\n' "$unit_lines" | sed '/^$/d' | wc -l | tr -d ' ')
+	case "$unit_count" in
+		0) gate_fail 'C1 protocol: no linked unit (expected exactly one Unit: dotfiles-<short>)' ;;
+		1)
+			unit_short=$(printf '%s\n' "$unit_lines" | sed -E 's/^Unit:[[:space:]]*dotfiles-([^[:space:]]+)[[:space:]]*$/\1/')
+			if [ -n "$branch_short" ] && [ "$unit_short" != "$branch_short" ]; then
+				gate_fail "C1 protocol: linked unit dotfiles-$unit_short does not match branch delivery/$branch_short"
+			fi
+			;;
+		*) gate_fail 'C1 protocol: two linked units (expected exactly one Unit: dotfiles-<short>)' ;;
+	esac
+}
+
+gate_check_currency() { # $1=branch $2=base-ref $3=head-ref
+	local branch="$1" base_ref="$2" head_ref="$3" base_sha merge_base base_branch
+	case "$base_ref" in
+		origin/*)
+			base_branch="${base_ref#origin/}"
+			git -C "$GATE_ROOT" fetch origin "$base_branch:refs/remotes/origin/$base_branch" >/dev/null 2>&1 || true
+			;;
+		*) git -C "$GATE_ROOT" fetch origin >/dev/null 2>&1 || true ;;
+	esac
+	if ! base_sha=$(git -C "$GATE_ROOT" rev-parse "$base_ref" 2>/dev/null); then
+		gate_fail "C1 protocol: could not resolve base $base_ref — fetch origin and retry"
+		return 0
+	fi
+	if ! git -C "$GATE_ROOT" rev-parse "$head_ref" >/dev/null 2>&1; then
+		gate_fail "C1 protocol: could not resolve branch $branch — check out delivery/${branch#delivery/} and retry"
+		return 0
+	fi
+	if ! merge_base=$(git -C "$GATE_ROOT" merge-base "$head_ref" "$base_ref" 2>/dev/null); then
+		gate_fail "C1 protocol: could not compare $branch with $base_ref"
+		return 0
+	fi
+	if [ "$merge_base" != "$base_sha" ]; then
+		gate_fail "C1 protocol: branch is behind $base_ref — run 'git rebase $base_ref'"
+	fi
+}
+
+gate_check_acceptance_evidence() { # $1=body
+	local body="$1" section failures criterion
+	if ! has_acceptance_criteria_section "$body"; then
+		gate_fail 'C4 acceptance: missing Acceptance criteria section'
+		return 0
+	fi
+	section=$(extract_acceptance_section "$body")
+	failures=$(awk '
+		function miss() { if (pending != "") print pending; pending = "" }
+		/^- / { miss(); pending = $0; next }
+		pending != "" && /^[[:space:]]+evidence:[[:space:]]*[^[:space:]]/ { pending = ""; next }
+		pending != "" { miss() }
+		END { miss() }
+	' <<<"$section")
+	while IFS= read -r criterion || [ -n "$criterion" ]; do
+		[ -n "$criterion" ] || continue
+		gate_fail "C4 acceptance: criterion lacks immediate evidence line: $criterion"
+	done <<<"$failures"
+}
+
+gate_check_executable() {
+	local log
+	log=$(mktemp)
+	if ! (cd "$GATE_ROOT" && bats tests/clerk) >"$log" 2>&1; then
+		gate_fail 'C3 executable: bats tests/clerk failed'
+		while IFS= read -r line || [ -n "$line" ]; do
+			gate_fail "C3 bats: $line"
+		done <"$log"
+	fi
+	: >"$log"
+	if ! (cd "$GATE_ROOT" && shellcheck -S error bin/*) >"$log" 2>&1; then
+		gate_fail 'C3 executable: shellcheck bin/ failed'
+		while IFS= read -r line || [ -n "$line" ]; do
+			gate_fail "C3 shellcheck: $line"
+		done <"$log"
+	fi
+	rm -f "$log"
+}
+
+cmd_backlog_gate() {
+	local _backend="$1" root="$2"
+	shift 2
+	GATE_ROOT="$root"
+	GATE_FAILED=0
+	GATE_FAILURES=""
+	local branch="" body_file="" base_ref="" ci=0 body head_ref
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--branch)
+				[ $# -ge 2 ] || usage_error 'clerk backlog gate: --branch needs a value — usage: clerk backlog gate --branch delivery/<short> --body-file <path>'
+				branch="$2"
+				shift
+				;;
+			--body-file)
+				[ $# -ge 2 ] || usage_error 'clerk backlog gate: --body-file needs a path — usage: clerk backlog gate --branch delivery/<short> --body-file <path>'
+				body_file="$2"
+				shift
+				;;
+			--base)
+				[ $# -ge 2 ] || usage_error 'clerk backlog gate: --base needs a ref'
+				base_ref="$2"
+				shift
+				;;
+			--ci) ci=1 ;;
+			*) usage_error "clerk backlog gate: unknown argument '$1' — usage: clerk backlog gate --branch delivery/<short> --body-file <path>" ;;
+		esac
+		shift
+	done
+
+	if [ -z "$body_file" ]; then
+		if [ "$ci" -eq 1 ] || [ -n "${GITHUB_ACTIONS:-}" ] || [ -n "${GITHUB_EVENT_NAME:-}" ]; then
+			ci=1
+		else
+			usage_error 'clerk backlog gate: missing --body-file — usage: clerk backlog gate --branch delivery/<short> --body-file <path>'
+		fi
+	fi
+
+	if [ "$ci" -eq 1 ]; then
+		branch="${branch:-${GITHUB_HEAD_REF:-}}"
+		base_ref="${base_ref:-origin/${GITHUB_BASE_REF:-main}}"
+		head_ref="HEAD"
+		if ! body=$(gate_body_from_ci); then
+			backend_fail 'gate failed — could not read the PR body with gh pr view'
+		fi
+	else
+		if [ -z "$branch" ]; then
+			branch=$(git -C "$root" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+		fi
+		[ -n "$branch" ] || usage_error 'clerk backlog gate: missing --branch — usage: clerk backlog gate --branch delivery/<short> --body-file <path>'
+		base_ref="${base_ref:-origin/main}"
+		head_ref="$branch"
+		if ! body=$(gate_load_body "$body_file"); then
+			usage_error "clerk backlog gate: body file not found: $body_file"
+		fi
+	fi
+
+	gate_check_linkage "$branch" "$body"
+	gate_check_currency "$branch" "$base_ref" "$head_ref"
+	gate_check_body_schema "$body"
+	gate_check_acceptance_evidence "$body"
+	gate_check_executable
+	gate_finish
+}
+
+cmd_backlog_submit() {
+	local backend="$1" root="$2"
+	shift 2
+	if [ $# -eq 0 ]; then
+		usage_error 'clerk backlog submit: missing id — usage: clerk backlog submit <id> --body-file <path>'
+	fi
+	local id_arg="$1" body_file=""
+	shift
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--body-file)
+				[ $# -ge 2 ] || usage_error 'clerk backlog submit: --body-file needs a path — usage: clerk backlog submit <id> --body-file <path>'
+				body_file="$2"
+				shift
+				;;
+			*) usage_error "clerk backlog submit: unknown argument '$1' — usage: clerk backlog submit <id> --body-file <path>" ;;
+		esac
+		shift
+	done
+	[ -n "$body_file" ] || usage_error 'clerk backlog submit: missing --body-file — usage: clerk backlog submit <id> --body-file <path>'
+	[ -f "$body_file" ] || usage_error "clerk backlog submit: body file not found: $body_file"
+
+	if ! claim_resolve_id "$backend" "$id_arg"; then
+		usage_error "clerk backlog submit: $id_arg not found — check the id ('clerk backlog next' shows ready units)"
+	fi
+	local short="$CLAIM_SHORT" full="$CLAIM_FULL" title="$CLAIM_TITLE" branch current_branch
+	branch="delivery/$short"
+	current_branch=$(git -C "$root" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+	if [ "$current_branch" != "$branch" ]; then
+		usage_error "clerk backlog submit: not inside $branch — cd to $root/.worktrees/$short after 'clerk backlog claim $full'"
+	fi
+
+	local criteria_file stamped_body
+	criteria_file=$(mktemp)
+	stamped_body=$(mktemp)
+	unit_acceptance_bullets >"$criteria_file"
+	if [ ! -s "$criteria_file" ]; then
+		rm -f "$criteria_file" "$stamped_body"
+		usage_error "clerk backlog submit: $full has no acceptance criteria — return it to discovery before submitting"
+	fi
+	stamp_body_with_unit_criteria "$body_file" "$criteria_file" "$stamped_body"
+
+	"$0" backlog gate --branch "$branch" --body-file "$stamped_body"
+	local rc=$?
+	if [ "$rc" -ne 0 ]; then
+		rm -f "$criteria_file" "$stamped_body"
+		if [ "$rc" -eq 6 ]; then
+			return 6
+		fi
+		return "$rc"
+	fi
+
+	if ! git -C "$root" push -u origin "$branch" >/dev/null 2>&1; then
+		rm -f "$criteria_file" "$stamped_body"
+		backend_fail "submit failed — could not push $branch to origin"
+	fi
+	if ! gh pr create --head "$branch" --base main --title "$title (dotfiles-$short)" --body-file "$stamped_body"; then
+		rm -f "$criteria_file" "$stamped_body"
+		backend_fail 'submit failed — gh pr create did not succeed'
+	fi
+	rm -f "$criteria_file" "$stamped_body"
+	printf '%sclerk:%s submitted %s — PR created; awaiting review\n' "$C_GRN" "$C_RST" "$full"
+	return 0
+}
+
 # ---------------------------------------------------------------- doctor ----
 
 DOCTOR_FAILS=0
@@ -1507,7 +1824,7 @@ main() {
 			;;
 	esac
 
-	local verb="" noun sub roster w sub_known
+	local verb="" noun sub roster w sub_known gate_root
 	case "$1" in
 		capture | sync | doctor | glean)
 			verb="$1"
@@ -1525,7 +1842,7 @@ main() {
 			if [ "$noun" = inbox ]; then
 				roster="list show dups ready drop pregrill"
 			else
-				roster="next show claim release submit finish return"
+				roster="next show claim release submit gate finish return"
 			fi
 			# Exact-word match — a glob over " $roster " would misread one argument
 			# equal to two adjacent roster words (e.g. 'list show') as a known verb.
@@ -1553,6 +1870,18 @@ main() {
 
 	if [ "$verb" = doctor ]; then
 		cmd_doctor "$@"
+		exit "$?"
+	fi
+
+	# The delivery-gate is server-side proof over git/PR-visible state. It deliberately does
+	# not read the backlog marker or backend; GitHub Actions must be able to run it before the
+	# repo's `.clerk` cutover (ADR 0016, dotfiles-dft.4).
+	if [ "$verb" = "backlog gate" ]; then
+		gate_root=$(repo_root) || {
+			printf "clerk: not inside a git repository — cd into the target repo, then rerun 'clerk backlog gate'\n" >&2
+			exit 4
+		}
+		cmd_backlog_gate "" "$gate_root" "$@"
 		exit "$?"
 	fi
 
@@ -1611,6 +1940,14 @@ main() {
 			;;
 		"backlog return")
 			cmd_backlog_return "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"backlog gate")
+			cmd_backlog_gate "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"backlog submit")
+			cmd_backlog_submit "$backend" "$root" "$@"
 			exit "$?"
 			;;
 	esac
