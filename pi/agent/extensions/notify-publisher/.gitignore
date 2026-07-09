@@ -5,4 +5,4 @@
 
 # Opt in extension files
 !.gitignore
-!notify-publisher.ts
+!index.ts
