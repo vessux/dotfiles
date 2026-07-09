@@ -99,7 +99,7 @@ break_origin() { # $1 = repo
 	id=$(mk_ac_unit "unit C")
 	short="${id#*-}"
 	break_origin "$repo"
-	run "$CLERK" backlog claim "$id"
+	run env CI= "$CLERK" backlog claim "$id"
 	[ "$status" -eq 0 ]
 	[ "${lines[-1]}" = "$repo/.worktrees/$short" ]
 	[ -d "$repo/.worktrees/$short" ]

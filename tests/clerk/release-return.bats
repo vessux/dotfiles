@@ -165,7 +165,7 @@ break_origin() { # $1 = repo
 	"$CLERK" backlog claim "$id" >/dev/null
 	break_origin "$repo"
 
-	run "$CLERK" backlog release "$id"
+	run env CI= "$CLERK" backlog release "$id"
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"OFFLINE"* ]]
 	[[ "$output" == *"deferred to sync"* ]]
@@ -305,7 +305,7 @@ break_origin() { # $1 = repo
 	"$CLERK" backlog claim "$id" >/dev/null
 	break_origin "$repo"
 
-	run "$CLERK" backlog return "$id" --reason "offline test reason"
+	run env CI= "$CLERK" backlog return "$id" --reason "offline test reason"
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"OFFLINE"* ]]
 	[[ "$output" == *"deferred to sync"* ]]

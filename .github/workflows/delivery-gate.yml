@@ -1,0 +1,41 @@
+name: delivery-gate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  delivery-gate:
+    name: delivery-gate
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_EVENT_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Check out PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install system checks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats shellcheck jq
+
+      - name: Set up Go for pinned bd install
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Install bd 1.0.4
+        run: |
+          go install github.com/steveyegge/beads/cmd/bd@ce242a879
+          sudo install -m 0755 "$(go env GOPATH)/bin/bd" /usr/local/bin/bd
+          bd --version | grep 'bd version 1.0.4'
+
+      - name: delivery-gate
+        run: bin/clerk backlog gate
