@@ -66,7 +66,8 @@ reasons); the clerk executes mechanism exactly, in code that cannot drift from i
     `2` usage error / unknown verb / bad-or-missing id (roster or corrected invocation printed);
     `3` a known verb not implemented in this generation; `4` `.clerk` unresolvable (missing /
     invalid / not in a git repo); `5` a backend command (`bd`/`gh`) failed or a mutation could not
-    be confirmed. Dispatch distinguishes unknown (`2`) from not-yet-implemented (`3`) — a grammar
+    be confirmed; `6` a delivery-gate ran successfully and found one or more failed proof classes.
+    Dispatch distinguishes unknown (`2`) from not-yet-implemented (`3`) — a grammar
     error is not a generation gap; and a broken backend (`5`) from a caller who named a
     non-existent unit (`2`) — "the tracker is down" is not "you passed a bad id". `1` is scoped to
     `doctor`'s health check; every other verb signals operational failure through `5`, never `1`.
@@ -138,3 +139,7 @@ reasons); the clerk executes mechanism exactly, in code that cannot drift from i
   missing one). Surfaced delivering unit dotfiles-dft.2 (the inbox verbs are the first to invoke
   `bd`/`gh`): the review caught backend failures returning `1`, which collides with `doctor`'s `1`.
   Same contracts-not-instances move as the row above — decided once here, not per verb.
+- 2026-07-09: taxonomy extended with exit `6` for delivery-gate proof failures. The command and
+  environment are valid in this case, so folding red proof classes into usage error `2` would erase
+  the signal later automation needs to distinguish "invoke clerk differently" from "delivery is not
+  mergeable yet" (ADR 0016 dotfiles-dft.4 amendment).

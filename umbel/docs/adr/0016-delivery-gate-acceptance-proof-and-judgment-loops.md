@@ -98,3 +98,59 @@ the pregrill's premises live.
   `criteria-miss` glean reads.
 - Glean's category list grows to four; `/glean`'s harvest mechanism is unchanged (ADR 0012,
   mechanics now `clerk glean` per ADR 0015).
+
+## Amendment (2026-07-09): submit / delivery-gate operational contracts (dotfiles-dft.4)
+
+`clerk backlog submit` and the delivery-gate use one gate implementation, exposed as the first-class
+verb `clerk backlog gate`. `submit` invokes it locally as a preflight; the GitHub Actions required
+check invokes the same verb in CI. A gate run exits `0` only when every proof class passes and exits
+`6` when one or more proof classes fail. Gate failures report every failing class in one run, not
+only the first failure.
+
+The gate has two input modes. Local preflight receives the branch being submitted and a PR body file
+because the PR does not exist yet. CI derives the branch/base context from `GITHUB_*` and reads the
+PR body through `gh pr view`. The CI gate is authoritative; submit's local preflight is fast
+feedback.
+
+The PR body schema is:
+
+```md
+## Verification
+
+Unit: dotfiles-<short>
+
+Checks:
+- bats: <summary>
+- shellcheck: <summary>
+
+## Acceptance criteria
+- <criterion 1, verbatim from the unit>
+  evidence: <test name / probe / transcript ref>
+- <criterion 2, verbatim>
+  evidence: <...>
+```
+
+C2 requires `## Verification`, `Unit:`, and `Checks:` to be present. C4 requires each stamped
+acceptance-criteria bullet to be immediately followed by an indented `evidence:` line. Delivery may
+add criteria bullets but may not remove or narrow the stamped criteria; executable criteria must cite
+executable evidence.
+
+C1 linkage is backend-specific. For the current beads-backed backlog, the body must contain exactly
+one `Unit: dotfiles-<short>` line, and `<short>` must match the `delivery/<short>` branch token. For
+a future GitHub-issues backlog, `closingIssuesReferences` supplies the same exactly-one linked-unit
+check. Zero linked units, multiple linked units, or a linked unit that does not match the branch are
+gate failures.
+
+Branch currency is part of C1: the delivery branch must strictly contain the fetched base tip
+(`merge-base(HEAD, base) == base-tip`). A stale branch fails with a prescriptive rebase message.
+This mirrors GitHub's up-to-date protection while making local preflight and CI enforce the same
+contract.
+
+On green preflight, `submit` creates the PR with title `<summary> (dotfiles-<short>)` and the body
+file above. It **never arms PR auto-merge** in this generation. Review-required branch protection is
+the attended merge dial; unattended auto-merge may be introduced only by a later ratified change once
+the gate has operated successfully in practice.
+
+This repo's C3 scope for dotfiles-dft.4 is `bats tests/clerk` plus `shellcheck bin/`. The gate must
+have parity tests proving the same fixture receives the same per-class verdict through both the local
+preflight input mode and the CI input mode.
