@@ -30,8 +30,7 @@ setup() {
 	# after dft.3; ALL_VERBS above is untouched and still drives the --explain / output
 	# discipline coverage tests, which are valid regardless of implementation status.
 	STUB_VERBS=(
-		"sync" "glean"
-		"backlog finish"
+		"glean"
 	)
 }
 
@@ -110,9 +109,9 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	cd "$wt/sub/deep"
 	# git rev-parse --show-toplevel must still find the worktree root from a nested cwd,
 	# so the marker gate passes and the verb reaches its not-implemented refusal (exit 3).
-	run "$CLERK" backlog finish
+	run "$CLERK" glean
 	[ "$status" -eq 3 ]
-	[ "$output" = "clerk: 'backlog finish' $NOT_IMPL" ]
+	[ "$output" = "clerk: 'glean' $NOT_IMPL" ]
 }
 
 @test "matrix: doctor resolves the marker from root and from inside the worktree" {
@@ -332,9 +331,9 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	[[ "$output" == *"         commit .clerk so worktrees and clones see it: git add .clerk && git commit"* ]]
 	[ "$(cat "$repo/.clerk")" = "backlog: gh" ]
 	# the marker gate now passes: the same verb that would exit 4 reaches not-implemented
-	run "$CLERK" backlog finish
+	run "$CLERK" glean
 	[ "$status" -eq 3 ]
-	[ "$output" = "clerk: 'backlog finish' $NOT_IMPL" ]
+	[ "$output" = "clerk: 'glean' $NOT_IMPL" ]
 }
 
 @test "doctor --fix that cannot write the marker fails loudly, never 'all clear'" {
