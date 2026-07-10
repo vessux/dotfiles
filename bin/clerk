@@ -852,12 +852,13 @@ claim_in_job_context() {
 }
 
 # Resolves $2 (a bd/gh id, short or full — either form is accepted, ADR 0017) against backend
-# $1. On success sets CLAIM_SHORT/CLAIM_FULL/CLAIM_TITLE/CLAIM_HOLDER/CLAIM_DESC/CLAIM_DESIGN/
-# CLAIM_AC and returns 0; on not-found returns 1 and leaves those cleared. Never exits — the caller owns the
-# refusal (usage_error), so this stays safe to call directly (no subshell-swallowed exit).
+# $1. On success sets CLAIM_SHORT/CLAIM_FULL/CLAIM_TITLE/CLAIM_HOLDER/CLAIM_STATUS/
+# CLAIM_DESC/CLAIM_DESIGN/CLAIM_AC and returns 0; on not-found returns 1 and leaves those
+# cleared. Never exits — the caller owns the refusal (usage_error), so this stays safe to call
+# directly (no subshell-swallowed exit).
 claim_resolve_id() {
 	local backend="$1" id_arg="$2"
-	CLAIM_SHORT="" CLAIM_FULL="" CLAIM_TITLE="" CLAIM_HOLDER="" CLAIM_DESC="" CLAIM_DESIGN="" CLAIM_AC=""
+	CLAIM_SHORT="" CLAIM_FULL="" CLAIM_TITLE="" CLAIM_HOLDER="" CLAIM_STATUS="" CLAIM_DESC="" CLAIM_DESIGN="" CLAIM_AC=""
 	case "$backend" in
 		bd)
 			local json
@@ -871,6 +872,7 @@ claim_resolve_id() {
 			CLAIM_FULL=$(printf '%s' "$json" | jq -r '.[0].id')
 			CLAIM_SHORT="${CLAIM_FULL#*-}"
 			CLAIM_TITLE=$(printf '%s' "$json" | jq -r '.[0].title // .[0].id')
+			CLAIM_STATUS=$(printf '%s' "$json" | jq -r '.[0].status // ""')
 			CLAIM_DESC=$(printf '%s' "$json" | jq -r '.[0].description // ""')
 			CLAIM_DESIGN=$(printf '%s' "$json" | jq -r '.[0].design // ""')
 			CLAIM_AC=$(printf '%s' "$json" | jq -r '.[0].acceptance_criteria // ""')
@@ -882,6 +884,7 @@ claim_resolve_id() {
 			CLAIM_FULL=$(printf '%s' "$json" | jq -r '.number')
 			CLAIM_SHORT="$CLAIM_FULL"
 			CLAIM_TITLE=$(printf '%s' "$json" | jq -r '.title // (.number | tostring)')
+			CLAIM_STATUS=$(printf '%s' "$json" | jq -r '.state // ""')
 			CLAIM_DESC=$(printf '%s' "$json" | jq -r '.body // ""')
 			CLAIM_HOLDER=$(printf '%s' "$json" | jq -r '.assignees[0].login // ""')
 			;;
@@ -1659,6 +1662,263 @@ cmd_backlog_submit() {
 	return 0
 }
 
+# ----------------------------------------------------- finish + sync (dft.5) ----
+
+# The reconciler is intentionally stateless (ADR 0015): every run derives the phase from
+# observed git + PR + backlog state. Squash merge means branch ancestry is never proof of
+# delivery (ADR 0017 ruling 11); only the PR's state/mergedAt can say a unit is merged.
+
+primary_repo_root() { # $1 = any worktree root; echoes the common/main worktree root
+	local root="$1" common
+	common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+		printf '%s\n' "$root"
+		return 0
+	}
+	case "$common" in
+		*/.git) dirname "$common" ;;
+		*) printf '%s\n' "$root" ;;
+	esac
+}
+
+finish_current_short() { # echoes delivery/<short>'s short token, or empty outside one
+	local branch
+	branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+	case "$branch" in
+		delivery/*) printf '%s\n' "${branch#delivery/}" ;;
+	esac
+}
+
+finish_resolve_unit() { # $1=backend $2=id-or-empty
+	local backend="$1" id_arg="${2:-}" short inferred=0
+	if [ -z "$id_arg" ]; then
+		inferred=1
+		short=$(finish_current_short)
+		[ -n "$short" ] || return 1
+		# bd accepts the short token directly (e.g. `bd show dft.5` resolves dotfiles-dft.5),
+		# so never fabricate a prefix from the clone directory name. If the local bd view cannot
+		# resolve the short id, refuse below and ask for the explicit full id / refreshed state.
+		id_arg="$short"
+	fi
+	if claim_resolve_id "$backend" "$id_arg"; then
+		return 0
+	fi
+	if [ "$inferred" -eq 1 ] && [ "$backend" = bd ] && [ -n "${short:-}" ]; then
+		printf "clerk: could not resolve bead for delivery/%s — run 'bd dolt pull' to refresh local state or rerun 'clerk backlog finish <full-id>'\n" "$short" >&2
+	fi
+	return 1
+}
+
+finish_pr_json() { # $1=branch; echoes the active/merged PR JSON object, or empty
+	local branch="$1"
+	# A branch can have stale CLOSED PRs (closed without merge, then reopened as a fresh PR).
+	# Reconciliation must prefer an active OPEN PR, then the most recent MERGED PR for cleanup,
+	# and ignore CLOSED/non-merged PRs. `updatedAt` gives deterministic newest-first choice.
+	gh pr list --head "$branch" --state all --json number,url,state,mergedAt,reviewDecision,statusCheckRollup,headRefName,isDraft,updatedAt \
+		--jq '([.[] | select(.state == "OPEN")] | sort_by(.updatedAt) | reverse) as $open | ([.[] | select(.state == "MERGED" or (.mergedAt // "") != "")] | sort_by(.updatedAt) | reverse) as $merged | ($open[0] // $merged[0] // empty)' 2>/dev/null
+}
+
+finish_check_failures() { # $1=pr-json
+	jq -r '
+		.statusCheckRollup // [] | .[] |
+		(.name // .context // .workflowName // "unnamed check") as $name |
+		((.conclusion // "") | ascii_upcase) as $conclusion |
+		((.status // "") | ascii_upcase) as $status |
+		select(
+			$conclusion == "FAILURE" or $conclusion == "TIMED_OUT" or
+			$conclusion == "CANCELLED" or $conclusion == "ACTION_REQUIRED" or
+			($status == "COMPLETED" and $conclusion != "" and
+				$conclusion != "SUCCESS" and $conclusion != "SKIPPED" and $conclusion != "NEUTRAL")
+		) |
+		$name
+	' <<<"$1"
+}
+
+finish_check_pending() { # $1=pr-json
+	jq -r '
+		.statusCheckRollup // [] | .[] |
+		(.name // .context // .workflowName // "unnamed check") as $name |
+		((.conclusion // "") | ascii_upcase) as $conclusion |
+		((.status // "") | ascii_upcase) as $status |
+		select($conclusion == "" and $status != "COMPLETED") |
+		$name
+	' <<<"$1"
+}
+
+finish_push_if_needed() { # $1=root $2=short
+	local root="$1" short="$2" base_sha merge_base
+	if git -C "$root" show-ref --verify --quiet "refs/heads/delivery/$short" &&
+		! git -C "$root" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"; then
+		git -C "$root" fetch origin main >/dev/null 2>&1 || true
+		if base_sha=$(git -C "$root" rev-parse origin/main 2>/dev/null) &&
+			merge_base=$(git -C "$root" merge-base "delivery/$short" origin/main 2>/dev/null) &&
+			[ "$merge_base" != "$base_sha" ]; then
+			printf "clerk: backlog finish refused — delivery/%s is behind origin/main\n" "$short" >&2
+			printf "       run 'git rebase origin/main', then rerun 'clerk backlog finish'\n" >&2
+			return 2
+		fi
+		git -C "$root" push -u origin "delivery/$short" >/dev/null 2>&1 ||
+			backend_fail "finish failed — could not push delivery/$short to origin"
+		git -C "$root" fetch origin >/dev/null 2>&1 || true
+	fi
+}
+
+finish_cleanup_merged() { # $1=backend $2=root $3=full $4=short $5=pr-number
+	local backend="$1" root="$2" full="$3" short="$4" pr_number="$5" main_root wt status
+	main_root=$(primary_repo_root "$root")
+	# If finish is invoked from inside the worktree it is about to remove, leave that cwd first.
+	cd "$main_root" || backend_fail "finish failed — could not cd to $main_root before cleanup"
+	wt="$main_root/.worktrees/$short"
+	if [ -d "$wt" ]; then
+		if ! git -C "$main_root" worktree remove "$wt" >/dev/null 2>&1; then
+			backend_fail "finish failed — could not remove the worktree at $wt (commit or stash local changes first)"
+		fi
+	else
+		git -C "$main_root" worktree prune >/dev/null 2>&1 || true
+	fi
+	if git -C "$main_root" show-ref --verify --quiet "refs/heads/delivery/$short"; then
+		git -C "$main_root" branch -D "delivery/$short" >/dev/null 2>&1 ||
+			backend_fail "finish failed — could not delete local branch delivery/$short"
+	fi
+	if git -C "$main_root" ls-remote --exit-code --heads origin "delivery/$short" >/dev/null 2>&1; then
+		git -C "$main_root" push origin --delete "delivery/$short" >/dev/null 2>&1 ||
+			backend_fail "finish failed — could not delete origin delivery/$short"
+		if git -C "$main_root" ls-remote --exit-code --heads origin "delivery/$short" >/dev/null 2>&1; then
+			backend_fail "finish failed — origin still advertises delivery/$short after deletion"
+		fi
+	fi
+	case "$backend" in
+		bd)
+			status="$CLAIM_STATUS"
+			if [ "$status" != closed ]; then
+				bd close "$full" --reason "delivered: PR #$pr_number merged" >/dev/null ||
+					backend_fail "finish failed — bd close did not succeed for $full"
+			fi
+			status=$(bd show "$full" --readonly --json 2>/dev/null | jq -r '.[0].status // ""')
+			[ "$status" = closed ] || backend_fail "finish failed — $full was not confirmed closed after finish"
+			bd dolt push >/dev/null || backend_fail 'finish failed — bd dolt push did not succeed'
+			;;
+		gh) ;;
+	esac
+	printf '%sclerk:%s finished %s — PR #%s merged, delivery/%s cleaned up, unit closed\n' "$C_GRN" "$C_RST" "$full" "$pr_number" "$short"
+}
+
+finish_reconcile_unit() { # $1=backend $2=root $3=id-or-empty $4=watch(0|1) $5=sync(0|1)
+	local backend="$1" root="$2" id_arg="$3" watch="$4" sync_mode="$5"
+	if ! finish_resolve_unit "$backend" "$id_arg"; then
+		if [ "$sync_mode" -eq 1 ]; then
+			printf 'clerk: sync: skipped an unresolvable claim id %s\n' "${id_arg:-<current>}"
+			return 0
+		fi
+		usage_error "clerk backlog finish: not inside delivery/<short> and no id was supplied — cd into the claimed worktree or run 'clerk backlog finish <id>'"
+	fi
+	local full="$CLAIM_FULL" short="$CLAIM_SHORT" branch="delivery/$CLAIM_SHORT" pr_json pr_number pr_state merged_at failures pending review
+	finish_push_if_needed "$root" "$short"
+	local push_rc=$?
+	[ "$push_rc" -eq 0 ] || return "$push_rc"
+	pr_json=$(finish_pr_json "$branch")
+	if [ -z "$pr_json" ]; then
+		if [ "$sync_mode" -eq 1 ]; then
+			if ! git -C "$root" show-ref --verify --quiet "refs/heads/$branch" &&
+				! git -C "$root" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+				printf 'clerk: sync: %s is claimed but has no delivery/%s branch/worktree — no PR created\n' "$full" "$short"
+			else
+				printf "clerk: sync: %s has delivery/%s but no PR — no PR created; run 'clerk backlog submit %s --body-file <path-to-pr-body.md>'\n" "$full" "$short" "$full"
+			fi
+			return 0
+		fi
+		printf 'clerk: backlog finish refused — no PR found for delivery/%s\n' "$short" >&2
+		printf "       run 'clerk backlog submit %s --body-file <path-to-pr-body.md>'\n" "$full" >&2
+		return 2
+	fi
+	pr_number=$(jq -r '.number // empty' <<<"$pr_json")
+	pr_state=$(jq -r '.state // ""' <<<"$pr_json")
+	merged_at=$(jq -r '.mergedAt // ""' <<<"$pr_json")
+	if [ "$pr_state" = MERGED ] || [ -n "$merged_at" ]; then
+		finish_cleanup_merged "$backend" "$root" "$full" "$short" "$pr_number"
+		return 0
+	fi
+	if [ "$watch" -eq 1 ]; then
+		gh pr checks "$pr_number" --watch || backend_fail "finish failed — gh pr checks --watch failed for PR #$pr_number"
+		pr_json=$(finish_pr_json "$branch")
+	fi
+	failures=$(finish_check_failures "$pr_json")
+	if [ -n "$failures" ]; then
+		printf 'clerk: PR #%s for %s has failing checks\n' "$pr_number" "$full"
+		while IFS= read -r line || [ -n "$line" ]; do
+			[ -n "$line" ] || continue
+			printf '  %s\n' "$line"
+		done <<<"$failures"
+		return 1
+	fi
+	pending=$(finish_check_pending "$pr_json")
+	if [ -n "$pending" ]; then
+		printf "clerk: PR #%s for %s has pending checks — rerun 'clerk backlog finish' when green (or use --watch)\n" "$pr_number" "$full"
+		while IFS= read -r line || [ -n "$line" ]; do
+			[ -n "$line" ] || continue
+			printf '  %s\n' "$line"
+		done <<<"$pending"
+		return 0
+	fi
+	review=$(jq -r '.reviewDecision // ""' <<<"$pr_json")
+	case "$review" in
+		REVIEW_REQUIRED | CHANGES_REQUESTED)
+			printf 'clerk: PR #%s for %s is awaiting review — finish will complete after review\n' "$pr_number" "$full"
+			return 0
+			;;
+	esac
+	if ! gh pr merge "$pr_number" --squash --delete-branch=false >/dev/null 2>&1; then
+		backend_fail "finish failed — gh pr merge --squash did not succeed for PR #$pr_number"
+	fi
+	pr_json=$(finish_pr_json "$branch")
+	pr_state=$(jq -r '.state // ""' <<<"$pr_json")
+	merged_at=$(jq -r '.mergedAt // ""' <<<"$pr_json")
+	if [ "$pr_state" != MERGED ] && [ -z "$merged_at" ]; then
+		backend_fail "finish failed — PR #$pr_number was not confirmed merged after gh pr merge"
+	fi
+	finish_cleanup_merged "$backend" "$root" "$full" "$short" "$pr_number"
+}
+
+cmd_backlog_finish() {
+	local backend="$1" root="$2"
+	shift 2
+	local watch=0 id_arg=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--watch) watch=1 ;;
+			*)
+				[ -z "$id_arg" ] || usage_error "clerk backlog finish: unknown argument '$1' — usage: clerk backlog finish [<id>] [--watch]"
+				id_arg="$1"
+				;;
+		esac
+		shift
+	done
+	finish_reconcile_unit "$backend" "$root" "$id_arg" "$watch" 0
+}
+
+cmd_sync() {
+	local backend="$1" root="$2"
+	shift 2
+	[ $# -eq 0 ] || usage_error "clerk sync: unknown argument '$1' — usage: clerk sync"
+	case "$backend" in
+		bd)
+			local json count id
+			if ! json=$(bd list --status in_progress --json); then
+				backend_fail 'sync failed — bd list did not succeed'
+			fi
+			count=$(jq 'length' <<<"$json")
+			printf 'clerk: sync scanning %s open claim(s)\n' "$count"
+			while IFS= read -r id || [ -n "$id" ]; do
+				[ -n "$id" ] || continue
+				finish_reconcile_unit "$backend" "$root" "$id" 0 1 || true
+			done < <(jq -r '.[].id' <<<"$json")
+			;;
+		gh)
+			printf 'clerk: sync: gh-backed claim sweep is not available in this generation; skipping\n' >&2
+			return 0
+			;;
+	esac
+}
+
 # ---------------------------------------------------------------- doctor ----
 
 DOCTOR_FAILS=0
@@ -1898,6 +2158,10 @@ main() {
 			cmd_capture "$backend" "$root" "$@"
 			exit "$?"
 			;;
+		sync)
+			cmd_sync "$backend" "$root" "$@"
+			exit "$?"
+			;;
 		"inbox list")
 			cmd_inbox_list "$backend" "$root"
 			exit "$?"
@@ -1948,6 +2212,10 @@ main() {
 			;;
 		"backlog submit")
 			cmd_backlog_submit "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"backlog finish")
+			cmd_backlog_finish "$backend" "$root" "$@"
 			exit "$?"
 			;;
 	esac
