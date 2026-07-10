@@ -154,3 +154,16 @@ the gate has operated successfully in practice.
 This repo's C3 scope for dotfiles-dft.4 is `bats tests/clerk` plus `shellcheck bin/`. The gate must
 have parity tests proving the same fixture receives the same per-class verdict through both the local
 preflight input mode and the CI input mode.
+
+## Amendment (2026-07-10): solo merge posture for this repo
+
+For `vessux/dotfiles`, the live K1 merge posture is **solo mode**: branch protection requires the
+`delivery-gate` check and strict/up-to-date branches, but does not require approving PR reviews.
+This keeps ordinary PR merges usable in a solo repository without turning every delivery into an
+admin-bypass event.
+
+Solo mode changes the platform dial only; it does not weaken the delivery-gate proof classes. A PR
+still cannot merge normally without the required `delivery-gate` check passing, and `submit` still
+never arms PR auto-merge. Human attendance is the manual PR merge action after reading the PR body
+and gate result, not a GitHub review record. If a real second reviewer becomes available, the repo
+may flip K1 back to review-required branch protection without changing the clerk contract.
