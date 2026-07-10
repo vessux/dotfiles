@@ -22,16 +22,14 @@ setup() {
 		"backlog next" "backlog show" "backlog claim" "backlog release" "backlog submit"
 		"backlog gate" "backlog finish" "backlog return"
 	)
-	# dotfiles-dft.2 replaced capture + the six inbox verbs' exit-3 stubs with real
-	# implementations (bin/clerk), so exit 3 ("known verb, not yet implemented in this
-	# generation" — ADR 0015's own taxonomy) can no longer hold for them; a verb that is
-	# genuinely implemented must never again report itself as not-yet-implemented. This
-	# list narrows the not-implemented matrix (test below) to the verbs that remain stubs
-	# after dft.3; ALL_VERBS above is untouched and still drives the --explain / output
-	# discipline coverage tests, which are valid regardless of implementation status.
-	STUB_VERBS=(
-		"glean"
-	)
+	# dotfiles-dft.6 implements the final top-level stub (`glean`), so the stub matrix is
+	# intentionally empty. Keep it as a matrix so a future generation gap can add entries
+	# without reshaping the dispatcher tests.
+	STUB_VERBS=()
+	mkdir -p "$BATS_TEST_TMPDIR/empty-transcripts" "$BATS_TEST_TMPDIR/glean-state"
+	export CLERK_GLEAN_TRANSCRIPT_DIR="$BATS_TEST_TMPDIR/empty-transcripts"
+	export CLERK_GLEAN_STATE_DIR="$BATS_TEST_TMPDIR/glean-state"
+	export CLERK_GLEAN_JUDGMENT_CMD='cat >/dev/null; echo "{\"type\":\"none\",\"reason\":\"test\"}"'
 }
 
 # Scratch git repo with an optional .clerk marker, committed so worktrees see it
@@ -108,10 +106,10 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	mkdir -p "$wt/sub/deep"
 	cd "$wt/sub/deep"
 	# git rev-parse --show-toplevel must still find the worktree root from a nested cwd,
-	# so the marker gate passes and the verb reaches its not-implemented refusal (exit 3).
+	# so the marker gate passes and the implemented top-level verb runs normally.
 	run "$CLERK" glean
-	[ "$status" -eq 3 ]
-	[ "$output" = "clerk: 'glean' $NOT_IMPL" ]
+	[ "$status" -eq 0 ]
+	[ "$output" = "glean: no transcript files found in $BATS_TEST_TMPDIR/empty-transcripts" ]
 }
 
 @test "matrix: doctor resolves the marker from root and from inside the worktree" {
@@ -164,11 +162,10 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 		'' \
 		'   backlog:   bd   # bd for now' >"$repo/.clerk"
 	cd "$repo"
-	# probe verb is any still-stubbed roster verb (dotfiles-dft.2 implemented capture for
-	# real, so it can no longer serve as a not-implemented probe here — see STUB_VERBS)
+	# Probe with glean: if marker parsing accepts the valid marker, the implemented verb runs.
 	run "$CLERK" glean
-	[ "$status" -eq 3 ] # marker gate passed; refusal is the not-implemented one
-	[ "$output" = "clerk: 'glean' $NOT_IMPL" ]
+	[ "$status" -eq 0 ]
+	[ "$output" = "glean: no transcript files found in $BATS_TEST_TMPDIR/empty-transcripts" ]
 }
 
 @test "outside any git repo: dispatching verb refuses with exit 4" {
@@ -330,10 +327,10 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	[[ "$output" == *"$OK_TAG .clerk marker: provisioned backlog: gh ($repo/.clerk)"* ]]
 	[[ "$output" == *"         commit .clerk so worktrees and clones see it: git add .clerk && git commit"* ]]
 	[ "$(cat "$repo/.clerk")" = "backlog: gh" ]
-	# the marker gate now passes: the same verb that would exit 4 reaches not-implemented
+	# the marker gate now passes: the same verb that would exit 4 runs normally
 	run "$CLERK" glean
-	[ "$status" -eq 3 ]
-	[ "$output" = "clerk: 'glean' $NOT_IMPL" ]
+	[ "$status" -eq 0 ]
+	[ "$output" = "glean: no transcript files found in $BATS_TEST_TMPDIR/empty-transcripts" ]
 }
 
 @test "doctor --fix that cannot write the marker fails loudly, never 'all clear'" {
