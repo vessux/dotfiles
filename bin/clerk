@@ -2049,6 +2049,394 @@ cmd_doctor() {
 	return 1
 }
 
+# ---------------------------------------------------------------- glean (dft.6) ---
+
+# Watermark state directory. Tests may override with CLERK_GLEAN_STATE_DIR.
+GLEAN_STATE_DIR="${CLERK_GLEAN_STATE_DIR:-${HOME:-}/.local/state/clerk}"
+
+# Minimum chunk size (lines) to trigger a judgment fork. Tests may override.
+GLEAN_MIN_CHUNK_LINES="${CLERK_GLEAN_MIN_CHUNK_LINES:-50}"
+
+# Transcript project directory. Tests may override with one scratch transcript directory;
+# production derives the current repo/worktree's Claude Code project slug instead of
+# sweeping the whole archive.
+GLEAN_PROJECTS_ROOT="${CLERK_GLEAN_PROJECTS_ROOT:-${HOME:-}/.config/claude-code/projects}"
+
+# Flock lock file for single-instance guarantee
+GLEAN_LOCK_FILE="${GLEAN_STATE_DIR}/glean.lock"
+
+# Ensure state directory exists
+glean_ensure_state_dir() {
+	mkdir -p "$GLEAN_STATE_DIR"
+}
+
+# Acquire flock lock (non-blocking). Returns 0 if acquired, 1 if another instance holds it.
+glean_acquire_lock() {
+	# Create lock file if it doesn't exist
+	touch "$GLEAN_LOCK_FILE" 2>/dev/null || return 1
+	# Try to acquire exclusive non-blocking lock on fd 9
+	exec 9<>"$GLEAN_LOCK_FILE"
+	if flock -n 9; then
+		return 0
+	else
+		exec 9>&-
+		return 1
+	fi
+}
+
+# Release flock lock
+glean_release_lock() {
+	exec 9>&- 2>/dev/null || true
+}
+
+# Read watermark for a transcript file. Returns the line offset (0 if never harvested).
+glean_read_watermark() {
+	local transcript_file="$1"
+	local watermark_file
+	watermark_file="$(glean_watermark_path "$transcript_file")"
+	[ -f "$watermark_file" ] || { printf '0'; return 0; }
+	cat "$watermark_file" 2>/dev/null || printf '0'
+}
+
+# Write watermark for a transcript file (atomic via temp file)
+glean_write_watermark() {
+	local transcript_file="$1" offset="$2"
+	local watermark_file
+	watermark_file="$(glean_watermark_path "$transcript_file")"
+	local tmp_file
+	tmp_file="$(mktemp "${watermark_file}.tmp.XXXXXX")" || return 1
+	printf '%s' "$offset" >"$tmp_file" || { rm -f "$tmp_file"; return 1; }
+	mv "$tmp_file" "$watermark_file" || { rm -f "$tmp_file"; return 1; }
+}
+
+# Compute watermark file path from transcript file path
+glean_watermark_path() {
+	local transcript_file="$1"
+	# Use a hash of the absolute path to avoid collisions
+	local abs_path hash
+	abs_path=$(readlink -f "$transcript_file" 2>/dev/null || printf '%s' "$transcript_file")
+	hash=$(printf '%s' "$abs_path" | sha256sum | cut -d' ' -f1)
+	printf '%s/%s.watermark' "$GLEAN_STATE_DIR" "$hash"
+}
+
+# Claude Code's project transcript slug is the absolute cwd with slashes replaced by dashes
+# (e.g. /home/me/repo -> -home-me-repo). Worktrees get their own slugs, which is exactly
+# where their session transcripts live.
+glean_project_slug() { # $1=root
+	local root="$1"
+	root=$(cd "$root" 2>/dev/null && pwd -P) || printf '%s' "$root"
+	printf '%s' "$root" | tr '/' '-'
+}
+
+glean_transcript_dirs() { # $1=root, NUL-separated output
+	local root="$1" slug
+	if [ -n "${CLERK_GLEAN_TRANSCRIPT_DIR:-}" ]; then
+		printf '%s\0' "$CLERK_GLEAN_TRANSCRIPT_DIR"
+		return 0
+	fi
+	slug=$(glean_project_slug "$root")
+	printf '%s\0' "$GLEAN_PROJECTS_ROOT/$slug"
+}
+
+# Build the judgment fork prompt for a chunk of transcript lines
+glean_build_judgment_prompt() {
+	local chunk_file="$1" transcript_file="$2" chunk_start="$3" chunk_end="$4"
+	cat <<'EOF'
+You are a retrospective friction harvester (glean). You are reading a CHUNK of a Claude Code session transcript (JSONL lines) to find IMPEDIMENTS: friction the agent routed around that would recur and cost tokens unless an instruction, skill, or tool changes.
+
+IMPEDIMENT DEFINITION (ADR 0012): friction the agent had to route around that *would recur and cost tokens again unless an instruction, skill, or tool changed*. A bare `is_error` from normal probing (empty grep, a guard that fails) is NOT an impediment; a denied permission, an interface retried three times, a misfiring bundled skill, or an ambiguous injected instruction IS.
+
+Highest-value class: friction with *our own* instructions/skills — those we can actually fix.
+
+For each impediment you find, output ONE JSON object on its own line with this exact shape:
+{
+  "type": "impediment",
+  "title": "<one-line summary, <=80 chars>",
+  "body": "<evidence-rich description: quote the failing command, the error, the retry count, roughly what it cost. Do NOT decide the fix — choosing which instruction to change is a grill decision, not a capture-time call.>",
+  "transcript_file": "<path>",
+  "chunk_lines": "<start>-<end>"
+}
+
+If you find no impediments, output exactly one JSON object:
+{"type":"none","reason":"<why no recurring workflow/tooling friction was found>"}
+
+Malformed output is treated as a failed harvest and the watermark will not advance.
+
+Categories (ADR 0016 loop map) — this run only emits `type: impediment`. Future categories: `criteria-miss`, `sort-miss`, `prep-miss`.
+
+EOF
+	printf 'TRANSCRIPT CHUNK (lines %s-%s of %s):\n' "$chunk_start" "$chunk_end" "$transcript_file"
+	cat "$chunk_file"
+}
+
+# Spawn judgment fork for a chunk. Returns capture IDs on success, empty on an explicit
+# no-findings result, and non-zero on malformed/failed judgment or filing.
+glean_judgment_fork() {
+	local chunk_file="$1" transcript_file="$2" chunk_start="$3" chunk_end="$4"
+	local prompt_file output_file candidates_file capture_id
+	prompt_file=$(mktemp)
+	output_file=$(mktemp)
+	candidates_file=$(mktemp)
+	glean_build_judgment_prompt "$chunk_file" "$transcript_file" "$chunk_start" "$chunk_end" >"$prompt_file"
+
+	# Invoke the judgment fork. Tests may set CLERK_GLEAN_JUDGMENT_CMD to a deterministic
+	# command that reads the prompt on stdin and emits JSONL. Production requires a model
+	# runner; no output / malformed output is a failed harvest, not a successful no-op.
+	local rc=0
+	if [ -n "${CLERK_GLEAN_JUDGMENT_CMD:-}" ]; then
+		bash -c "$CLERK_GLEAN_JUDGMENT_CMD" <"$prompt_file" >"$output_file" || rc=$?
+	elif command -v claude >/dev/null 2>&1; then
+		claude -p <"$prompt_file" >"$output_file" || rc=$?
+	else
+		printf 'clerk glean: no judgment runner available (expected claude on PATH)\n' >&2
+		rm -f "$prompt_file" "$output_file" "$candidates_file"
+		return 5
+	fi
+	if [ "$rc" -ne 0 ]; then
+		rm -f "$prompt_file" "$output_file" "$candidates_file"
+		return "$rc"
+	fi
+	if ! grep -q '[^[:space:]]' "$output_file"; then
+		printf 'clerk glean: judgment fork produced no JSONL; watermark not advanced\n' >&2
+		rm -f "$prompt_file" "$output_file" "$candidates_file"
+		return 5
+	fi
+
+	local candidate ctype title body seen_any=0 seen_none=0 seen_impediment=0
+	while IFS= read -r candidate || [ -n "$candidate" ]; do
+		[[ "$candidate" =~ [^[:space:]] ]] || continue
+		seen_any=1
+		if ! printf '%s' "$candidate" | jq -e 'type == "object" and (.type == "none" or .type == "impediment")' >/dev/null 2>&1; then
+			printf 'clerk glean: malformed judgment JSONL; watermark not advanced\n' >&2
+			rm -f "$prompt_file" "$output_file" "$candidates_file"
+			return 5
+		fi
+		ctype=$(printf '%s' "$candidate" | jq -r '.type')
+		case "$ctype" in
+			none)
+				seen_none=1
+				;;
+			impediment)
+				title=$(printf '%s' "$candidate" | jq -r '.title // empty')
+				body=$(printf '%s' "$candidate" | jq -r '.body // empty')
+				if [ -z "$title" ] || [ -z "$body" ]; then
+					printf 'clerk glean: impediment candidate missing title/body; watermark not advanced\n' >&2
+					rm -f "$prompt_file" "$output_file" "$candidates_file"
+					return 5
+				fi
+				printf '%s\n' "$candidate" >>"$candidates_file"
+				seen_impediment=1
+				;;
+		esac
+	done <"$output_file"
+
+	if [ "$seen_any" -eq 0 ] || { [ "$seen_none" -eq 1 ] && [ "$seen_impediment" -eq 1 ]; }; then
+		printf 'clerk glean: ambiguous judgment output; watermark not advanced\n' >&2
+		rm -f "$prompt_file" "$output_file" "$candidates_file"
+		return 5
+	fi
+	if [ "$seen_none" -eq 1 ]; then
+		rm -f "$prompt_file" "$output_file" "$candidates_file"
+		return 0
+	fi
+
+	while IFS= read -r candidate || [ -n "$candidate" ]; do
+		local source_key
+		title=$(printf '%s' "$candidate" | jq -r '.title')
+		body=$(printf '%s' "$candidate" | jq -r '.body')
+		source_key=$(printf '%s\n%s:%s-%s' "$candidate" "$transcript_file" "$chunk_start" "$chunk_end" | sha256sum | cut -d' ' -f1)
+		if ! capture_id=$(glean_file_capture "$title" "$body" impediment "glean-source:$source_key"); then
+			rm -f "$prompt_file" "$output_file" "$candidates_file"
+			return 5
+		fi
+		printf '%s\n' "$capture_id"
+	done <"$candidates_file"
+	rm -f "$prompt_file" "$output_file" "$candidates_file"
+}
+
+glean_existing_capture() { # $1=source-key
+	local source_key="$1"
+	case "${GLEAN_BACKEND:-bd}" in
+		bd) bd search --desc-contains "$source_key" --readonly --json 2>/dev/null | jq -r '.[0].id // empty' ;;
+		gh) gh issue list --search "$source_key" --json url --jq '.[0].url // empty' 2>/dev/null ;;
+	esac
+}
+
+# File a capture through the repo's configured clerk backend (used after the judgment fork
+# emits JSONL candidates). A deterministic glean-source key makes retries idempotent when
+# a later candidate in the same chunk fails before the chunk watermark can advance.
+glean_file_capture() {
+	local title="$1" body="$2" type="${3:-impediment}" source_key="$4"
+	local existing body_file
+	existing=$(glean_existing_capture "$source_key")
+	if [ -n "$existing" ]; then
+		printf '%s\n' "$existing"
+		return 0
+	fi
+	body_file=$(mktemp)
+	printf '%s\n\n%s\n' "$body" "$source_key" >"$body_file" || { rm -f "$body_file"; return 1; }
+	case "${GLEAN_BACKEND:-bd}" in
+		bd)
+			[ "$type" = impediment ] && bd_ensure_impediment_type
+			local id seen
+			id=$(bd create "$title" --body-file "$body_file" --type "$type" --silent) || { rm -f "$body_file"; return 1; }
+			seen=$(bd show "$id" --readonly --json 2>/dev/null | jq -r '.[0].id // empty')
+			[ "$seen" = "$id" ] || { rm -f "$body_file"; return 1; }
+			printf '%s\n' "$id"
+			;;
+		gh)
+			local url
+			url=$(gh issue create --title "$title" --body-file "$body_file" --label "type:$type") || { rm -f "$body_file"; return 1; }
+			printf '%s\n' "$url"
+			;;
+	esac
+	rm -f "$body_file"
+}
+
+# Process a single transcript file: harvest unharvested chunks
+glean_process_transcript() {
+	local transcript_file="$1"
+	[ -f "$transcript_file" ] || return 0
+	[ -s "$transcript_file" ] || return 0
+
+	local watermark_offset
+	watermark_offset=$(glean_read_watermark "$transcript_file")
+
+	local total_lines
+	total_lines=$(wc -l <"$transcript_file")
+	[ "$watermark_offset" -lt "$total_lines" ] || return 0  # Nothing new
+
+	local chunk_start=$((watermark_offset + 1))
+	local chunk_end=0
+	local line_num=0
+	local chunk_file
+
+	chunk_file=$(mktemp)
+
+	while IFS= read -r line || [ -n "$line" ]; do
+		line_num=$((line_num + 1))
+		[ "$line_num" -le "$watermark_offset" ] && continue
+
+		printf '%s\n' "$line" >>"$chunk_file"
+		chunk_end=$line_num
+
+		# Check if chunk is large enough to process
+		local chunk_size=$((chunk_end - chunk_start + 1))
+		if [ "$chunk_size" -ge "$GLEAN_MIN_CHUNK_LINES" ]; then
+			# Spawn judgment fork for this chunk
+			local capture_id
+			if ! capture_id=$(glean_judgment_fork "$chunk_file" "$transcript_file" "$chunk_start" "$chunk_end"); then
+				printf 'glean: judgment fork failed for %s lines %s-%s; watermark not advanced\n' "$transcript_file" "$chunk_start" "$chunk_end" >&2
+				rm -f "$chunk_file"
+				return 1
+			fi
+			if [ -n "$capture_id" ]; then
+				printf '  filed %s (lines %s-%s)\n' "$capture_id" "$chunk_start" "$chunk_end"
+			else
+				printf '  judgment fork returned no capture for lines %s-%s\n' "$chunk_start" "$chunk_end"
+			fi
+
+			# ADVANCE WATERMARK ONLY AFTER SUCCESSFUL FILING (crash-safe)
+			glean_write_watermark "$transcript_file" "$chunk_end" || {
+				printf 'glean: failed to write watermark for %s\n' "$transcript_file" >&2
+				rm -f "$chunk_file"
+				return 1
+			}
+
+			# Reset for next chunk
+			chunk_start=$((chunk_end + 1))
+			: >"$chunk_file"
+		fi
+	done <"$transcript_file"
+
+	# Handle final sub-threshold chunk (log skip, don't harvest)
+	if [ "$chunk_start" -le "$total_lines" ]; then
+		local remaining=$((total_lines - chunk_start + 1))
+		if [ "$remaining" -gt 0 ] && [ "$remaining" -lt "$GLEAN_MIN_CHUNK_LINES" ]; then
+			printf 'glean: sub-threshold chunk skipped (%s lines, min %s) in %s\n' "$remaining" "$GLEAN_MIN_CHUNK_LINES" "$transcript_file"
+		fi
+	fi
+
+	rm -f "$chunk_file"
+	return 0
+}
+
+# Main glean command
+glean_main() {
+	local root="$1"
+	shift
+	local async=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--async) async=1 ;;
+			*) usage_error "clerk glean: unknown argument '$1' — usage: clerk glean [--async]" ;;
+		esac
+		shift
+	done
+
+	glean_ensure_state_dir
+
+	if [ "$async" -eq 1 ]; then
+		local log_file="$GLEAN_STATE_DIR/glean.log"
+		("$0" glean >>"$log_file" 2>&1 &)
+		printf 'glean: async harvest started (log: %s)\n' "$log_file"
+		return 0
+	fi
+
+	# Single-instance flock guard
+	if ! glean_acquire_lock; then
+		printf 'glean: another instance is running — exiting\n' >&2
+		return 0  # Not an error, just another instance won
+	fi
+
+	# Release the lock on normal exit, but terminate immediately on signals. A TERM/INT
+	# during the judgment fork must never continue into watermark advancement.
+	trap glean_release_lock EXIT
+	trap 'glean_release_lock; exit 130' INT
+	trap 'glean_release_lock; exit 143' TERM
+
+	local -a transcript_files=() transcript_dirs=()
+	local dir dirs_display=""
+
+	while IFS= read -r -d '' dir; do
+		transcript_dirs+=("$dir")
+		done < <(glean_transcript_dirs "$root")
+	for dir in "${transcript_dirs[@]}"; do
+		dirs_display+="${dirs_display:+ }$dir"
+		[ -d "$dir" ] || continue
+		# Find all .jsonl files (main + subagent transcripts)
+		while IFS= read -r -d '' file; do
+			transcript_files+=("$file")
+		done < <(find "$dir" -type f -name '*.jsonl' -print0 2>/dev/null)
+	done
+
+	if [ "${#transcript_files[@]}" -eq 0 ]; then
+		printf 'glean: no transcript files found in %s\n' "$dirs_display"
+		return 0
+	fi
+
+	printf 'glean: scanning %s transcript file(s)\n' "${#transcript_files[@]}"
+
+	local file
+	for file in "${transcript_files[@]}"; do
+		printf '  harvesting %s\n' "$file"
+		glean_process_transcript "$file" || {
+			printf 'glean: failed to process %s\n' "$file" >&2
+			# Don't exit - continue with other files
+		}
+	done
+
+	printf 'glean: harvest complete\n'
+	return 0
+}
+
+cmd_glean() {
+	local backend="$1" _root="$2"
+	shift 2
+	GLEAN_BACKEND="$backend"
+	glean_main "$_root" "$@"
+}
+
 # ------------------------------------------------------------------ main ----
 
 main() {
@@ -2216,6 +2604,10 @@ main() {
 			;;
 		"backlog finish")
 			cmd_backlog_finish "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		glean)
+			cmd_glean "$backend" "$root" "$@"
 			exit "$?"
 			;;
 	esac
