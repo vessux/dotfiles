@@ -53,6 +53,14 @@ Create files lazily — only when you have something to write. If no `CONTEXT.md
 
 ## During the session
 
+### Acceptance criteria craft
+
+Refinement outputs the work and the proof. If `umbel/docs/acceptance-playbook.md` exists, read it
+before criteria-authoring and apply its lessons. When the plan includes a command, user-facing
+message, external state change, or context-sensitive behavior, extract the contract explicitly:
+verbatim strings, exit codes, environment/context signals, teardown semantics, idempotency, and
+failure-atomicity. Delivery may add evidence later, but must not invent or narrow the exam.
+
 ### Challenge against the glossary
 
 When the user uses a term that conflicts with the existing language in `CONTEXT.md`, call it out immediately. "Your glossary defines 'cancellation' as X, but you seem to mean Y — which is it?"
