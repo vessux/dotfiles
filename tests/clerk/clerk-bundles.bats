@@ -109,7 +109,7 @@ setup() {
 	[ "$(find "$built/hooks" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" = "1" ]
 	[ -d "$built/hooks/clerk-session-start" ]
 	grep -q 'clerk-session-start' "$built/hooks/hooks.json"
-	! grep -q 'session-start/session-start' "$built/hooks/hooks.json"
+	[ "$(grep -c '"command"[[:space:]]*:' "$built/hooks/hooks.json")" = "1" ]
 	run grep -RinE "$OPACITY_TOKEN_RE" "$built/bundle.md" "$built/hooks/clerk-session-start"
 	[ "$status" -eq 1 ]
 	[ "$output" = "" ]
