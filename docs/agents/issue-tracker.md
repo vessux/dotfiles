@@ -1,8 +1,8 @@
 # Issue tracker: beads
 
-Issues for this repo live in **beads** (the `bd` CLI), **not** GitHub. This repo runs the
-discovery track (private tier): beads *is* the backlog. Do **not** create GitHub issues here,
-even though the `origin` remote is GitHub.
+Issues for this repo live in **beads** (the `bd` CLI), **not** GitHub. Beads is this repo's
+Clerk-backed backlog. Do **not** create GitHub issues here, even though the `origin` remote is
+GitHub.
 
 ## Lifecycle
 

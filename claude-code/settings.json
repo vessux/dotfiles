@@ -4,7 +4,16 @@
     "sessionUrl": false
   },
   "permissions": {
-    "defaultMode": "auto"
+    "defaultMode": "auto",
+    "allow": [
+      "Bash(clerk capture:*)",
+      "Bash(clerk inbox list)",
+      "Bash(clerk inbox show:*)",
+      "Bash(clerk inbox dups:*)",
+      "Bash(clerk backlog next)",
+      "Bash(clerk backlog show:*)",
+      "Bash(clerk backlog claim:*)"
+    ]
   },
   "model": "opus[1m]",
   "enableAllProjectMcpServers": true,
