@@ -19,11 +19,25 @@ setup() {
 		"umbel/hooks/local/delivery-superpowers-locations"
 		"umbel/skills/local/presort"
 	)
+	OPACITY_TOKEN_RE='(^|[^[:alnum:]_])(bd|beads?|tier|repo-visibility)([^[:alnum:]_]|$)'
 }
 
 @test "clerk-native artifacts keep Clerk opaque" {
 	cd "$REPO_ROOT"
+	# Literal acceptance probe: the refined source artifacts carry none of the retired/backend words.
 	run grep -RinE 'bd|beads|tier|repo-visibility' "${NEW_ARTIFACTS[@]}"
+	[ "$status" -eq 1 ]
+	[ "$output" = "" ]
+
+	# Token probe with controls: do not make ordinary substrings like TBD or subdirectories red.
+	printf 'TBD subdirectories data-path 4Bny\n' >"$BATS_TEST_TMPDIR/opacity-negative.txt"
+	printf 'use bd-create here\n' >"$BATS_TEST_TMPDIR/opacity-positive.txt"
+	run grep -inE "$OPACITY_TOKEN_RE" "$BATS_TEST_TMPDIR/opacity-negative.txt"
+	[ "$status" -eq 1 ]
+	run grep -inE "$OPACITY_TOKEN_RE" "$BATS_TEST_TMPDIR/opacity-positive.txt"
+	[ "$status" -eq 0 ]
+
+	run grep -RinE "$OPACITY_TOKEN_RE" "${NEW_ARTIFACTS[@]}"
 	[ "$status" -eq 1 ]
 	[ "$output" = "" ]
 }
@@ -51,7 +65,7 @@ setup() {
 	grep -q 'clerk inbox list' "$presort"
 	grep -q 'clerk inbox pregrill <id>' "$presort"
 	grep -q 'A criteria-less ready-looking candidate is \*\*not ready\*\*' "$presort"
-	run grep -nE 'bd|beads|repo-visibility' "$presort"
+	run grep -nE 'bd|beads|tier|repo-visibility' "$presort"
 	[ "$status" -eq 1 ]
 }
 
@@ -94,4 +108,9 @@ setup() {
 	built="$(printf '%s\n' "$output" | tail -1)"
 	[ "$(find "$built/hooks" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" = "1" ]
 	[ -d "$built/hooks/clerk-session-start" ]
+	grep -q 'clerk-session-start' "$built/hooks/hooks.json"
+	! grep -q 'session-start/session-start' "$built/hooks/hooks.json"
+	run grep -RinE "$OPACITY_TOKEN_RE" "$built/bundle.md" "$built/hooks/clerk-session-start"
+	[ "$status" -eq 1 ]
+	[ "$output" = "" ]
 }
