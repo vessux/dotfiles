@@ -17,7 +17,8 @@ review-required vs auto-merge-on-green). They get opposite storage treatments on
   deterministic and offline-capable. One key for now (`backlog: bd|gh`), and the file is the
   **manifest v0**: when a third binding arrives (jira/linear/gt; promote and claim styles), roles
   become new keys in an existing file, not a migration (ADR 0010's interface-now instinct;
-  ADR 0015's presets ride this key).
+  ADR 0015's presets ride this key). `.clerk` is read and repaired through Clerk; Umbel bundles
+  may require a green `clerk doctor`, but they do not parse or generate the marker themselves.
 - **The marker is strict, and ambiguity is refused, never resolved.** A valid `.clerk` is a single
   directive line (surrounding whitespace and `#`-comment lines tolerated). More than one directive,
   or trailing non-comment content, makes it *invalid* — the parser does not take first-match-wins.
@@ -52,13 +53,18 @@ during cutover, each generation reading only its own.
 - Seeds in the new generation barely mention the axes at all: dispatch is the clerk's business,
   and the gate is discovered live, so the graduated-autonomy ladder is a per-repo platform
   setting, not seed prose.
-- This repo's `.clerk` says `backlog: bd` — unchanged behavior under retired vocabulary.
+- At cutover this repo's `.clerk` says `backlog: bd` — unchanged behavior under retired
+  vocabulary.
 
 ## History
 
 - 2026-07-11: dotfiles committed `.clerk` with `backlog: bd`; `nextdelivery` became a
   compatibility shim over `clerk backlog next`, and its old setup hint was replaced by
   `clerk doctor`.
+- 2026-07-11: clarified the Umbel/Clerk boundary before dotfiles cutover: `.clerk` is the
+  repo-local manifest that Clerk reads and repairs, while bundles are clients that may require a
+  green `clerk doctor` but must not parse or generate the marker. This coordinates the concurrent
+  Umbel overhaul with the Clerk cutover.
 - 2026-07-09: the `nextdelivery` Consequences bullet was rewritten to drop the false claim
   that it was a `zsh/.zshenv` function and to state its current form instead. `nextdelivery`
   was ported from a `.zshenv` zsh function to a `bin/` executable (ADR 0001, repo-root), so it

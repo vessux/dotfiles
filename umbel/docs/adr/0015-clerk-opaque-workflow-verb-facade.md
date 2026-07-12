@@ -2,7 +2,7 @@
 status: accepted
 ---
 
-# Clerk: an opaque workflow-verb facade owns all mechanism — built, not adopted
+# Clerk: an opaque workflow-verb facade owns the public workflow contract
 
 Workflow mechanism (claim atomicity, sync discipline, finish sequencing) lived in seed prose and
 auto-memories that agents re-read, re-obey, and eventually skip (dotfiles-b6r); fixes landed as
@@ -12,13 +12,91 @@ shim — and the agent speaks workflow verbs. The split is **judgment vs paperwo
 decides *which* verb and authors anything requiring judgment (PR bodies, promotion titles, return
 reasons); the clerk executes mechanism exactly, in code that cannot drift from itself.
 
+The durable decision is the **facade contract**, not ownership of every primitive forever. Clerk is
+allowed — expected — to orchestrate existing substrates (`bd`, `gh`, git refs, GitHub Actions,
+branch protection) and to swap or delegate those substrates later. What bundles and agents depend
+on is the verb grammar, exit/output contracts, and idempotent reconciliation behaviour.
+
+This clarification is deliberately made before the dotfiles cutover: the concurrent Umbel overhaul
+may reorganise bundle application, but it must not accidentally make bundles the owners of Clerk's
+state machine or make Clerk depend on Umbel internals.
+
+## Boundary contract
+
+### Clerk public contract
+
+The public contract is the `clerk` CLI: its verb roster, argument shapes, exit-code taxonomy,
+prescriptive output, `.clerk` marker interpretation, and the idempotency promised by `doctor`,
+`claim`, `release`, `return`, `submit`, `gate`, `finish`, `sync`, and `glean`. Tests assert this
+contract at the command boundary. Callers may rely on successful mutations being self-verified
+before a success line is printed, and on repeated reconciliation converging rather than duplicating
+work.
+
+The current `bin/clerk` Bash implementation is **v0 implementation detail**. Bash was acceptable
+for the first cut because the tool is mostly process orchestration around `git`/`bd`/`gh` and needs
+zero packaging burden in dotfiles. It is not a permanent language commitment: once the facade is
+stable, the internals may be ported to Go, Python, TypeScript, Rust, or another substrate without a
+bundle-visible change. A port must preserve the CLI contract first; implementation neatness alone is
+not a reason to change the public surface.
+
+### Umbel bundle contract
+
+Umbel bundles are **clients of Clerk**, not generators of Clerk. A bundle may:
+
+- include Clerk-facing operating prose (short seed text, session loop, keys);
+- install a thin SessionStart hook that injects those rules and kicks `clerk glean`;
+- choose which skills compose around the Clerk loop;
+- tell the operator to run `clerk doctor` when setup is missing.
+
+A bundle must not:
+
+- parse or write backend state directly (`bd`, GitHub issue labels, claim branches) when a Clerk
+  verb exists;
+- parse `.clerk` itself instead of calling Clerk;
+- synthesize a different `clerk` implementation during bundle application;
+- encode branch/worktree/finish mechanics in seed prose as a parallel workflow.
+
+Umbel apply remains idempotent over bundle pins, generated hook config, and injected text. Per-repo
+workflow state (`.clerk`, open claims, worktrees, PRs, transcript watermarks) is Clerk/repo state,
+not bundle state. Rollback is therefore re-pinning the old bundle generation; it must not require
+rewinding Clerk's already-reconciled operational state.
+
+### Manifest contract
+
+`.clerk` is the repo-local manifest v0 owned by the Clerk/repo boundary (ADR 0017). Bundles may
+assume Clerk can dispatch once `clerk doctor` is green; they do not own the marker schema. Schema
+changes are handled as Clerk compatibility work: accept old valid manifests, diagnose ambiguous
+ones, and have `doctor` prescribe or perform safe migrations.
+
+### Change budget
+
+Small changes: seed wording, bundle composition, skill lists, prompt text, and hook text that still
+calls the same Clerk verbs.
+
+Medium changes: adding manifest keys, changing labels/states behind an existing verb, changing PR
+body proof schema, or adding a backend binding while preserving the verb contract.
+
+Large changes: changing the claim lock/worktree model, removing PRs as the convergence point,
+changing merge semantics in a way that invalidates finish's PR-state model, or changing the public
+verb grammar. Large changes require a focused grill before delivery resumes.
+
 ## Decision
 
+- **Clerk is a facade over primitives, not a new substrate monopoly.** The workflow needed a stable
+  command boundary because prose/config discipline was the failing layer; it did not require
+  reimplementing every underlying capability. Existing primitives remain first-choice internals
+  where they match the contract.
+- **Implementation language is not the contract.** The Bash script is the v0 executable form and is
+  intentionally portable in this dotfiles repo, but the CLI contract above is what survives a future
+  port.
+- **Umbel bundles consume Clerk; they do not own it.** The bundle layer provides operating rules and
+  hook wiring. Clerk owns workflow mechanism and repo-local state.
 - **Grammar is noun-scoped by collection (place)**: `inbox` (unrefined pool) and `backlog` (ready
   pool). Object-type nouns break under promote=flow; ID-shape dispatch couples to backend token
   formats — both rejected in the session-1 stress test (epic dotfiles-dft).
-- **Verb roster**: `capture "<title>" [--stdin|--impediment]`; `inbox list|show|dups|ready|drop|pregrill`;
-  `backlog next|show|claim|release|return|submit|finish`; `sync`; `doctor`; `glean`.
+- **Verb roster**: `capture "<title>" [--stdin|--impediment]`;
+  `inbox list|show|dups|ready|drop|pregrill`;
+  `backlog next|show|claim|release|return|submit|gate|finish`; `sync`; `doctor`; `glean`.
 - **Opacity (hard ban, layered)**: skills, bundles, hooks, seeds, and injected instructions never
   name beads/`bd` — the backing store is the clerk's private business. Agent *runtime* discovery of
   `bd` is tolerated (reads harmless; writes self-punishing — they reintroduce solved bugs like the
@@ -124,6 +202,11 @@ reasons); the clerk executes mechanism exactly, in code that cannot drift from i
 
 ## History
 
+- 2026-07-11: design pause before dotfiles cutover clarified the boundary contract: Clerk's durable
+  asset is the CLI facade over primitives, not a permanent bespoke substrate; Bash is the v0
+  implementation, not the language contract; Umbel bundles consume Clerk and own only operating
+  prose/hook wiring, while Clerk/repo state owns `.clerk`, claims, worktrees, PR reconciliation, and
+  transcript watermarks.
 - 2026-07-06: operational-contracts bullet added (exit-code taxonomy, `doctor`-as-health-check,
   mutation-self-verify, non-TTY/`NO_COLOR` output discipline). Surfaced by the small-model delivery
   experiment on unit dotfiles-dft.1 — a fable baseline and a sonnet-implement/haiku-verify arm both
