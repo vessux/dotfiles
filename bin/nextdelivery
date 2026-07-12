@@ -1,58 +1,11 @@
 #!/usr/bin/env bash
-# nextdelivery — list THIS repo's "ready for delivery" backlog, dispatching on the repo's
-# delivery tier so neither you nor an agent hand-reconstructs the per-tier query. Zero-arg,
-# read-only LISTER: it runs the native backlog tool and passes the output through verbatim
-# (native colours/columns/paging) — no arg passthrough, no reformatting, no tier header.
-#
-# Executable form (ADR 0001's `bin/` stow package, on PATH via .zshenv) so NON-zsh callers
-# — notably an agent's own Bash — see it; the prior zsh FUNCTION form in .zshenv was
-# invisible to pi's /bin/bash tool shell (bash neither sources .zshenv nor speaks zsh
-# function syntax). It is now usable by yazi/hooks/cron/CI too, like bd/clip/plannotate.
-#
-# Tier comes from the committed repo-root `.repo-visibility` marker (public|private), read
-# exactly as the umbel ruleset-inject hooks read it. It NEVER defaults a tier.
-#   private -> `bd list --ready --label stage:ready --sort priority`. `--ready` matches the
-#              `bd ready` ready-set (no active blockers); `bd list` (NOT `bd ready`) is used
-#              because bd ready's empty-result line falsely reads "all issues have blocking
-#              dependencies" when the stage:ready filter simply matched nothing, whereas bd
-#              list says a neutral "No issues found." (q1p). `bd update --claim` is the atomic
-#              pickup, so listing the refined-ready set is concurrency-safe.
-#   public  -> `gh issue list --label ready-for-agent`. Per ADR 0011 the claim relabels off
-#              ready-for-agent (the canonical work-branch is the lock), so the simple label
-#              query lists only unclaimed work — no no:assignee filter.
-#   missing/unreadable/unknown marker, or not in a git repo -> stderr error + fix hint,
-#              exits non-zero.
+# Compatibility shim for the retired ready-pool lister. The live workflow facade is Clerk;
+# keep this executable only so old shell muscle memory gets routed to the supported verb.
 set -uo pipefail
 
-hint="  set the tier: create a one-line .repo-visibility at the repo root containing 'public' or 'private' and commit it (see 'umbel adopt')."
-
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || repo_root=""
-if [[ -z "$repo_root" ]]; then
-	printf 'nextdelivery: not in a git repo — no .repo-visibility tier marker to read\n' >&2
-	printf '%s\n' "$hint" >&2
-	exit 1
+if [ "$#" -ne 0 ]; then
+	printf "nextdelivery: retired; use 'clerk backlog next' (or 'clerk doctor' for setup)\n" >&2
+	exit 2
 fi
 
-marker="$repo_root/.repo-visibility"
-if [[ ! -r "$marker" ]]; then
-	printf 'nextdelivery: no readable .repo-visibility tier marker at %s\n' "$marker" >&2
-	printf '%s\n' "$hint" >&2
-	exit 1
-fi
-
-# tr -d '[:space:]' to tolerate a trailing newline / indent; -r guards a read failure.
-tier="$(tr -d '[:space:]' < "$marker" 2>/dev/null)" || tier=""
-
-case "$tier" in
-	private)
-		exec bd list --ready --label stage:ready --sort priority
-		;;
-	public)
-		exec gh issue list --label ready-for-agent
-		;;
-	*)
-		printf "nextdelivery: unrecognised tier '%s' in .repo-visibility (want 'public' or 'private')\n" "$tier" >&2
-		printf '%s\n' "$hint" >&2
-		exit 1
-		;;
-esac
+exec clerk backlog next

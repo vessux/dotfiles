@@ -2,16 +2,19 @@
 
 Personal dotfiles repo.
 
-## Agent skills
+## Agent workflow
 
-### Issue tracker
+Use **Clerk** (`clerk`) as the workflow facade for this repo.
 
-Issues live in **beads** (`bd`) — there is no GitHub issue tracker for this repo. See `docs/agents/issue-tracker.md`.
+- Capture raw work with `clerk capture`.
+- Inspect/refine work with `clerk inbox ...`.
+- Pick up and deliver ready work with `clerk backlog ...`.
+- Run `clerk doctor` when setup or the next workflow step is unclear.
 
-### Triage labels
+Runtime instructions should speak Clerk verbs only. Operator-only docs under `docs/agents/`
+may describe lower-level storage details for maintenance.
 
-Beads-native, solo-simplified: raw capture → `stage:ready` → closed/`wontfix`. See `docs/agents/triage-labels.md`.
+## Domain docs
 
-### Domain docs
-
-Multi-context; `umbel/` is the first (currently only) documented context (ADRs at `umbel/docs/adr/`). See `docs/agents/domain.md`.
+Multi-context; `umbel/` is the first documented context (ADRs at `umbel/docs/adr/`). See
+`docs/agents/domain.md`.

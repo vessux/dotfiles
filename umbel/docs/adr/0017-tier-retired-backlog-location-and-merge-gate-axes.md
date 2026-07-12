@@ -46,16 +46,9 @@ during cutover, each generation reading only its own.
 
 ## Consequences
 
-- `nextdelivery` (the ready-pool lister that dispatches on a repo-root marker) is slated to
-  dissolve into `clerk backlog next` + `clerk doctor`, with `clerk doctor --fix --backend bd|gh`
-  owning `.clerk` provisioning. It is a legacy/tier-era entrypoint for this repo: today it still
-  reads `.repo-visibility` and uses the old `bd list --ready --label stage:ready` / `gh issue
-  list --label ready-for-agent` forms — the `.clerk` manifest this ADR introduces is not yet
-  wired into it, and this repo has no `.clerk` file. Per ADR 0001 (repo-root) it lives as a
-  `bin/` executable, not a `.zshenv` zsh function — pi's agent Bash and yazi must reach it — so
-  the migration target is `bin/nextdelivery`, not an in-shell function. It retires when
-  `clerk backlog next` (which is the listed-but-still-layered migration target) is the live
-  dispatcher.
+- `nextdelivery` has dissolved into `clerk backlog next` + `clerk doctor`. Its remaining `bin/`
+  executable is only a compatibility shim for old muscle memory; it no longer reads the retired
+  marker or prints the old setup hint. Clerk owns ready-pool dispatch and `.clerk` provisioning.
 - Seeds in the new generation barely mention the axes at all: dispatch is the clerk's business,
   and the gate is discovered live, so the graduated-autonomy ladder is a per-repo platform
   setting, not seed prose.
@@ -63,6 +56,9 @@ during cutover, each generation reading only its own.
 
 ## History
 
+- 2026-07-11: dotfiles committed `.clerk` with `backlog: bd`; `nextdelivery` became a
+  compatibility shim over `clerk backlog next`, and its old setup hint was replaced by
+  `clerk doctor`.
 - 2026-07-09: the `nextdelivery` Consequences bullet was rewritten to drop the false claim
   that it was a `zsh/.zshenv` function and to state its current form instead. `nextdelivery`
   was ported from a `.zshenv` zsh function to a `bin/` executable (ADR 0001, repo-root), so it

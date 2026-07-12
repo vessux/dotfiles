@@ -16,8 +16,8 @@ export PATH="${XDG_DATA_HOME:-$HOME/.local/share}/mise/shims:$PATH"
 # not .zshrc, so non-interactive callers see them (same reason as the shims above). These are
 # real executables, so NON-zsh subprocesses can call them too — notably an agent's own Bash
 # (pi's tool shell is /bin/bash, not zsh: it never sourced .zshrc/.zshenv) and yazi's `shell`
-# block (the `A` key runs `plannotate`, which pipes to `clip`). `md` and `nextdelivery` are
-# also bin/ executables (once zsh functions defined here — they were invisible to pi's bash).
+# block (the `A` key runs `plannotate`, which pipes to `clip`). `md` is also a bin/
+# executable (once a zsh function defined here — it was invisible to pi's bash).
 # See docs/adr/0001-reusable-scripts-as-config-bin-executables.md.
 export PATH="$HOME/.config/bin:$PATH"
 

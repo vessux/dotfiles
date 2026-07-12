@@ -53,6 +53,10 @@ pi/agent/extensions/*/*
 # project config is ever wanted — see the claude-code/* block above.
 .claude/
 
+# clerk: provisioned delivery worktrees live under the checkout; the branches and
+# commits are tracked by git refs, not by recursively staging worktree contents.
+.worktrees/
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
