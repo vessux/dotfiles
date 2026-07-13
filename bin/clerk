@@ -602,30 +602,37 @@ returned_branch_exists() { # $1=root $2=short
 }
 
 dispose_returned() { # $1=root $2=short
-	local main_root short local_present=0 remote_present=0 offline=0
+	local main_root short local_refs remote_refs offline=0 ref branch
 	main_root=$(primary_repo_root "$1")
 	short="$2"
-	git -C "$main_root" show-ref --verify --quiet "refs/heads/returned/$short" && local_present=1
-	git -C "$main_root" show-ref --verify --quiet "refs/remotes/origin/returned/$short" && remote_present=1
-	if [ "$local_present" -eq 0 ] && [ "$remote_present" -eq 0 ]; then
+	local_refs=$(git -C "$main_root" for-each-ref --format='%(refname:short)' \
+		"refs/heads/returned/$short" "refs/heads/returned/$short-*" 2>/dev/null || true)
+	remote_refs=$(git -C "$main_root" for-each-ref --format='%(refname:short)' \
+		"refs/remotes/origin/returned/$short" "refs/remotes/origin/returned/$short-*" 2>/dev/null || true)
+	if [ -z "$local_refs" ] && [ -z "$remote_refs" ]; then
 		return 0
 	fi
-	if [ "$local_present" -eq 1 ]; then
-		git -C "$main_root" branch -D "returned/$short" >/dev/null 2>&1 ||
-			backend_fail "returned disposition failed — could not delete local returned/$short"
-	fi
+	while IFS= read -r ref; do
+		[ -n "$ref" ] || continue
+		git -C "$main_root" branch -D "$ref" >/dev/null 2>&1 ||
+			backend_fail "returned disposition failed — could not delete local $ref"
+	done <<<"$local_refs"
 	if ! (GIT_TERMINAL_PROMPT=0 timeout 10 git -C "$main_root" fetch origin >/dev/null 2>&1); then
 		offline=1
 	fi
 	if [ "$offline" -eq 1 ]; then
-		printf 'clerk: OFFLINE - returned/%s deleted locally only; the remote branch delete is deferred to sync (clerk sync will finish it at the next reconnect).\n' "$short" >&2
+		printf 'clerk: OFFLINE - returned/%s and archives deleted locally only; the remote branch delete is deferred to sync (clerk sync will finish it at the next reconnect).\n' "$short" >&2
 		return 0
 	fi
-	if git -C "$main_root" show-ref --verify --quiet "refs/remotes/origin/returned/$short"; then
-		git -C "$main_root" push origin --delete "returned/$short" >/dev/null 2>&1 ||
-			backend_fail "returned disposition failed — could not delete origin returned/$short"
-		git -C "$main_root" update-ref -d "refs/remotes/origin/returned/$short" >/dev/null 2>&1 || true
-	fi
+	remote_refs=$(git -C "$main_root" for-each-ref --format='%(refname:short)' \
+		"refs/remotes/origin/returned/$short" "refs/remotes/origin/returned/$short-*" 2>/dev/null || true)
+	while IFS= read -r ref; do
+		[ -n "$ref" ] || continue
+		branch="${ref#origin/}"
+		git -C "$main_root" push origin --delete "$branch" >/dev/null 2>&1 ||
+			backend_fail "returned disposition failed — could not delete origin $branch"
+		git -C "$main_root" update-ref -d "refs/remotes/origin/$branch" >/dev/null 2>&1 || true
+	done <<<"$remote_refs"
 }
 
 handle_returned_disposition() { # $1=verb-label $2=root $3=short $4=keep|discard|empty
@@ -1349,6 +1356,32 @@ cmd_backlog_release() {
 # verbatim as an impediment-typed capture (reusing dft.2's `bd_ensure_impediment_type`/
 # `--type impediment` path) so it re-enters the ordinary inbox pipeline instead of sitting as
 # free-floating prose on the reopened unit.
+archive_existing_returned() { # $1=main-root $2=short $3=offline(0|1)
+	local main_root="$1" short="$2" offline="$3" prior_sha archive
+	if ! git -C "$main_root" show-ref --verify --quiet "refs/heads/returned/$short"; then
+		if git -C "$main_root" show-ref --verify --quiet "refs/remotes/origin/returned/$short"; then
+			git -C "$main_root" branch "returned/$short" "origin/returned/$short" >/dev/null 2>&1 ||
+				backend_fail "return failed — could not materialize origin/returned/$short for archiving"
+		else
+			return 0
+		fi
+	fi
+	prior_sha=$(git -C "$main_root" rev-parse --short "returned/$short") ||
+		backend_fail "return failed — could not resolve returned/$short before archiving"
+	archive="returned/$short-$prior_sha"
+	git -C "$main_root" branch -M "returned/$short" "$archive" >/dev/null 2>&1 ||
+		backend_fail "return failed — could not archive returned/$short as $archive"
+	if [ "$offline" -eq 0 ]; then
+		git -C "$main_root" push origin "$archive" >/dev/null 2>&1 ||
+			backend_fail "return failed — could not push $archive to origin"
+		if git -C "$main_root" show-ref --verify --quiet "refs/remotes/origin/returned/$short"; then
+			git -C "$main_root" push origin --delete "returned/$short" >/dev/null 2>&1 ||
+				backend_fail "return failed — could not delete origin returned/$short before replacing it"
+			git -C "$main_root" update-ref -d "refs/remotes/origin/returned/$short" >/dev/null 2>&1 || true
+		fi
+	fi
+}
+
 cmd_backlog_return() {
 	local backend="$1" root="$2"
 	shift 2
@@ -1419,6 +1452,9 @@ cmd_backlog_return() {
 	fi
 
 	# PRESERVE THE ATTEMPT: rename, never delete — the commits are the grill evidence.
+	# If a previous returned attempt exists, archive it first so the new return can take the
+	# canonical returned/<short> name without discarding any evidence.
+	archive_existing_returned "$main_root" "$short" "$offline"
 	if ! git -C "$main_root" branch -m "delivery/$short" "returned/$short" 2>/dev/null; then
 		backend_fail "return failed — could not rename delivery/$short to returned/$short"
 	fi

@@ -490,6 +490,25 @@ JSON
 	[ "$(bd show "$id" --readonly --json | jq -r '(.[0].labels // []) | index("stage:ready")')" != null ]
 }
 
+@test "inbox ready (bd): returned discard removes canonical and archived returned refs" {
+	repo=$(make_bd_repo ready_returned_discard_archives)
+	add_origin "$repo"
+	cd "$repo"
+	id=$(bd create "returned ready discard archives" --acceptance "does the thing" --silent)
+	short="${id#*-}"
+	mk_returned_branch "$repo" "$short"
+	git -C "$repo" branch "returned/$short-abc1234" main
+	git -C "$repo" push -q origin "returned/$short-abc1234"
+
+	run "$CLERK" inbox ready "$id" --returned discard
+	[ "$status" -eq 0 ]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short-abc1234"
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/returned/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/returned/$short-abc1234"
+	[ "$(bd show "$id" --readonly --json | jq -r '(.[0].labels // []) | index("stage:ready")')" != null ]
+}
+
 @test "inbox ready (bd): returned keep preserves refs and promotes" {
 	repo=$(make_bd_repo ready_returned_keep)
 	add_origin "$repo"
@@ -648,6 +667,25 @@ JSON
 	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = closed ]
 	! git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
 	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/returned/$short"
+}
+
+@test "inbox drop (bd): returned discard removes canonical and archived returned refs" {
+	repo=$(make_bd_repo drop_returned_discard_archives)
+	add_origin "$repo"
+	cd "$repo"
+	id=$(bd create "returned drop discard archives" --silent)
+	short="${id#*-}"
+	mk_returned_branch "$repo" "$short"
+	git -C "$repo" branch "returned/$short-abc1234" main
+	git -C "$repo" push -q origin "returned/$short-abc1234"
+
+	run "$CLERK" inbox drop "$id" --returned discard
+	[ "$status" -eq 0 ]
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = closed ]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short-abc1234"
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/returned/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/returned/$short-abc1234"
 }
 
 @test "inbox drop (bd): returned keep preserves branch and closes" {
