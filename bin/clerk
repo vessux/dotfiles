@@ -2519,12 +2519,13 @@ cmd_glean() {
 # ------------------------------------------------------------------ main ----
 
 main() {
-	# --explain may sit anywhere in the argument list; strip it, keep the verb path.
-	local explain=0 a
+	# --explain / --help may sit anywhere in the argument list; strip them, keep the verb path.
+	local explain=0 help=0 a
 	local -a args=()
 	for a in "$@"; do
 		case "$a" in
 			--explain) explain=1 ;;
+			--help | -h) help=1 ;;
 			*) args+=("$a") ;;
 		esac
 	done
@@ -2534,6 +2535,11 @@ main() {
 		if [ "$explain" -eq 1 ]; then
 			usage_error "clerk: --explain needs a verb — e.g. 'clerk --explain backlog claim'"
 		fi
+		if [ "$help" -eq 1 ]; then
+			printf 'clerk %s — workflow verb facade (ADR 0015)\n' "$CLERK_VERSION"
+			print_roster
+			exit 0
+		fi
 		printf 'clerk: missing verb\n' >&2
 		print_roster >&2
 		exit 2
@@ -2542,11 +2548,6 @@ main() {
 	case "$1" in
 		--version | -V)
 			printf 'clerk %s\n' "$CLERK_VERSION"
-			exit 0
-			;;
-		--help | -h)
-			printf 'clerk %s — workflow verb facade (ADR 0015)\n' "$CLERK_VERSION"
-			print_roster
 			exit 0
 			;;
 	esac
@@ -2590,7 +2591,7 @@ main() {
 		*) unknown_verb "$1" ;;
 	esac
 
-	if [ "$explain" -eq 1 ]; then
+	if [ "$explain" -eq 1 ] || [ "$help" -eq 1 ]; then
 		explain_verb "$verb"
 		exit 0
 	fi
