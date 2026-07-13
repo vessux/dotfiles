@@ -37,6 +37,19 @@ make_bd_repo() { # $1 = subdir name
 	printf '%s\n' "$dir"
 }
 
+add_origin() { # $1 = repo
+	local repo="$1" origin="$BATS_TEST_TMPDIR/origin-$(basename "$repo").git"
+	git init -q --bare -b main "$origin"
+	git -C "$repo" remote add origin "$origin"
+	git -C "$repo" push -q origin main
+}
+
+mk_returned_branch() { # $1=repo $2=short
+	local repo="$1" short="$2"
+	git -C "$repo" branch "returned/$short" main
+	git -C "$repo" push -q origin "returned/$short"
+}
+
 # Scratch git repo + `.clerk` (backlog: gh); no bd involved at all.
 make_gh_repo() { # $1 = subdir name
 	local dir="$BATS_TEST_TMPDIR/$1"
@@ -446,6 +459,94 @@ JSON
 	[ "$(bd show "$id" --readonly --json | jq -r '(.[0].labels // []) | index("stage:ready")')" != null ]
 }
 
+@test "inbox ready (bd): returned branch requires explicit keep or discard" {
+	repo=$(make_bd_repo ready_returned_fail)
+	add_origin "$repo"
+	cd "$repo"
+	id=$(bd create "returned ready fail" --acceptance "does the thing" --silent)
+	short="${id#*-}"
+	mk_returned_branch "$repo" "$short"
+
+	run "$CLERK" inbox ready "$id"
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"--returned keep"* ]]
+	[[ "$output" == *"--returned discard"* ]]
+	[ "$(bd show "$id" --readonly --json | jq -r '(.[0].labels // []) | index("stage:ready")')" = null ]
+}
+
+@test "inbox ready (bd): returned discard removes local and origin refs before promoting" {
+	repo=$(make_bd_repo ready_returned_discard)
+	add_origin "$repo"
+	cd "$repo"
+	id=$(bd create "returned ready discard" --acceptance "does the thing" --silent)
+	short="${id#*-}"
+	mk_returned_branch "$repo" "$short"
+
+	run "$CLERK" inbox ready "$id" --returned discard
+	[ "$status" -eq 0 ]
+	[ "$output" = "clerk: promoted $id to stage:ready" ]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/returned/$short"
+	[ "$(bd show "$id" --readonly --json | jq -r '(.[0].labels // []) | index("stage:ready")')" != null ]
+}
+
+@test "inbox ready (bd): returned keep preserves refs and promotes" {
+	repo=$(make_bd_repo ready_returned_keep)
+	add_origin "$repo"
+	cd "$repo"
+	id=$(bd create "returned ready keep" --acceptance "does the thing" --silent)
+	short="${id#*-}"
+	mk_returned_branch "$repo" "$short"
+
+	run "$CLERK" inbox ready "$id" --returned keep
+	[ "$status" -eq 0 ]
+	git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+	git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/returned/$short"
+	[ "$(bd show "$id" --readonly --json | jq -r '(.[0].labels // []) | index("stage:ready")')" != null ]
+}
+
+@test "inbox ready (bd): returned discard is a no-op when no returned branch exists" {
+	repo=$(make_bd_repo ready_returned_absent)
+	cd "$repo"
+	id=$(bd create "no returned branch" --acceptance "does the thing" --silent)
+	run "$CLERK" inbox ready "$id" --returned discard
+	[ "$status" -eq 0 ]
+	[ "$(bd show "$id" --readonly --json | jq -r '(.[0].labels // []) | index("stage:ready")')" != null ]
+}
+
+@test "inbox ready (bd): returned discard offline deletes local ref, warns, and still promotes" {
+	repo=$(make_bd_repo ready_returned_offline)
+	add_origin "$repo"
+	cd "$repo"
+	id=$(bd create "returned ready offline" --acceptance "does the thing" --silent)
+	short="${id#*-}"
+	mk_returned_branch "$repo" "$short"
+	git -C "$repo" remote set-url origin "$repo-gone-nonexistent"
+
+	run "$CLERK" inbox ready "$id" --returned discard
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"OFFLINE"* ]]
+	[[ "$output" == *"deferred to sync"* ]]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+	[ "$(bd show "$id" --readonly --json | jq -r '(.[0].labels // []) | index("stage:ready")')" != null ]
+}
+
+@test "inbox ready (bd): returned disposition has no collateral branches" {
+	repo=$(make_bd_repo ready_returned_collateral)
+	add_origin "$repo"
+	cd "$repo"
+	id=$(bd create "returned ready collateral" --acceptance "does the thing" --silent)
+	short="${id#*-}"
+	mk_returned_branch "$repo" "$short"
+	git -C "$repo" branch "delivery/$short" main
+	git -C "$repo" branch "returned/other" main
+
+	run "$CLERK" inbox ready "$id" --returned discard
+	[ "$status" -eq 0 ]
+	git -C "$repo" show-ref --verify --quiet "refs/heads/delivery/$short"
+	git -C "$repo" show-ref --verify --quiet "refs/heads/returned/other"
+}
+
 @test "inbox ready (bd) on an id that does not resolve: bad-id usage error, exit 2 (not the acceptance-criteria refusal)" {
 	repo=$(make_bd_repo ready10)
 	cd "$repo"
@@ -519,6 +620,59 @@ JSON
 	[ "$(bd show "$id" --readonly --json | jq -r '.[0].close_reason')" = wontfix ]
 }
 
+@test "inbox drop (bd): returned branch requires explicit keep or discard" {
+	repo=$(make_bd_repo drop_returned_fail)
+	add_origin "$repo"
+	cd "$repo"
+	id=$(bd create "returned drop fail" --silent)
+	short="${id#*-}"
+	mk_returned_branch "$repo" "$short"
+
+	run "$CLERK" inbox drop "$id"
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"--returned keep"* ]]
+	[[ "$output" == *"--returned discard"* ]]
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = open ]
+}
+
+@test "inbox drop (bd): returned discard removes branch and closes" {
+	repo=$(make_bd_repo drop_returned_discard)
+	add_origin "$repo"
+	cd "$repo"
+	id=$(bd create "returned drop discard" --silent)
+	short="${id#*-}"
+	mk_returned_branch "$repo" "$short"
+
+	run "$CLERK" inbox drop "$id" --returned discard
+	[ "$status" -eq 0 ]
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = closed ]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/returned/$short"
+}
+
+@test "inbox drop (bd): returned keep preserves branch and closes" {
+	repo=$(make_bd_repo drop_returned_keep)
+	add_origin "$repo"
+	cd "$repo"
+	id=$(bd create "returned drop keep" --silent)
+	short="${id#*-}"
+	mk_returned_branch "$repo" "$short"
+
+	run "$CLERK" inbox drop "$id" --returned keep
+	[ "$status" -eq 0 ]
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = closed ]
+	git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+}
+
+@test "inbox drop (bd): returned discard is a no-op when no returned branch exists" {
+	repo=$(make_bd_repo drop_returned_absent)
+	cd "$repo"
+	id=$(bd create "drop no returned" --silent)
+	run "$CLERK" inbox drop "$id" --returned discard
+	[ "$status" -eq 0 ]
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = closed ]
+}
+
 @test "inbox drop (gh) closes the issue" {
 	repo=$(make_gh_repo drop2)
 	fakebin="$BATS_TEST_TMPDIR/drop2-fakebin"
@@ -538,7 +692,7 @@ JSON
 	cd "$repo"
 	run "$CLERK" inbox drop
 	[ "$status" -eq 2 ]
-	[ "$output" = 'clerk inbox drop: missing id — usage: clerk inbox drop <id>' ]
+	[ "$output" = 'clerk inbox drop: missing id — usage: clerk inbox drop <id> [--returned keep|discard]' ]
 }
 
 # ------------------------------------------------------------- inbox pregrill -

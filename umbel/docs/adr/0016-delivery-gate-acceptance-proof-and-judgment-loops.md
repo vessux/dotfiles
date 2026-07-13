@@ -167,3 +167,24 @@ still cannot merge normally without the required `delivery-gate` check passing, 
 never arms PR auto-merge. Human attendance is the manual PR merge action after reading the PR body
 and gate result, not a GitHub review record. If a real second reviewer becomes available, the repo
 may flip K1 back to review-required branch protection without changing the clerk contract.
+
+## Amendment (2026-07-13): returned-branch disposition is a fail-closed grill decision (dotfiles-5jw)
+
+`return` preserves the failed attempt as `returned/<short>` (the criteria-miss loop's raw
+material), but no later verb collected it: `claim` bases a fresh `delivery/<short>` on main, and
+`inbox ready` / `inbox drop` touched no returned branch. A re-readied or dropped unit could
+therefore orphan `returned/<short>` silently.
+
+The grill — already the named consumer of `returned/*` — now supplies an explicit disposition at
+its exit points. `clerk inbox ready` and `clerk inbox drop` accept `--returned keep|discard` and
+refuse (exit 2) when `returned/<short>` exists and no disposition is given. `keep` leaves the
+branch untouched as evidence. `discard` deletes `returned/<short>` locally and from origin; if
+origin is unreachable, Clerk deletes the local ref, prints a deferred-to-sync warning, and proceeds
+with the ready/drop decision. This makes branch collection a fail-closed judgment, not a hidden
+side effect.
+
+Reviving the attempt by renaming `returned/<short>` back to `delivery/<short>` is rejected: the
+canonical work branch is the claim lock (ADR 0011), so recreating it outside `claim` forges the
+lock, and the rename destroys the evidence ref that the impediment capture cites. Reusing a
+returned attempt as a re-delivery base is therefore a claim-side option (`claim --from-returned`,
+dotfiles-uky), not a returned-branch rename.

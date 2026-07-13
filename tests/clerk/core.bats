@@ -261,6 +261,15 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	[[ "$lead" == *"ADR 0017"* ]]
 }
 
+@test "inbox ready/drop explain returned-branch disposition" {
+	run "$CLERK" inbox ready --explain
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"--returned keep|discard"* ]]
+	run "$CLERK" inbox drop --explain
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"--returned keep|discard"* ]]
+}
+
 @test "verb --help is help-only: no marker or backend needed" {
 	repo=$(make_repo helpnomarker -)
 	cd "$repo"
