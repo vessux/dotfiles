@@ -1248,15 +1248,16 @@ cmd_backlog_return() {
 	if ! claim_resolve_id "$backend" "$id_arg"; then
 		usage_error "clerk backlog return: $id_arg not found — check the id ('clerk backlog next' shows ready units)"
 	fi
-	local short="$CLAIM_SHORT" full="$CLAIM_FULL"
+	local short="$CLAIM_SHORT" full="$CLAIM_FULL" main_root
+	main_root=$(primary_repo_root "$root")
 
-	if ! git -C "$root" show-ref --verify --quiet "refs/heads/delivery/$short"; then
+	if ! git -C "$main_root" show-ref --verify --quiet "refs/heads/delivery/$short"; then
 		usage_error "clerk backlog return: no local delivery/$short — claim it first ('clerk backlog claim $full')"
 	fi
 
 	# SYNC-CHECK (mirrors claim): fetch's failure within a short timeout is the OFFLINE signal.
 	local offline=0
-	if ! (GIT_TERMINAL_PROMPT=0 timeout 10 git -C "$root" fetch origin >/dev/null 2>&1); then
+	if ! (GIT_TERMINAL_PROMPT=0 timeout 10 git -C "$main_root" fetch origin >/dev/null 2>&1); then
 		offline=1
 	fi
 
@@ -1266,7 +1267,7 @@ cmd_backlog_return() {
 	fi
 
 	local sha
-	sha=$(git -C "$root" rev-parse "delivery/$short")
+	sha=$(git -C "$main_root" rev-parse "delivery/$short")
 
 	# The checkout itself is disposable — the worktree only ever pointed at the branch, which
 	# will go on living as returned/<short> regardless. Removal is the fail-prone step (git
@@ -1276,26 +1277,30 @@ cmd_backlog_return() {
 	# never stripped, and the mandatory reason never filed, with no way to re-run return
 	# (dotfiles-dft.3 review). Running it first means a failure here leaves delivery/<short>
 	# completely untouched — fix the worktree, rerun `return` normally.
-	local wt="$root/.worktrees/$short"
+	local wt="$main_root/.worktrees/$short"
+	# If return is invoked from inside the disposable worktree, leave that cwd before removing
+	# it; all following git operations must use the primary checkout because the linked
+	# worktree path may no longer exist after this point.
+	cd "$main_root" || backend_fail "return failed — could not cd to $main_root before cleanup"
 	if [ -d "$wt" ]; then
-		if ! git -C "$root" worktree remove "$wt" 2>/dev/null; then
+		if ! git -C "$main_root" worktree remove "$wt" 2>/dev/null; then
 			backend_fail "return failed — could not remove the worktree at $wt (commit or stash local changes first)"
 		fi
 	else
-		git -C "$root" worktree prune >/dev/null 2>&1
+		git -C "$main_root" worktree prune >/dev/null 2>&1
 	fi
 
 	# PRESERVE THE ATTEMPT: rename, never delete — the commits are the grill evidence.
-	if ! git -C "$root" branch -m "delivery/$short" "returned/$short" 2>/dev/null; then
+	if ! git -C "$main_root" branch -m "delivery/$short" "returned/$short" 2>/dev/null; then
 		backend_fail "return failed — could not rename delivery/$short to returned/$short"
 	fi
 
 	if [ "$offline" -eq 0 ]; then
-		if ! git -C "$root" push origin "returned/$short" >/dev/null 2>&1; then
+		if ! git -C "$main_root" push origin "returned/$short" >/dev/null 2>&1; then
 			backend_fail "return failed — could not push returned/$short to origin"
 		fi
-		if git -C "$root" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"; then
-			if ! git -C "$root" push origin --delete "delivery/$short" >/dev/null 2>&1; then
+		if git -C "$main_root" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"; then
+			if ! git -C "$main_root" push origin --delete "delivery/$short" >/dev/null 2>&1; then
 				backend_fail "return failed — could not delete origin delivery/$short"
 			fi
 		fi
