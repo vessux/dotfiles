@@ -297,6 +297,83 @@ break_origin() { # $1 = repo
 	[[ "$body" == *"returned from delivery of $id"* ]]
 }
 
+@test "return (bd): first return creates canonical returned branch without an archive" {
+	repo=$(make_claim_repo ret_first_no_archive)
+	cd "$repo"
+	id=$(mk_ready_unit "first return no archive unit")
+	short="${id#*-}"
+	"$CLERK" backlog claim "$id" >/dev/null
+	run "$CLERK" backlog return "$id" --reason "first return"
+	[ "$status" -eq 0 ]
+	git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+	[ -z "$(git -C "$repo" for-each-ref --format='%(refname:short)' "refs/heads/returned/$short-*")" ]
+}
+
+@test "return (bd): second return archives the prior returned attempt and makes the new attempt canonical" {
+	repo=$(make_claim_repo ret_second_archive)
+	cd "$repo"
+	id=$(mk_ready_unit "second return archive unit")
+	short="${id#*-}"
+	"$CLERK" backlog claim "$id" >/dev/null
+	wt="$repo/.worktrees/$short"
+	printf 'first\n' >"$wt/attempt.txt"
+	git -C "$wt" add attempt.txt
+	git -C "$wt" commit -q -m "first attempt"
+	"$CLERK" backlog return "$id" --reason "first miss" >/dev/null
+	old_tip=$(git -C "$repo" rev-parse "returned/$short")
+	old_suffix=$(git -C "$repo" rev-parse --short "returned/$short")
+
+	bd update "$id" --add-label stage:ready >/dev/null
+	"$CLERK" backlog claim "$id" >/dev/null
+	wt="$repo/.worktrees/$short"
+	printf 'second\n' >"$wt/attempt.txt"
+	git -C "$wt" add attempt.txt
+	git -C "$wt" commit -q -m "second attempt"
+	new_tip=$(git -C "$repo" rev-parse "delivery/$short")
+
+	run "$CLERK" backlog return "$id" --reason "second miss"
+	[ "$status" -eq 0 ]
+	git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short-$old_suffix"
+	[ "$(git -C "$repo" rev-parse "returned/$short-$old_suffix")" = "$old_tip" ]
+	git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+	[ "$(git -C "$repo" rev-parse "returned/$short")" = "$new_tip" ]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/delivery/$short"
+	git -C "$repo" fetch -q origin
+	git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/returned/$short-$old_suffix"
+	git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/returned/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = open ]
+}
+
+@test "return (bd): offline second return archives locally and defers origin updates" {
+	repo=$(make_claim_repo ret_second_offline_archive)
+	cd "$repo"
+	id=$(mk_ready_unit "offline second return archive unit")
+	short="${id#*-}"
+	"$CLERK" backlog claim "$id" >/dev/null
+	wt="$repo/.worktrees/$short"
+	git -C "$wt" commit -q --allow-empty -m "first offline archive attempt"
+	"$CLERK" backlog return "$id" --reason "first miss" >/dev/null
+	old_tip=$(git -C "$repo" rev-parse "returned/$short")
+	old_suffix=$(git -C "$repo" rev-parse --short "returned/$short")
+
+	bd update "$id" --add-label stage:ready >/dev/null
+	"$CLERK" backlog claim "$id" >/dev/null
+	wt="$repo/.worktrees/$short"
+	git -C "$wt" commit -q --allow-empty -m "second offline archive attempt"
+	new_tip=$(git -C "$repo" rev-parse "delivery/$short")
+	break_origin "$repo"
+
+	run env CI= "$CLERK" backlog return "$id" --reason "offline second miss"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"OFFLINE"* ]]
+	[[ "$output" == *"deferred to sync"* ]]
+	[ "$(git -C "$repo" rev-parse "returned/$short-$old_suffix")" = "$old_tip" ]
+	[ "$(git -C "$repo" rev-parse "returned/$short")" = "$new_tip" ]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/delivery/$short"
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = open ]
+}
+
 @test "return (bd): running from inside the delivery worktree removes the primary checkout worktree" {
 	repo=$(make_claim_repo ret_from_worktree)
 	cd "$repo"
