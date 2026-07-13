@@ -54,7 +54,7 @@ mk_claimed_unit() { # echoes id; caller cwd is repo
 	local id short
 	id=$(bd create 'finish unit' --description '## Acceptance Criteria
 - does the thing' --silent)
-	bd update "$id" --claim >/dev/null
+	bd update "$id" --add-label stage:ready --claim >/dev/null
 	short="${id#*-}"
 	git branch -q "delivery/$short" origin/main
 	git push -q origin "delivery/$short"
@@ -171,7 +171,7 @@ SH
 	! git -C "$repo" ls-remote --exit-code --heads origin "delivery/$short" >/dev/null 2>&1
 }
 
-@test "finish: post-merge cleanup closes the unit and immediate second run is a clean no-op" {
+@test "finish: post-merge cleanup closes the unit, strips stage:ready, and immediate second run is a clean no-op" {
 	repo=$(make_finish_repo finish_merged)
 	cd "$repo"
 	id=$(mk_claimed_unit)
@@ -185,11 +185,43 @@ SH
 	[ ! -d "$repo/.worktrees/$short" ]
 	! git -C "$repo" show-ref --verify --quiet "refs/heads/delivery/$short"
 	! git -C "$repo" ls-remote --exit-code --heads origin "delivery/$short" >/dev/null 2>&1
-	[ "$(bd -C "$repo" show "$id" --readonly --json | jq -r '.[0].status')" = closed ]
+	json=$(bd -C "$repo" show "$id" --readonly --json)
+	[ "$(jq -r '.[0].status' <<<"$json")" = closed ]
+	[ "$(jq -r '(.[0].labels // []) | index("stage:ready")' <<<"$json")" = null ]
 	cd "$repo"
 	run "$CLERK" backlog finish "$id"
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"finished $id — PR #9 merged, delivery/$short cleaned up, unit closed"* ]]
+	json=$(bd -C "$repo" show "$id" --readonly --json)
+	[ "$(jq -r '.[0].status' <<<"$json")" = closed ]
+	[ "$(jq -r '(.[0].labels // []) | index("stage:ready")' <<<"$json")" = null ]
+}
+
+@test "finish: stage:ready strip is self-verified before success" {
+	repo=$(make_finish_repo finish_strip_verify)
+	cd "$repo"
+	id=$(mk_claimed_unit)
+	short="${id#*-}"
+	git worktree add -q "$repo/.worktrees/$short" "delivery/$short"
+	install_gh_pr_stub merged
+	real_bd=$(command -v bd)
+	cat >"$STUB_BIN/bd" <<SH
+#!/usr/bin/env bash
+for arg in "\$@"; do
+	if [ "\$arg" = --remove-label ]; then
+		exit 0
+	fi
+done
+exec "$real_bd" "\$@"
+SH
+	chmod +x "$STUB_BIN/bd"
+	cd "$repo/.worktrees/$short"
+	run "$CLERK" backlog finish
+	[ "$status" -eq 5 ]
+	[[ "$output" == *"was not confirmed without stage:ready after finish"* ]]
+	json=$("$real_bd" -C "$repo" show "$id" --readonly --json)
+	[ "$(jq -r '.[0].status' <<<"$json")" = closed ]
+	[ "$(jq -r '(.[0].labels // []) | index("stage:ready")' <<<"$json")" != null ]
 }
 
 @test "sync: gh-backed repositories warn and skip instead of failing the sweep" {
