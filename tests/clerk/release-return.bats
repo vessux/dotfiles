@@ -297,6 +297,31 @@ break_origin() { # $1 = repo
 	[[ "$body" == *"returned from delivery of $id"* ]]
 }
 
+@test "return (bd): running from inside the delivery worktree removes the primary checkout worktree" {
+	repo=$(make_claim_repo ret_from_worktree)
+	cd "$repo"
+	id=$(mk_ready_unit "return from worktree unit")
+	short="${id#*-}"
+	"$CLERK" backlog claim "$id" >/dev/null
+	wt="$repo/.worktrees/$short"
+	git -C "$wt" -c user.email=clerk@test -c user.name=clerk commit -q --allow-empty -m "preserved evidence"
+
+	cd "$wt"
+	run "$CLERK" backlog return "$id" --reason "return from inside worktree"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"returned $id"* ]]
+
+	[ ! -d "$wt" ]
+	git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/delivery/$short"
+	git -C "$repo" fetch -q origin
+	git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/returned/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"
+	json=$(bd -C "$repo" show "$id" --readonly --json)
+	[ "$(jq -r '.[0].status' <<<"$json")" = open ]
+	[ "$(jq -r '(.[0].labels // []) | index("stage:ready")' <<<"$json")" = null ]
+}
+
 @test "return (bd): OFFLINE attended — local rename proceeds, remote push/delete deferred with a warning" {
 	repo=$(make_claim_repo ret_offline)
 	cd "$repo"
