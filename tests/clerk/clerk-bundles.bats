@@ -78,6 +78,13 @@ setup() {
 	grep -q 'A second pass over an unchanged inbox files nothing' "$presort"
 }
 
+@test "returned attempts are called out in operating and grill guidance" {
+	cd "$REPO_ROOT"
+	grep -q 'clerk inbox show.*prior returned attempts' umbel/hooks/local/clerk-session-start/seed.md
+	grep -q 'prior returned attempt' umbel/skills/local/clerk-presort/SKILL.md
+	grep -q 'returned subject/reason' umbel/skills/local/clerk-presort/SKILL.md
+}
+
 @test "grill-with-docs loads acceptance playbook guidance" {
 	cd "$REPO_ROOT"
 	grill=umbel/skills/pocock/grill-with-docs/SKILL.md

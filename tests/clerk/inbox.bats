@@ -50,6 +50,25 @@ mk_returned_branch() { # $1=repo $2=short
 	git -C "$repo" push -q origin "returned/$short"
 }
 
+mk_returned_attempt() { # $1=repo $2=short $3=subject
+	local repo="$1" short="$2" subject="$3" wt="$BATS_TEST_TMPDIR/returned-$short-$RANDOM"
+	git -C "$repo" branch "returned/$short" main
+	git -C "$repo" worktree add -q "$wt" "returned/$short"
+	printf 'returned work\n' >"$wt/returned.txt"
+	git -C "$wt" add returned.txt
+	git -C "$wt" -c user.email=clerk@test -c user.name=clerk commit -q -m "$subject"
+	git -C "$repo" worktree remove "$wt" >/dev/null
+	git -C "$repo" push -q origin "returned/$short"
+}
+
+advance_main() { # $1=repo
+	local repo="$1"
+	printf 'new main\n' >"$repo/main.txt"
+	git -C "$repo" add main.txt
+	git -C "$repo" -c user.email=clerk@test -c user.name=clerk commit -q -m "advance main"
+	git -C "$repo" push -q origin main 2>/dev/null || true
+}
+
 # Scratch git repo + `.clerk` (backlog: gh); no bd involved at all.
 make_gh_repo() { # $1 = subdir name
 	local dir="$BATS_TEST_TMPDIR/$1"
@@ -308,6 +327,50 @@ JSON
 	run "$CLERK" inbox show "$id"
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"$id"*"look at me"* ]]
+}
+
+@test "inbox show (bd): returned attempt banner names branch, staleness, subject, and disposition" {
+	repo=$(make_bd_repo show_returned)
+	add_origin "$repo"
+	cd "$repo"
+	id=$(bd create "returned show unit" --silent)
+	short="${id#*-}"
+	mk_returned_attempt "$repo" "$short" "returned delivery subject"
+	advance_main "$repo"
+
+	run "$CLERK" inbox show "$id"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"$id"*"returned show unit"* ]]
+	[[ "$output" == *"returned attempt: returned/$short"* ]]
+	[[ "$output" == *"1 commit(s) behind main"* ]]
+	[[ "$output" == *"subject: returned delivery subject"* ]]
+	[[ "$output" == *"--returned keep|discard"* ]]
+}
+
+@test "inbox show (bd): no returned attempt is an exact passthrough" {
+	repo=$(make_bd_repo show_no_returned)
+	cd "$repo"
+	id=$(bd create "plain show unit" --silent)
+	expected=$(bd show "$id" --readonly)
+	run "$CLERK" inbox show "$id"
+	[ "$status" -eq 0 ]
+	[ "$output" = "$expected" ]
+	[[ "$output" != *"returned attempt"* ]]
+}
+
+@test "inbox show (bd): origin-only returned attempt is detected" {
+	repo=$(make_bd_repo show_returned_origin_only)
+	add_origin "$repo"
+	cd "$repo"
+	id=$(bd create "origin returned show unit" --silent)
+	short="${id#*-}"
+	mk_returned_attempt "$repo" "$short" "origin-only returned subject"
+	git -C "$repo" branch -D "returned/$short" >/dev/null
+
+	run "$CLERK" inbox show "$id"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"returned attempt: returned/$short (origin;"* ]]
+	[[ "$output" == *"subject: origin-only returned subject"* ]]
 }
 
 @test "inbox show: missing id is a usage error, exit 2" {

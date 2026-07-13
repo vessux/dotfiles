@@ -14,8 +14,8 @@ Speak in Clerk verbs. Clerk does paperwork; you keep judgment.
 ## Discovery
 
 Capture first, then refine. Use `/presort` for an independent proposal over the inbox. A ready unit
-must include acceptance criteria; a criteria-less candidate goes back to grill. Pregrill notes are
-additive and decision-free.
+must include acceptance criteria; a criteria-less candidate goes back to grill. `clerk inbox show` surfaces prior returned attempts; read the returned reason/subject before grilling that unit again.
+Pregrill notes are additive and decision-free.
 
 ## Delivery
 
