@@ -253,6 +253,80 @@ EOF
 	[[ "$output" == *"C4 acceptance: criterion lacks immediate evidence line: - does the thing"* ]]
 }
 
+@test "submit: first-class numbered criteria reach the gate as normalized bullets" {
+	repo=$(make_bd_submit_repo submit_numbered_red)
+	cd "$repo"
+	id=$(bd create 'submit numbered red unit' --acceptance '1. does the thing' --silent)
+	short="${id#*-}"
+	git checkout -q -b "delivery/$short"
+	body="$BATS_TEST_TMPDIR/submit-numbered-red.md"
+	{
+		printf '## Verification\n\n'
+		printf 'Unit: dotfiles-%s\n\n' "$short"
+		printf 'Checks:\n- bats: ok\n'
+	} >"$body"
+	run "$CLERK" backlog submit "$id" --body-file "$body"
+	[ "$status" -eq 6 ]
+	[[ "$output" == *"C4 acceptance: criterion lacks immediate evidence line: - does the thing"* ]]
+	[[ "$output" != *"has no acceptance criteria"* ]]
+}
+
+@test "submit: numbered first-class criteria pass when PR body carries normalized evidence" {
+	repo=$(make_bd_submit_repo submit_numbered_green)
+	cd "$repo"
+	id=$(bd create 'submit numbered green unit' --acceptance $'The exam (delivery may add evidence, must not narrow):\n\n1. does the thing\n   with explanatory continuation text\n2) keeps another promise' --silent)
+	short="${id#*-}"
+	git checkout -q -b "delivery/$short"
+	body="$BATS_TEST_TMPDIR/submit-numbered-green.md"
+	{
+		printf '## Verification\n\n'
+		printf 'Unit: dotfiles-%s\n\n' "$short"
+		printf 'Checks:\n- bats: ok\n- shellcheck: ok\n\n'
+		printf '## Acceptance criteria\n'
+		printf -- '- does the thing\n'
+		printf '  evidence: tests/clerk/gate-submit.bats\n'
+		printf -- '- keeps another promise\n'
+		printf '  evidence: tests/clerk/gate-submit.bats\n'
+	} >"$body"
+	install_gh_body_stub "$body"
+	run "$CLERK" backlog submit "$id" --body-file "$body"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"clerk: delivery gate passed"* ]]
+	[[ "$output" == *"clerk: submitted $id — PR created; awaiting review"* ]]
+	grep -Fx -- '- does the thing' "$BATS_TEST_TMPDIR/pr-body.md"
+	grep -Fx -- '- keeps another promise' "$BATS_TEST_TMPDIR/pr-body.md"
+	! grep -q -- '^1\. does the thing' "$BATS_TEST_TMPDIR/pr-body.md"
+	grep -q -- 'pr create' "$BATS_TEST_TMPDIR/gh.calls"
+	! grep -q -- 'pr merge' "$BATS_TEST_TMPDIR/gh.calls"
+}
+
+@test "submit: single bare first-class criterion uses the same presence semantics as inbox ready" {
+	repo=$(make_bd_submit_repo submit_bare_green)
+	cd "$repo"
+	id=$(bd create 'submit bare green unit' --acceptance 'does the thing' --silent)
+	short="${id#*-}"
+	git checkout -q -b "delivery/$short"
+	body="$BATS_TEST_TMPDIR/submit-bare-green.md"
+	write_body "$body" "$short" 'does the thing' 'tests/clerk/gate-submit.bats'
+	install_gh_body_stub "$body"
+	run "$CLERK" backlog submit "$id" --body-file "$body"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"clerk: delivery gate passed"* ]]
+}
+
+@test "submit: criteria-less units still refuse before preflight" {
+	repo=$(make_bd_submit_repo submit_no_criteria)
+	cd "$repo"
+	id=$(bd create 'submit no criteria unit' --silent)
+	short="${id#*-}"
+	git checkout -q -b "delivery/$short"
+	body="$BATS_TEST_TMPDIR/submit-no-criteria.md"
+	write_body "$body" "$short" 'does the thing' 'tests/clerk/gate-submit.bats'
+	run "$CLERK" backlog submit "$id" --body-file "$body"
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"$id has no acceptance criteria"* ]]
+}
+
 @test "submit: stamps criteria verbatim into PR body and never arms auto-merge" {
 	repo=$(make_bd_submit_repo submit_green)
 	cd "$repo"
