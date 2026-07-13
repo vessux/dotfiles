@@ -1386,11 +1386,45 @@ extract_acceptance_section() {
 }
 
 criteria_bullets_from_text() {
-	awk '/^- / { print }' <<<"$1"
+	awk '
+		function trim(s) {
+			sub(/^[[:space:]]+/, "", s)
+			sub(/[[:space:]]+$/, "", s)
+			return s
+		}
+		function emit(s) {
+			s = trim(s)
+			if (s != "") {
+				print "- " s
+				seen = 1
+			}
+		}
+		/^[[:space:]]{0,3}#{1,6}[[:space:]]*[Aa][Cc][Cc][Ee][Pp][Tt][Aa][Nn][Cc][Ee][[:space:]]+[Cc][Rr][Ii][Tt][Ee][Rr][Ii][Aa][[:space:]]*$/ { next }
+		/^[[:space:]]*[Aa][Cc][Cc][Ee][Pp][Tt][Aa][Nn][Cc][Ee][[:space:]]+[Cc][Rr][Ii][Tt][Ee][Rr][Ii][Aa]:?[[:space:]]*$/ { next }
+		/^[[:space:]]*-[[:space:]]+/ {
+			s = $0
+			sub(/^[[:space:]]*-[[:space:]]+/, "", s)
+			emit(s)
+			next
+		}
+		/^[[:space:]]*[0-9]+[.)][[:space:]]+/ {
+			s = $0
+			sub(/^[[:space:]]*[0-9]+[.)][[:space:]]+/, "", s)
+			emit(s)
+			next
+		}
+		trim($0) != "" { fallback = (fallback == "" ? trim($0) : fallback "\n" trim($0)); fallback_count++ }
+		END { if (!seen && fallback_count == 1) print "- " fallback }
+	' <<<"$1"
 }
 
 unit_acceptance_bullets() {
 	local text bullets
+	# bd's first-class acceptance_criteria field is criteria by construction; normalize the
+	# supported authoring shapes (dash bullets, numbered items, or a single bare criterion) to
+	# the dash-bullet contract consumed by PR stamping and the delivery gate. This keeps
+	# `inbox ready` and `backlog submit` aligned: a non-empty first-class criteria field that
+	# was accepted at ready time cannot become empty only because it used numbered items.
 	text="$CLAIM_AC"
 	bullets=$(criteria_bullets_from_text "$text")
 	if [ -z "$bullets" ]; then
