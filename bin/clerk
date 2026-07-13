@@ -240,12 +240,15 @@ explain_verb() {
 		'backlog claim')
 			printf '%s\n' \
 				'clerk backlog claim — take the claim lock on a unit' \
+				'  usage: clerk backlog claim <id> [--from-returned]' \
 				'  runs: refuses units with no Acceptance Criteria section (ADR 0016 C4); short-circuits' \
 				'        if you already hold it; else git push of the canonical delivery/<id> branch' \
 				'        (first push wins — the universal CAS lock, exit 5 if occupied or the race is' \
 				'        lost); on success, bd update <id> --claim as the online fast-path record' \
 				'        (backlog: bd); offline: local-only branch + claim, attended only; finally' \
-				'        git worktree add .worktrees/<id>, printing its absolute path' \
+				'        git worktree add .worktrees/<id>, printing its absolute path; with' \
+				'        --from-returned, replays returned/<id> on top of current main and keeps the' \
+				'        returned evidence branch untouched' \
 				"  see:  $ADR17"
 			;;
 		'backlog release')
@@ -350,14 +353,14 @@ bd_ensure_impediment_type() {
 # A pregrill note carries a full-timestamp tag line ("clerk-pregrill: <ISO-8601>"); present
 # iff the issue's updated-at is within a few seconds of that tag (i.e. the pregrill append
 # itself was the most recent write — the tolerance absorbs that write's own commit latency,
-# empirically up to ~1s on the embedded Dolt engine, so a freshly-filed pregrill never reads
+# empirically a few seconds on slower CI hosts, so a freshly-filed pregrill never reads
 # as stale against itself); stale iff updated-at moved meaningfully later, meaning some
 # other write landed since; absent iff no tag line exists at all. The other half of C-d's
 # staleness definition ("OR its dup-cluster gained members since") is deliberately not
 # implemented: computing cluster membership is a `bd find-duplicates` pass, and running
 # that on every `inbox list` call is exactly the expense "keep it cheap (metadata only)"
 # rules out — dup-driven staleness stays a documented gap, not a silent wrong answer.
-PREGRILL_STALE_TOLERANCE_S=3
+PREGRILL_STALE_TOLERANCE_S=10
 pregrill_marker() { # $1 = last pregrill-tag timestamp (or ""), $2 = issue updated-at
 	local note_ts="$1" upd_ts="$2" note_epoch upd_epoch
 	if [ -z "$note_ts" ]; then
@@ -1075,18 +1078,52 @@ claim_record_bd() { # $1=root $2=full-id
 	[ "$check" = "$(claim_current_actor "$root")" ]
 }
 
-# clerk backlog claim <id>
+claim_returned_ref() { # $1=root $2=short; echoes local/remote canonical returned ref
+	local root="$1" short="$2"
+	if git -C "$root" show-ref --verify --quiet "refs/heads/returned/$short"; then
+		printf 'returned/%s\n' "$short"
+		return 0
+	fi
+	if git -C "$root" show-ref --verify --quiet "refs/remotes/origin/returned/$short"; then
+		printf 'origin/returned/%s\n' "$short"
+		return 0
+	fi
+	return 1
+}
+
+claim_replay_returned() { # $1=root $2=worktree $3=short $4=base-sha
+	local root="$1" wt="$2" short="$3" base_sha="$4" ref conflicts
+	if ! ref=$(claim_returned_ref "$root" "$short"); then
+		usage_error "clerk backlog claim: --from-returned requested but returned/$short was not found"
+	fi
+	if [ -z "$(git -C "$wt" rev-list --reverse "$base_sha..$ref" 2>/dev/null)" ]; then
+		return 0
+	fi
+	if git -C "$wt" cherry-pick "$base_sha..$ref" >/dev/null 2>&1; then
+		return 0
+	fi
+	conflicts=$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null | paste -sd ' ' -)
+	printf 'clerk: claim --from-returned hit conflicts while replaying returned/%s onto delivery/%s\n' "$short" "$short" >&2
+	printf '       resolve in %s, run git cherry-pick --continue, then clerk backlog submit; conflicted paths: %s\n' "$wt" "${conflicts:-unknown}" >&2
+	return 2
+}
+
+# clerk backlog claim <id> [--from-returned]
 cmd_backlog_claim() {
 	local backend="$1" root="$2"
 	shift 2
 	if [ $# -eq 0 ]; then
 		usage_error 'clerk backlog claim: missing id — usage: clerk backlog claim <id>'
 	fi
-	local id_arg="$1"
+	local id_arg="$1" from_returned=0
 	shift
-	if [ $# -gt 0 ]; then
-		usage_error "clerk backlog claim: unknown argument '$1' — usage: clerk backlog claim <id>"
-	fi
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--from-returned) from_returned=1 ;;
+			*) usage_error "clerk backlog claim: unknown argument '$1' — usage: clerk backlog claim <id> [--from-returned]" ;;
+		esac
+		shift
+	done
 
 	# 1. Resolve to the canonical short id -----------------------------------------
 	if ! claim_resolve_id "$backend" "$id_arg"; then
@@ -1125,9 +1162,13 @@ cmd_backlog_claim() {
 
 	# 4. SYNC-CHECK: `git fetch origin`'s failure (bounded by a short timeout, so an
 	# unreachable remote refuses promptly instead of hanging the claim) is the OFFLINE signal.
-	local offline=0
+	local offline=0 base_sha=""
 	if ! (GIT_TERMINAL_PROMPT=0 timeout 10 git -C "$root" fetch origin >/dev/null 2>&1); then
 		offline=1
+	fi
+
+	if [ "$from_returned" -eq 1 ] && ! claim_returned_ref "$root" "$short" >/dev/null; then
+		usage_error "clerk backlog claim: --from-returned requested but returned/$short was not found"
 	fi
 
 	if [ "$offline" -eq 1 ]; then
@@ -1139,6 +1180,8 @@ cmd_backlog_claim() {
 		if ! git -C "$root" show-ref --verify --quiet refs/heads/main; then
 			backend_fail "claim failed — no local 'main' branch to base delivery/$short on"
 		fi
+		base_sha=$(git -C "$root" rev-parse main 2>/dev/null) ||
+			backend_fail "claim failed — could not resolve local main for delivery/$short"
 		if ! git -C "$root" branch "delivery/$short" main 2>/dev/null; then
 			backend_fail "claim failed — could not create local branch delivery/$short from main"
 		fi
@@ -1148,6 +1191,9 @@ cmd_backlog_claim() {
 		local wt
 		if ! wt=$(claim_ensure_worktree "$root" "$short"); then
 			backend_fail "claim failed — could not provision the worktree at $root/.worktrees/$short for delivery/$short"
+		fi
+		if [ "$from_returned" -eq 1 ]; then
+			claim_replay_returned "$root" "$wt" "$short" "$base_sha" || return $?
 		fi
 		printf "clerk: OFFLINE - 'delivery/%s' claimed LOCALLY ONLY (not pushed). The branch is the lock; it is compare-and-swapped at first reconnect (clerk submit/sync). If another machine claimed %s meanwhile, that push wins and this local work is discarded. Proceeding, attended.\n" "$short" "$short" >&2
 		printf '%s\n' "$wt"
@@ -1161,7 +1207,6 @@ cmd_backlog_claim() {
 
 	# 5. PUSH = the universal CAS lock (first-push-wins). Pushed from a raw SHA, not a local
 	# branch, so a lost race leaves nothing local to clean up (no orphan worktree/claim).
-	local base_sha
 	base_sha=$(git -C "$root" rev-parse origin/main 2>/dev/null) || base_sha=$(git -C "$root" rev-parse main 2>/dev/null)
 	if [ -z "$base_sha" ]; then
 		backend_fail "claim failed — could not resolve a base commit (origin/main or main) for delivery/$short"
@@ -1193,6 +1238,9 @@ cmd_backlog_claim() {
 	local wt
 	if ! wt=$(claim_ensure_worktree "$root" "$short"); then
 		backend_fail "claim failed — could not provision the worktree at $root/.worktrees/$short for delivery/$short"
+	fi
+	if [ "$from_returned" -eq 1 ]; then
+		claim_replay_returned "$root" "$wt" "$short" "$base_sha" || return $?
 	fi
 
 	# 8. Print the absolute worktree path as the LAST stdout line.

@@ -262,7 +262,7 @@ SHIM
 	[[ "$output" == *"$id  [pregrill:present]"* ]]
 	# the tolerance absorbs the pregrill write's own commit latency (PREGRILL_STALE_TOLERANCE_S
 	# in bin/clerk); sleeping past it makes a genuinely later write unambiguously later.
-	sleep 5
+	sleep 12
 	bd update "$id" --description "edited after the pregrill" >/dev/null
 	run "$CLERK" inbox list
 	[ "$status" -eq 0 ]

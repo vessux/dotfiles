@@ -57,6 +57,26 @@ break_origin() { # $1 = repo
 	git -C "$1" remote set-url origin "$1-gone-nonexistent"
 }
 
+seed_returned_attempt() { # $1=repo $2=short $3=file $4=content $5=subject
+	local repo="$1" short="$2" file="$3" content="$4" subject="$5" wt
+	git -C "$repo" branch "returned/$short" origin/main
+	wt="$BATS_TEST_TMPDIR/returned-$short-$RANDOM"
+	git -C "$repo" worktree add -q "$wt" "returned/$short"
+	printf '%s\n' "$content" >"$wt/$file"
+	git -C "$wt" add "$file"
+	git -C "$wt" commit -q -m "$subject"
+	git -C "$repo" worktree remove "$wt" >/dev/null
+	git -C "$repo" push -q origin "returned/$short"
+}
+
+advance_main() { # $1=repo $2=file $3=content $4=subject
+	local repo="$1" file="$2" content="$3" subject="$4"
+	printf '%s\n' "$content" >"$repo/$file"
+	git -C "$repo" add "$file"
+	git -C "$repo" commit -q -m "$subject"
+	git -C "$repo" push -q origin main
+}
+
 # ------------------------------------------------------------------- claim --
 
 @test "claim (bd): success prints the ABSOLUTE worktree path as the LAST line; worktree and pushed branch exist; bd claim recorded" {
@@ -166,6 +186,92 @@ break_origin() { # $1 = repo
 	[ "$status" -eq 0 ]
 	[ "${lines[-1]}" = "$wt" ]
 	[ -d "$wt" ]
+}
+
+@test "claim (bd): --from-returned replays the returned attempt onto current main and keeps evidence" {
+	repo=$(make_claim_repo claim_from_returned)
+	cd "$repo"
+	id=$(mk_ac_unit "reuse returned unit")
+	short="${id#*-}"
+	seed_returned_attempt "$repo" "$short" attempt.txt returned-work "returned attempt subject"
+	returned_tip=$(git -C "$repo" rev-parse "returned/$short")
+	git -C "$repo" branch -D "returned/$short" >/dev/null
+	advance_main "$repo" base.txt current-main "advance main after return"
+	git -C "$repo" fetch -q origin
+	main_tip=$(git -C "$repo" rev-parse origin/main)
+
+	run "$CLERK" backlog claim "$id" --from-returned
+	[ "$status" -eq 0 ]
+	[ "${lines[-1]}" = "$repo/.worktrees/$short" ]
+	git -C "$repo" show-ref --verify --quiet "refs/heads/delivery/$short"
+	[ "$(git -C "$repo" merge-base "delivery/$short" origin/main)" = "$main_tip" ]
+	[ "$(cat "$repo/.worktrees/$short/base.txt")" = current-main ]
+	[ "$(cat "$repo/.worktrees/$short/attempt.txt")" = returned-work ]
+	[ "$(git -C "$repo" log -1 --format=%s "delivery/$short")" = "returned attempt subject" ]
+	[ "$(git -C "$repo" rev-parse "origin/returned/$short")" = "$returned_tip" ]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = in_progress ]
+}
+
+@test "claim (bd): --from-returned refuses without a returned branch and has no side effects" {
+	repo=$(make_claim_repo claim_from_returned_absent)
+	cd "$repo"
+	id=$(mk_ac_unit "no returned reuse unit")
+	short="${id#*-}"
+	run "$CLERK" backlog claim "$id" --from-returned
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"returned/$short was not found"* ]]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/delivery/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = open ]
+}
+
+@test "claim (bd): plain claim ignores returned work and remains based on main" {
+	repo=$(make_claim_repo claim_plain_with_returned)
+	cd "$repo"
+	id=$(mk_ac_unit "plain claim with returned unit")
+	short="${id#*-}"
+	seed_returned_attempt "$repo" "$short" attempt.txt returned-work "returned attempt subject"
+	advance_main "$repo" base.txt current-main "advance main for plain claim"
+	git -C "$repo" fetch -q origin
+	main_tip=$(git -C "$repo" rev-parse origin/main)
+
+	run "$CLERK" backlog claim "$id"
+	[ "$status" -eq 0 ]
+	[ "$(git -C "$repo" rev-parse "delivery/$short")" = "$main_tip" ]
+	[ -f "$repo/.worktrees/$short/base.txt" ]
+	[ ! -e "$repo/.worktrees/$short/attempt.txt" ]
+	git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+}
+
+@test "claim (bd): --from-returned conflict leaves the claim lock and worktree for manual resolution" {
+	repo=$(make_claim_repo claim_from_returned_conflict)
+	cd "$repo"
+	printf 'base\n' >conflict.txt
+	git add conflict.txt
+	git commit -q -m "add conflict base"
+	git push -q origin main
+	id=$(mk_ac_unit "conflicting returned unit")
+	short="${id#*-}"
+	seed_returned_attempt "$repo" "$short" conflict.txt returned-change "returned conflicting attempt"
+	advance_main "$repo" conflict.txt main-change "main conflicting change"
+	git -C "$repo" fetch -q origin
+
+	run "$CLERK" backlog claim "$id" --from-returned
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"claim --from-returned hit conflicts"* ]]
+	[[ "$output" == *"conflict.txt"* ]]
+	git -C "$repo" show-ref --verify --quiet "refs/heads/delivery/$short"
+	git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"
+	[ -d "$repo/.worktrees/$short" ]
+	[ "$(git -C "$repo/.worktrees/$short" diff --name-only --diff-filter=U)" = conflict.txt ]
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = in_progress ]
+}
+
+@test "claim --explain documents --from-returned" {
+	run "$CLERK" backlog claim --explain
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"--from-returned"* ]]
 }
 
 @test "claim: missing id is a usage error, exit 2" {
