@@ -26,8 +26,10 @@ clerk inbox list
 clerk inbox dups
 ```
 
-Classify only entries shown by `clerk inbox list`. Use `clerk inbox show <id>` for the full text.
-Read project files only as needed to verify whether a premise is true, stale, or already handled.
+Classify only entries shown by `clerk inbox list`. Use `clerk inbox show <id>` for the full text;
+when it reports a prior returned attempt, read that returned subject/reason before proposing grill,
+ready, or drop. Read project files only as needed to verify whether a premise is true, stale, or
+already handled.
 
 ## Four proposals
 

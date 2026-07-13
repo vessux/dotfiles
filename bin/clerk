@@ -542,17 +542,47 @@ cmd_inbox_list() {
 	esac
 }
 
+returned_attempt_banner() { # $1=root $2=short $3=id $4=dispose-verb-hint
+	local root="$1" short="$2" id="$3" dispose_hint="$4" main_root ref local_present=0 remote_present=0 presence behind subject
+	main_root=$(primary_repo_root "$root")
+	if git -C "$main_root" show-ref --verify --quiet "refs/heads/returned/$short"; then
+		local_present=1
+		ref="returned/$short"
+	fi
+	if git -C "$main_root" show-ref --verify --quiet "refs/remotes/origin/returned/$short"; then
+		remote_present=1
+		[ -n "${ref:-}" ] || ref="origin/returned/$short"
+	fi
+	[ "$local_present" -eq 1 ] || [ "$remote_present" -eq 1 ] || return 0
+	case "$local_present:$remote_present" in
+		1:1) presence=local+origin ;;
+		1:0) presence=local ;;
+		0:1) presence=origin ;;
+	esac
+	behind=$(git -C "$main_root" rev-list --count "$ref..main" 2>/dev/null || printf '?')
+	subject=$(git -C "$main_root" log -1 --format=%s "$ref" 2>/dev/null || printf '(unknown subject)')
+	printf '\nclerk: returned attempt: returned/%s (%s; %s commit(s) behind main)\n' "$short" "$presence" "$behind"
+	printf '  subject: %s\n' "$subject"
+	printf '  dispose via: clerk %s %s --returned keep|discard\n' "$dispose_hint" "$id"
+}
+
 # clerk inbox show <id>
 cmd_inbox_show() {
-	local backend="$1"
+	local backend="$1" root="$2"
 	shift 2
 	local id="${1:-}"
 	if [ -z "$id" ]; then
 		usage_error 'clerk inbox show: missing id — usage: clerk inbox show <id>'
 	fi
 	case "$backend" in
-		bd) bd show "$id" --readonly ;;
-		gh) gh issue view "$id" ;;
+		bd)
+			bd show "$id" --readonly
+			returned_attempt_banner "$root" "$(returned_short_from_id "$id")" "$id" 'inbox ready|drop'
+			;;
+		gh)
+			gh issue view "$id"
+			returned_attempt_banner "$root" "$(returned_short_from_id "$id")" "$id" 'inbox ready|drop'
+			;;
 	esac
 }
 
@@ -937,15 +967,21 @@ cmd_backlog_next() {
 
 # clerk backlog show <id>
 cmd_backlog_show() {
-	local backend="$1"
+	local backend="$1" root="$2"
 	shift 2
 	local id="${1:-}"
 	if [ -z "$id" ]; then
 		usage_error 'clerk backlog show: missing id — usage: clerk backlog show <id>'
 	fi
 	case "$backend" in
-		bd) bd show "$id" --readonly ;;
-		gh) gh issue view "$id" ;;
+		bd)
+			bd show "$id" --readonly
+			returned_attempt_banner "$root" "$(returned_short_from_id "$id")" "$id" 'inbox ready|drop'
+			;;
+		gh)
+			gh issue view "$id"
+			returned_attempt_banner "$root" "$(returned_short_from_id "$id")" "$id" 'inbox ready|drop'
+			;;
 	esac
 }
 

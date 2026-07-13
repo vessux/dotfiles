@@ -34,6 +34,32 @@ make_bd_repo() { # $1 = subdir name
 	printf '%s\n' "$dir"
 }
 
+add_origin() { # $1 = repo
+	local repo="$1" origin="$BATS_TEST_TMPDIR/origin-$(basename "$repo").git"
+	git init -q --bare -b main "$origin"
+	git -C "$repo" remote add origin "$origin"
+	git -C "$repo" push -q origin main
+}
+
+mk_returned_attempt() { # $1=repo $2=short $3=subject
+	local repo="$1" short="$2" subject="$3" wt="$BATS_TEST_TMPDIR/backlog-returned-$short-$RANDOM"
+	git -C "$repo" branch "returned/$short" main
+	git -C "$repo" worktree add -q "$wt" "returned/$short"
+	printf 'returned work\n' >"$wt/returned.txt"
+	git -C "$wt" add returned.txt
+	git -C "$wt" -c user.email=clerk@test -c user.name=clerk commit -q -m "$subject"
+	git -C "$repo" worktree remove "$wt" >/dev/null
+	git -C "$repo" push -q origin "returned/$short"
+}
+
+advance_main() { # $1=repo
+	local repo="$1"
+	printf 'new main\n' >"$repo/main.txt"
+	git -C "$repo" add main.txt
+	git -C "$repo" -c user.email=clerk@test -c user.name=clerk commit -q -m "advance main"
+	git -C "$repo" push -q origin main 2>/dev/null || true
+}
+
 # Scratch git repo + `.clerk` (backlog: gh); no bd involved at all.
 make_gh_repo() { # $1 = subdir name
 	local dir="$BATS_TEST_TMPDIR/$1"
@@ -166,6 +192,34 @@ mk_ac_unit() { # $1 = title
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"$id"*"look at the backlog"* ]]
 	grep -q -- '--readonly' "$BD_TRACE_LOG"
+}
+
+@test "backlog show (bd): returned attempt banner matches inbox show fields" {
+	repo=$(make_bd_repo show_returned_backlog)
+	add_origin "$repo"
+	cd "$repo"
+	id=$(bd create "returned backlog show unit" --silent)
+	short="${id#*-}"
+	mk_returned_attempt "$repo" "$short" "backlog returned subject"
+	advance_main "$repo"
+
+	run "$CLERK" backlog show "$id"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"returned attempt: returned/$short"* ]]
+	[[ "$output" == *"1 commit(s) behind main"* ]]
+	[[ "$output" == *"subject: backlog returned subject"* ]]
+	[[ "$output" == *"--returned keep|discard"* ]]
+}
+
+@test "backlog show (bd): no returned attempt is an exact passthrough" {
+	repo=$(make_bd_repo show_no_returned_backlog)
+	cd "$repo"
+	id=$(bd create "plain backlog show unit" --silent)
+	expected=$(bd show "$id" --readonly)
+	run "$CLERK" backlog show "$id"
+	[ "$status" -eq 0 ]
+	[ "$output" = "$expected" ]
+	[[ "$output" != *"returned attempt"* ]]
 }
 
 @test "backlog show: missing id is a usage error, exit 2" {
