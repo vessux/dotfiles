@@ -261,6 +261,30 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	[[ "$lead" == *"ADR 0017"* ]]
 }
 
+@test "verb --help is help-only: no marker or backend needed" {
+	repo=$(make_repo helpnomarker -)
+	cd "$repo"
+	run "$CLERK" capture --help
+	[ "$status" -eq 0 ]
+	[ "${lines[0]}" = 'clerk capture — file one raw capture into the inbox' ]
+	[[ "$output" == *'bd create "<title>"'* ]]
+	[[ "$output" != *'jq:'* ]]
+	[[ "$output" != *'capture failed'* ]]
+
+	run "$CLERK" inbox ready -h
+	[ "$status" -eq 0 ]
+	[ "${lines[0]}" = 'clerk inbox ready — write refinement output, then promote a groomed unit' ]
+	[[ "$output" == *'--acceptance-file <path>'* ]]
+}
+
+@test "capture still rejects unknown non-help options after the title" {
+	repo=$(make_repo capturebadarg "backlog: bd")
+	cd "$repo"
+	run "$CLERK" capture "real title" --bogus
+	[ "$status" -eq 2 ]
+	[ "$output" = 'clerk capture: unknown argument '\''--bogus'\'' — usage: clerk capture "<title>" [--stdin|--impediment]' ]
+}
+
 @test "--explain covers every roster verb, with or without a marker" {
 	repo=$(make_repo explnomarker -) # deliberately marker-less
 	cd "$repo"
