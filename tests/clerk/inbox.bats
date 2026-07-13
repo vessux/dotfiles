@@ -407,6 +407,45 @@ JSON
 	[ "$status" -eq 0 ]
 }
 
+@test "inbox ready (bd) authors design and first-class criteria from files, then promotes" {
+	repo=$(make_bd_repo ready11)
+	cd "$repo"
+	id=$(bd create "needs refinement output" --description "raw capture" --silent)
+	printf 'Implementation notes from grill\n' >"$BATS_TEST_TMPDIR/design.md"
+	printf -- '- delivered behavior is observable\n' >"$BATS_TEST_TMPDIR/acceptance.md"
+
+	run "$CLERK" inbox ready "$id" --design-file "$BATS_TEST_TMPDIR/design.md" --acceptance-file "$BATS_TEST_TMPDIR/acceptance.md"
+	[ "$status" -eq 0 ]
+	[ "$output" = "clerk: promoted $id to stage:ready" ]
+	json=$(bd show "$id" --readonly --json)
+	[ "$(jq -r '.[0].design' <<<"$json")" = "Implementation notes from grill" ]
+	[ "$(jq -r '.[0].acceptance_criteria' <<<"$json")" = "- delivered behavior is observable" ]
+	[ "$(jq -r '(.[0].labels // []) | index("stage:ready")' <<<"$json")" != null ]
+}
+
+@test "inbox ready (bd) writes design but still refuses if criteria remain absent" {
+	repo=$(make_bd_repo ready12)
+	cd "$repo"
+	id=$(bd create "design only" --description "raw capture" --silent)
+	printf 'Design without an exam\n' >"$BATS_TEST_TMPDIR/design-only.md"
+
+	run "$CLERK" inbox ready "$id" --design-file "$BATS_TEST_TMPDIR/design-only.md"
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"--acceptance-file"* ]]
+	json=$(bd show "$id" --readonly --json)
+	[ "$(jq -r '.[0].design' <<<"$json")" = "Design without an exam" ]
+	[ "$(jq -r '(.[0].labels // []) | index("stage:ready")' <<<"$json")" = null ]
+}
+
+@test "inbox ready (bd) preserves pure-gate behavior for existing first-class criteria" {
+	repo=$(make_bd_repo ready13)
+	cd "$repo"
+	id=$(bd create "already refined" --acceptance "does the thing" --silent)
+	run "$CLERK" inbox ready "$id"
+	[ "$status" -eq 0 ]
+	[ "$(bd show "$id" --readonly --json | jq -r '(.[0].labels // []) | index("stage:ready")')" != null ]
+}
+
 @test "inbox ready (bd) on an id that does not resolve: bad-id usage error, exit 2 (not the acceptance-criteria refusal)" {
 	repo=$(make_bd_repo ready10)
 	cd "$repo"

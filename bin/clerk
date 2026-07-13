@@ -197,10 +197,12 @@ explain_verb() {
 			;;
 		'inbox ready')
 			printf '%s\n' \
-				'clerk inbox ready — promote a groomed unit into the ready backlog' \
-				'  runs: refuses units without acceptance criteria (ADR 0016), then:' \
-				'        bd update <id> --label stage:ready              (backlog: bd)' \
-				'        gh issue edit <id> --add-label ready-for-agent  (backlog: gh)' \
+				'clerk inbox ready — write refinement output, then promote a groomed unit' \
+				'  usage: clerk inbox ready <id> [--design-file <path>] [--acceptance-file <path>]' \
+				'         (gh: --title "<title>" --body-file <path>)' \
+				'  runs: for bd, optional bd update --design-file / --acceptance, then refuses' \
+				'        units still lacking acceptance criteria (ADR 0016), then stage:ready;' \
+				'        for gh, creates the ready issue and closes the capture as promoted' \
 				"  see:  $ADR16"
 			;;
 		'inbox drop')
@@ -578,16 +580,17 @@ cmd_inbox_dups() {
 	esac
 }
 
-# clerk inbox ready <id> [--title "<title>" --body-file <file>]  (gh only)
+# clerk inbox ready <id> [--design-file <file>] [--acceptance-file <file>]
+# gh: clerk inbox ready <id> --title "<title>" --body-file <file>
 cmd_inbox_ready() {
 	local backend="$1"
 	shift 2
 	if [ $# -eq 0 ]; then
-		usage_error 'clerk inbox ready: missing id — usage: clerk inbox ready <id> [--title "<title>" --body-file <file>]'
+		usage_error 'clerk inbox ready: missing id — usage: clerk inbox ready <id> [--design-file <path>] [--acceptance-file <path>]'
 	fi
 	local id="$1"
 	shift
-	local title="" body_file=""
+	local title="" body_file="" design_file="" acceptance_file=""
 	while [ $# -gt 0 ]; do
 		case "$1" in
 			--title)
@@ -600,6 +603,16 @@ cmd_inbox_ready() {
 				body_file="$2"
 				shift
 				;;
+			--design-file)
+				[ $# -ge 2 ] || usage_error "clerk inbox ready: --design-file needs a path"
+				design_file="$2"
+				shift
+				;;
+			--acceptance-file)
+				[ $# -ge 2 ] || usage_error "clerk inbox ready: --acceptance-file needs a path"
+				acceptance_file="$2"
+				shift
+				;;
 			*) usage_error "clerk inbox ready: unknown argument '$1'" ;;
 		esac
 		shift
@@ -607,6 +620,10 @@ cmd_inbox_ready() {
 
 	case "$backend" in
 		bd)
+			[ -z "$title" ] || usage_error 'clerk inbox ready: --title is only for gh-backed promotion; use --design-file/--acceptance-file for bd'
+			[ -z "$body_file" ] || usage_error 'clerk inbox ready: --body-file is only for gh-backed promotion; use --design-file/--acceptance-file for bd'
+			[ -z "$design_file" ] || [ -f "$design_file" ] || usage_error "clerk inbox ready: design file not found: $design_file"
+			[ -z "$acceptance_file" ] || [ -f "$acceptance_file" ] || usage_error "clerk inbox ready: acceptance file not found: $acceptance_file"
 			local json
 			json=$(bd show "$id" --readonly --json 2>/dev/null)
 			# bd 1.0.4 signals a missing id not with empty stdout or literal `null` but with
@@ -623,12 +640,33 @@ cmd_inbox_ready() {
 			# `bd create --acceptance`/`--acceptance-file`), not just prose in description or
 			# design: that dedicated field IS the structural section by construction, so its
 			# mere non-empty presence satisfies C-e without re-scanning it for a heading.
-			local desc design ac
+			local desc design ac acceptance_text="" design_text=""
+			if [ -n "$design_file" ] || [ -n "$acceptance_file" ]; then
+				local -a update_args=(bd update "$id")
+				if [ -n "$design_file" ]; then
+					design_text=$(cat "$design_file")
+					update_args+=(--design-file "$design_file")
+				fi
+				if [ -n "$acceptance_file" ]; then
+					acceptance_text=$(cat "$acceptance_file")
+					update_args+=(--acceptance "$acceptance_text")
+				fi
+				if ! "${update_args[@]}" >/dev/null; then
+					backend_fail "inbox ready failed — bd update did not succeed for $id"
+				fi
+				json=$(bd show "$id" --readonly --json 2>/dev/null)
+				if [ -n "$design_file" ] && [ "$(printf '%s' "$json" | jq -r '.[0].design // ""')" != "$design_text" ]; then
+					backend_fail "inbox ready failed — design was not confirmed after writing $design_file"
+				fi
+				if [ -n "$acceptance_file" ] && [ "$(printf '%s' "$json" | jq -r '.[0].acceptance_criteria // ""')" != "$acceptance_text" ]; then
+					backend_fail "inbox ready failed — acceptance criteria were not confirmed after writing $acceptance_file"
+				fi
+			fi
 			desc=$(printf '%s' "$json" | jq -r '.[0].description // ""')
 			design=$(printf '%s' "$json" | jq -r '.[0].design // ""')
 			ac=$(printf '%s' "$json" | jq -r '.[0].acceptance_criteria // ""')
 			if [ -z "$ac" ] && ! has_acceptance_criteria_section "$desc"$'\n'"$design"; then
-				usage_error "clerk inbox ready: $id has no 'Acceptance Criteria' section — add one (e.g. a '## Acceptance Criteria' heading in its description or design, or bd create --acceptance) before promoting it"
+				usage_error "clerk inbox ready: $id has no 'Acceptance Criteria' section — rerun with --acceptance-file <path> (and optionally --design-file <path>) before promoting it"
 			fi
 			if ! bd update "$id" --add-label stage:ready >/dev/null; then
 				backend_fail "inbox ready failed — bd update did not succeed for $id"
@@ -642,6 +680,8 @@ cmd_inbox_ready() {
 			printf '%sclerk:%s promoted %s to stage:ready\n' "$C_GRN" "$C_RST" "$id"
 			;;
 		gh)
+			[ -z "$design_file" ] || usage_error 'clerk inbox ready: --design-file is only for bd-backed promotion; use --title/--body-file for gh'
+			[ -z "$acceptance_file" ] || usage_error 'clerk inbox ready: --acceptance-file is only for bd-backed promotion; use --title/--body-file for gh'
 			if [ -z "$title" ] || [ -z "$body_file" ]; then
 				usage_error "clerk inbox ready: gh backend needs both --title \"<title>\" and --body-file <file> — rerun as 'clerk inbox ready $id --title \"<title>\" --body-file <file>'"
 			fi
