@@ -279,11 +279,11 @@ SHIM
 	[ "$status" -eq 0 ]
 	run "$CLERK" inbox list
 	[[ "$output" == *"$id  [pregrill:present]"* ]]
-	# the tolerance absorbs the pregrill write's own commit latency (PREGRILL_STALE_TOLERANCE_S
-	# in bin/clerk); sleeping past it makes a genuinely later write unambiguously later.
-	sleep 12
 	bd update "$id" --description "edited after the pregrill" >/dev/null
-	run "$CLERK" inbox list
+	# Test the stale branch deterministically instead of waiting past the production tolerance.
+	# A negative test tolerance makes any post-pregrill metadata update stale, even when bd's
+	# timestamps are still within the same wall-clock second on fast machines.
+	run env CLERK_PREGRILL_STALE_TOLERANCE_S=-1 "$CLERK" inbox list
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"$id  [pregrill:stale]"* ]]
 }
