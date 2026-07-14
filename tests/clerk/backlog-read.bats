@@ -194,7 +194,7 @@ mk_ac_unit() { # $1 = title
 	grep -q -- '--readonly' "$BD_TRACE_LOG"
 }
 
-@test "backlog show (bd): returned attempt banner matches inbox show fields" {
+@test "backlog show (bd): returned attempt banner points to backlog delivery choices" {
 	repo=$(make_bd_repo show_returned_backlog)
 	add_origin "$repo"
 	cd "$repo"
@@ -208,7 +208,9 @@ mk_ac_unit() { # $1 = title
 	[[ "$output" == *"returned attempt: returned/$short"* ]]
 	[[ "$output" == *"1 commit(s) behind main"* ]]
 	[[ "$output" == *"subject: backlog returned subject"* ]]
-	[[ "$output" == *"--returned keep|discard"* ]]
+	[[ "$output" == *"reuse via: clerk backlog claim $id --from-returned"* ]]
+	[[ "$output" == *"fresh via: clerk backlog claim $id --fresh --returned keep|discard"* ]]
+	[[ "$output" != *"dispose via: clerk inbox"* ]]
 }
 
 @test "backlog show (bd): no returned attempt is an exact passthrough" {

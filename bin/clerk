@@ -240,15 +240,15 @@ explain_verb() {
 		'backlog claim')
 			printf '%s\n' \
 				'clerk backlog claim — take the claim lock on a unit' \
-				'  usage: clerk backlog claim <id> [--from-returned]' \
+				'  usage: clerk backlog claim <id> [--from-returned|--fresh --returned keep|discard]' \
 				'  runs: refuses units with no Acceptance Criteria section (ADR 0016 C4); short-circuits' \
 				'        if you already hold it; else git push of the canonical delivery/<id> branch' \
 				'        (first push wins — the universal CAS lock, exit 5 if occupied or the race is' \
 				'        lost); on success, bd update <id> --claim as the online fast-path record' \
 				'        (backlog: bd); offline: local-only branch + claim, attended only; finally' \
-				'        git worktree add .worktrees/<id>, printing its absolute path; with' \
-				'        --from-returned, replays returned/<id> on top of current main and keeps the' \
-				'        returned evidence branch untouched' \
+				'        git worktree add .worktrees/<id>, printing its absolute path; with returned/<id>,' \
+				'        plain claim refuses until you choose --from-returned (reuse and keep evidence)' \
+				'        or --fresh --returned keep|discard (start from main explicitly)' \
 				"  see:  $ADR17"
 			;;
 		'backlog release')
@@ -563,7 +563,15 @@ returned_attempt_banner() { # $1=root $2=short $3=id $4=dispose-verb-hint
 	subject=$(git -C "$main_root" log -1 --format=%s "$ref" 2>/dev/null || printf '(unknown subject)')
 	printf '\nclerk: returned attempt: returned/%s (%s; %s commit(s) behind main)\n' "$short" "$presence" "$behind"
 	printf '  subject: %s\n' "$subject"
-	printf '  dispose via: clerk %s %s --returned keep|discard\n' "$dispose_hint" "$id"
+	case "$dispose_hint" in
+		'backlog claim')
+			printf '  reuse via: clerk backlog claim %s --from-returned\n' "$id"
+			printf '  fresh via: clerk backlog claim %s --fresh --returned keep|discard\n' "$id"
+			;;
+		*)
+			printf '  dispose via: clerk %s %s --returned keep|discard\n' "$dispose_hint" "$id"
+			;;
+	esac
 }
 
 # clerk inbox show <id>
@@ -976,11 +984,11 @@ cmd_backlog_show() {
 	case "$backend" in
 		bd)
 			bd show "$id" --readonly
-			returned_attempt_banner "$root" "$(returned_short_from_id "$id")" "$id" 'inbox ready|drop'
+			returned_attempt_banner "$root" "$(returned_short_from_id "$id")" "$id" 'backlog claim'
 			;;
 		gh)
 			gh issue view "$id"
-			returned_attempt_banner "$root" "$(returned_short_from_id "$id")" "$id" 'inbox ready|drop'
+			returned_attempt_banner "$root" "$(returned_short_from_id "$id")" "$id" 'backlog claim'
 			;;
 	esac
 }
@@ -1144,22 +1152,49 @@ claim_replay_returned() { # $1=root $2=worktree $3=short $4=base-sha
 	return 2
 }
 
-# clerk backlog claim <id> [--from-returned]
+claim_returned_choice_refusal() { # $1=full-id $2=short
+	local full="$1" short="$2"
+	printf 'clerk backlog claim: returned/%s exists — choose how to claim\n' "$short" >&2
+	printf '  reuse returned work: clerk backlog claim %s --from-returned\n' "$full" >&2
+	printf '  start fresh:         clerk backlog claim %s --fresh --returned keep|discard\n' "$full" >&2
+	return 2
+}
+
+# clerk backlog claim <id> [--from-returned|--fresh [--returned keep|discard]]
 cmd_backlog_claim() {
 	local backend="$1" root="$2"
 	shift 2
 	if [ $# -eq 0 ]; then
 		usage_error 'clerk backlog claim: missing id — usage: clerk backlog claim <id>'
 	fi
-	local id_arg="$1" from_returned=0
+	local id_arg="$1" from_returned=0 fresh=0 returned_disposition=""
 	shift
 	while [ $# -gt 0 ]; do
 		case "$1" in
 			--from-returned) from_returned=1 ;;
-			*) usage_error "clerk backlog claim: unknown argument '$1' — usage: clerk backlog claim <id> [--from-returned]" ;;
+			--fresh) fresh=1 ;;
+			--returned)
+				[ $# -ge 2 ] || usage_error 'clerk backlog claim: --returned needs keep or discard'
+				returned_disposition="$2"
+				shift
+				;;
+			*) usage_error "clerk backlog claim: unknown argument '$1' — usage: clerk backlog claim <id> [--from-returned|--fresh --returned keep|discard]" ;;
 		esac
 		shift
 	done
+	if [ "$from_returned" -eq 1 ] && [ "$fresh" -eq 1 ]; then
+		usage_error 'clerk backlog claim: choose only one of --from-returned or --fresh'
+	fi
+	if [ "$from_returned" -eq 1 ] && [ -n "$returned_disposition" ]; then
+		usage_error 'clerk backlog claim: --returned is only valid with --fresh'
+	fi
+	if [ "$fresh" -eq 0 ] && [ -n "$returned_disposition" ]; then
+		usage_error 'clerk backlog claim: --returned is only valid with --fresh'
+	fi
+	case "$returned_disposition" in
+		"" | keep | discard) ;;
+		*) usage_error 'clerk backlog claim: --returned must be keep or discard' ;;
+	esac
 
 	# 1. Resolve to the canonical short id -----------------------------------------
 	if ! claim_resolve_id "$backend" "$id_arg"; then
@@ -1203,8 +1238,18 @@ cmd_backlog_claim() {
 		offline=1
 	fi
 
-	if [ "$from_returned" -eq 1 ] && ! claim_returned_ref "$root" "$short" >/dev/null; then
+	local has_returned=0
+	if claim_returned_ref "$root" "$short" >/dev/null; then
+		has_returned=1
+	fi
+	if [ "$from_returned" -eq 1 ] && [ "$has_returned" -eq 0 ]; then
 		usage_error "clerk backlog claim: --from-returned requested but returned/$short was not found"
+	fi
+	if [ "$has_returned" -eq 1 ] && [ "$from_returned" -eq 0 ]; then
+		if [ "$fresh" -eq 0 ] || [ -z "$returned_disposition" ]; then
+			claim_returned_choice_refusal "$full" "$short"
+			return 2
+		fi
 	fi
 
 	if [ "$offline" -eq 1 ]; then
@@ -1230,6 +1275,8 @@ cmd_backlog_claim() {
 		fi
 		if [ "$from_returned" -eq 1 ]; then
 			claim_replay_returned "$root" "$wt" "$short" "$base_sha" || return $?
+		elif [ "$fresh" -eq 1 ] && [ "$returned_disposition" = discard ]; then
+			dispose_returned "$root" "$short"
 		fi
 		printf "clerk: OFFLINE - 'delivery/%s' claimed LOCALLY ONLY (not pushed). The branch is the lock; it is compare-and-swapped at first reconnect (clerk submit/sync). If another machine claimed %s meanwhile, that push wins and this local work is discarded. Proceeding, attended.\n" "$short" "$short" >&2
 		printf '%s\n' "$wt"
@@ -1277,6 +1324,8 @@ cmd_backlog_claim() {
 	fi
 	if [ "$from_returned" -eq 1 ]; then
 		claim_replay_returned "$root" "$wt" "$short" "$base_sha" || return $?
+	elif [ "$fresh" -eq 1 ] && [ "$returned_disposition" = discard ]; then
+		dispose_returned "$root" "$short"
 	fi
 
 	# 8. Print the absolute worktree path as the LAST stdout line.
