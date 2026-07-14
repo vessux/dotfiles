@@ -108,6 +108,31 @@ write_body() { # $1=file $2=short $3=criterion $4=evidence-or-empty
 	[ "$output" = "clerk: delivery gate passed" ]
 }
 
+@test "gate CI workflow installs the supported parallel runner" {
+	cd "$BATS_TEST_DIRNAME/../.."
+	grep -q 'apt-get install .* parallel' .github/workflows/delivery-gate.yml
+}
+
+@test "gate: uses bats --jobs when a supported parallel runner is available" {
+	repo=$(make_gate_repo gate_parallel abc)
+	body="$BATS_TEST_TMPDIR/body.md"
+	write_body "$body" abc 'does the thing' 'tests/clerk/gate-submit.bats'
+	cat >"$STUB_BIN/parallel" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+	cat >"$STUB_BIN/bats" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >"$BATS_TEST_TMPDIR/bats.args"
+exit 0
+SH
+	chmod +x "$STUB_BIN/parallel" "$STUB_BIN/bats"
+	cd "$repo"
+	run env CLERK_BATS_JOBS=3 "$CLERK" backlog gate --branch delivery/abc --body-file "$body"
+	[ "$status" -eq 0 ]
+	[ "$(cat "$BATS_TEST_TMPDIR/bats.args")" = "--jobs 3 tests/clerk" ]
+}
+
 @test "gate: does not require the backlog marker" {
 	repo=$(make_gate_repo gate_no_marker abc)
 	rm "$repo/.clerk"
@@ -272,13 +297,32 @@ JSON
 	[[ "$output" == *"clerk: delivery gate passed"* ]]
 	[[ "$output" == *"clerk: submitted $id — PR created; awaiting review"* ]]
 	grep -Fx -- 'Unit: dotfiles-'"$short" "$BATS_TEST_TMPDIR/pr-body.md"
-	grep -Fx -- '- `bats tests/clerk` passed' "$BATS_TEST_TMPDIR/pr-body.md"
+	grep -Eq '^- `bats( --jobs [0-9]+)? tests/clerk` passed$' "$BATS_TEST_TMPDIR/pr-body.md"
 	grep -Fx -- '- `shellcheck -S error bin/*` passed' "$BATS_TEST_TMPDIR/pr-body.md"
 	grep -Fx -- '- does the thing' "$BATS_TEST_TMPDIR/pr-body.md"
 	grep -Fx -- '  evidence: tests/clerk/gate-submit.bats proof path' "$BATS_TEST_TMPDIR/pr-body.md"
 	grep -Fx -- '- keeps another promise' "$BATS_TEST_TMPDIR/pr-body.md"
 	grep -q -- 'pr create' "$BATS_TEST_TMPDIR/gh.calls"
 	! grep -q -- 'pr merge' "$BATS_TEST_TMPDIR/gh.calls"
+}
+
+@test "submit: generated proof body records parallel bats command when used" {
+	repo=$(make_bd_submit_repo submit_proof_parallel_command)
+	cd "$repo"
+	id=$(bd create 'submit proof parallel command unit' --acceptance '- does the thing' --silent)
+	short="${id#*-}"
+	git checkout -q -b "delivery/$short"
+	cat >"$STUB_BIN/parallel" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+	chmod +x "$STUB_BIN/parallel"
+	proof="$BATS_TEST_TMPDIR/proof-parallel.json"
+	printf '{"acceptance":[{"text":"does the thing","evidence":"parallel evidence"}]}' >"$proof"
+	install_gh_body_stub "$BATS_TEST_TMPDIR/pr-body.md"
+	run env CLERK_BATS_JOBS=4 "$CLERK" backlog submit "$id" "$proof"
+	[ "$status" -eq 0 ]
+	grep -Fx -- '- `bats --jobs 4 tests/clerk` passed' "$BATS_TEST_TMPDIR/pr-body.md"
 }
 
 @test "submit: proof JSON can be read from stdin" {

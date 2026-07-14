@@ -24,7 +24,7 @@ jobs:
       - name: Install system checks
         run: |
           sudo apt-get update
-          sudo apt-get install -y bats shellcheck jq
+          sudo apt-get install -y bats shellcheck jq parallel
 
       - name: Set up Go for pinned bd install
         uses: actions/setup-go@v5
