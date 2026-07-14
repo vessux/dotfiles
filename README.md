@@ -151,7 +151,6 @@ pi
 ### 📊 System Utilities
 - **Lazygit** - Terminal-based Git interface
 - **Lazydocker** - Terminal-based Docker interface
-- **qBittorrent** - BitTorrent client configuration
 - **Raycast** - Spotlight replacement
 - **IdeaVimRC** - Vim configuration for JetBrains IDEs
 
@@ -170,22 +169,28 @@ All configurations are symlinked to `~/.config/` via Stow:
 ```
 ~/.config/
 ├── atuin/          # Shell history configuration
-├── bat/            # Syntax highlighter configuration  
+├── bat/            # Syntax highlighter configuration
 ├── bin/            # Reusable repo scripts on PATH (see ADR 0001)
+├── ccstatusline/   # Claude Code status line configuration
+├── claude-code/    # Claude Code app configuration
 ├── ghostty/        # Terminal emulator configuration
 ├── git/            # Git configuration and global gitignore
+├── ideavimrc/      # Vim configuration for IDEs
 ├── karabiner/      # Keyboard customization
+├── launchd/        # macOS launch agents
 ├── lazydocker/     # Docker TUI configuration
 ├── lazygit/        # Git TUI configuration
 ├── linearmouse/    # Mouse configuration
+├── mise/           # Dev-tool version manager configuration
+├── nix/            # Nix Darwin system configuration
+├── npm/            # npm configuration
+├── nvim/           # Neovim configuration
 ├── pi/             # Pi coding agent config (PI_CODING_AGENT_DIR)
-├── qBittorrent/    # BitTorrent client configuration
 ├── starship/       # Shell prompt configuration
 ├── tmux/           # Terminal multiplexer configuration
 ├── umbel/          # Claude Code bundles (skills, hooks, MCP servers)
 ├── yazi/           # File manager configuration
-├── zsh/            # Shell configuration
-└── ideavimrc/      # Vim configuration for IDEs
+└── zsh/            # Shell configuration
 ```
 
 ## Customization

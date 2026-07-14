@@ -8,6 +8,8 @@ backup/
 tmp_config.json
 
 # repo-meta: repo plumbing, never app config — keep off ~/.config on every machine
+^AGENTS\.md$
+^\.github$
 ^\.beads$
 ^\.claude$
 ^CLAUDE\.md$
