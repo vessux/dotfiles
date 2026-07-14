@@ -54,20 +54,16 @@ SH
 }
 
 make_gate_repo() { # $1=subdir, $2=branch short
-	local base="$BATS_TEST_TMPDIR/$1" origin seed clone short="$2"
+	local base="$BATS_TEST_TMPDIR/$1" origin clone short="$2"
 	mkdir -p "$base"
 	origin="$base/origin.git"
-	seed="$base/seed"
 	clone="$base/clone"
 	git init -q --bare -b main "$origin"
-	git init -q -b main "$seed"
-	git -C "$seed" -c user.email=clerk@test -c user.name=clerk commit -q --allow-empty -m seed
-	git -C "$seed" remote add origin "$origin"
-	git -C "$seed" push -q origin main
-	git clone -q "$origin" "$clone"
+	git init -q -b main "$clone"
 	clone="$(cd "$clone" && pwd -P)"
 	git -C "$clone" config user.email clerk@test
 	git -C "$clone" config user.name clerk
+	git -C "$clone" remote add origin "$origin"
 	printf 'backlog: bd\n' >"$clone/.clerk"
 	git -C "$clone" add .clerk
 	git -C "$clone" commit -q -m marker

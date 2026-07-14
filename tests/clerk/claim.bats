@@ -18,25 +18,21 @@ setup() {
 
 # ---------------------------------------------------------------- fixtures --
 
-# A scratch bare git repo as 'origin' (seeded with one commit so it is a valid push target),
-# plus a clone with a committed `.clerk` (backlog: bd) marker and a fresh scratch bd db. Git
-# identity is pinned to a fixed, known actor ("clerk") so bd's default --claim assignee is
-# predictable across tests. Echoes the clone's physical path.
+# A scratch bare git repo as 'origin' plus a working repo with a committed `.clerk`
+# (backlog: bd) marker and a fresh scratch bd db. Git identity is pinned to a fixed,
+# known actor ("clerk") so bd's default --claim assignee is predictable across tests.
+# Echoes the working repo's physical path.
 make_claim_repo() { # $1 = subdir name
-	local base="$BATS_TEST_TMPDIR/$1" origin="" seed="" clone=""
+	local base="$BATS_TEST_TMPDIR/$1" origin="" clone=""
 	mkdir -p "$base"
 	origin="$base/origin.git"
-	seed="$base/seed"
 	clone="$base/clone"
 	git init -q --bare -b main "$origin"
-	git init -q -b main "$seed"
-	git -C "$seed" -c user.email=clerk@test -c user.name=clerk commit -q --allow-empty -m seed
-	git -C "$seed" remote add origin "$origin"
-	git -C "$seed" push -q origin main
-	git clone -q "$origin" "$clone"
+	git init -q -b main "$clone"
 	clone="$(cd "$clone" && pwd -P)"
 	git -C "$clone" config user.email clerk@test
 	git -C "$clone" config user.name clerk
+	git -C "$clone" remote add origin "$origin"
 	printf 'backlog: bd\n' >"$clone/.clerk"
 	git -C "$clone" add -A
 	git -C "$clone" commit -q -m fixture
