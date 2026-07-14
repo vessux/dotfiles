@@ -240,6 +240,91 @@ EOF
 	[ "$output" = "$local_output" ]
 }
 
+@test "proof: prints normalized acceptance criteria as proof JSON skeleton" {
+	repo=$(make_bd_submit_repo proof_json)
+	cd "$repo"
+	id=$(bd create 'proof json unit' --acceptance $'1. does the thing\n2) keeps another promise' --silent)
+	run "$CLERK" backlog proof "$id"
+	[ "$status" -eq 0 ]
+	printf '%s' "$output" | jq -e '.acceptance[0].text == "does the thing"' >/dev/null
+	printf '%s' "$output" | jq -e '.acceptance[1].text == "keeps another promise"' >/dev/null
+	printf '%s' "$output" | jq -e '.acceptance[0].evidence == ""' >/dev/null
+}
+
+@test "submit: proof JSON renders gate-compliant PR body and never arms auto-merge" {
+	repo=$(make_bd_submit_repo submit_proof_green)
+	cd "$repo"
+	id=$(bd create 'submit proof green unit' --acceptance $'1. does the thing\n2) keeps another promise' --silent)
+	short="${id#*-}"
+	git checkout -q -b "delivery/$short"
+	proof="$BATS_TEST_TMPDIR/proof-green.json"
+	cat >"$proof" <<'JSON'
+{
+  "acceptance": [
+    {"text": "does the thing", "evidence": "tests/clerk/gate-submit.bats proof path"},
+    {"text": "keeps another promise", "evidence": "tests/clerk/gate-submit.bats second proof"}
+  ]
+}
+JSON
+	install_gh_body_stub "$BATS_TEST_TMPDIR/pr-body.md"
+	run "$CLERK" backlog submit "$id" "$proof"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"clerk: delivery gate passed"* ]]
+	[[ "$output" == *"clerk: submitted $id — PR created; awaiting review"* ]]
+	grep -Fx -- 'Unit: dotfiles-'"$short" "$BATS_TEST_TMPDIR/pr-body.md"
+	grep -Fx -- '- `bats tests/clerk` passed' "$BATS_TEST_TMPDIR/pr-body.md"
+	grep -Fx -- '- `shellcheck -S error bin/*` passed' "$BATS_TEST_TMPDIR/pr-body.md"
+	grep -Fx -- '- does the thing' "$BATS_TEST_TMPDIR/pr-body.md"
+	grep -Fx -- '  evidence: tests/clerk/gate-submit.bats proof path' "$BATS_TEST_TMPDIR/pr-body.md"
+	grep -Fx -- '- keeps another promise' "$BATS_TEST_TMPDIR/pr-body.md"
+	grep -q -- 'pr create' "$BATS_TEST_TMPDIR/gh.calls"
+	! grep -q -- 'pr merge' "$BATS_TEST_TMPDIR/gh.calls"
+}
+
+@test "submit: proof JSON can be read from stdin" {
+	repo=$(make_bd_submit_repo submit_proof_stdin)
+	cd "$repo"
+	id=$(bd create 'submit proof stdin unit' --acceptance '- does the thing' --silent)
+	short="${id#*-}"
+	git checkout -q -b "delivery/$short"
+	install_gh_body_stub "$BATS_TEST_TMPDIR/pr-body.md"
+	run bash -c 'printf "%s\n" "{\"acceptance\":[{\"text\":\"does the thing\",\"evidence\":\"stdin evidence\"}]}" | "$1" backlog submit "$2" -' _ "$CLERK" "$id"
+	[ "$status" -eq 0 ]
+	grep -Fx -- '  evidence: stdin evidence' "$BATS_TEST_TMPDIR/pr-body.md"
+}
+
+@test "submit: stale proof JSON fails before PR creation" {
+	repo=$(make_bd_submit_repo submit_proof_stale)
+	cd "$repo"
+	id=$(bd create 'submit proof stale unit' --acceptance '- current criterion' --silent)
+	short="${id#*-}"
+	git checkout -q -b "delivery/$short"
+	proof="$BATS_TEST_TMPDIR/proof-stale.json"
+	printf '{"acceptance":[{"text":"old criterion","evidence":"some evidence"}]}' >"$proof"
+	install_gh_body_stub "$BATS_TEST_TMPDIR/pr-body.md"
+	run "$CLERK" backlog submit "$id" "$proof"
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"proof JSON is stale at acceptance[0]"* ]]
+	[[ "$output" == *"expected: current criterion"* ]]
+	[[ "$output" == *"rerun: clerk backlog proof $id"* ]]
+	[ ! -f "$BATS_TEST_TMPDIR/pr-body.md" ]
+}
+
+@test "submit: proof JSON with missing evidence fails before PR creation" {
+	repo=$(make_bd_submit_repo submit_proof_missing_evidence)
+	cd "$repo"
+	id=$(bd create 'submit proof missing evidence unit' --acceptance '- does the thing' --silent)
+	short="${id#*-}"
+	git checkout -q -b "delivery/$short"
+	proof="$BATS_TEST_TMPDIR/proof-missing-evidence.json"
+	printf '{"acceptance":[{"text":"does the thing","evidence":"   "}]}' >"$proof"
+	install_gh_body_stub "$BATS_TEST_TMPDIR/pr-body.md"
+	run "$CLERK" backlog submit "$id" "$proof"
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"missing evidence for criterion: does the thing"* ]]
+	[ ! -f "$BATS_TEST_TMPDIR/pr-body.md" ]
+}
+
 @test "submit: refuses when preflight fails and names the failing proof class" {
 	repo=$(make_bd_submit_repo submit_red)
 	cd "$repo"

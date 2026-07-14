@@ -55,7 +55,7 @@ print_roster() {
 		'Known verbs:' \
 		'  capture "<title>" [--stdin|--impediment]' \
 		'  inbox list|show|dups|ready|drop|pregrill' \
-		'  backlog next|show|claim|release|submit|gate|finish|return' \
+		'  backlog next|show|claim|release|proof|submit|gate|finish|return' \
 		'  sync' \
 		'  doctor [--fix --backend bd|gh]' \
 		'  glean' \
@@ -263,10 +263,19 @@ explain_verb() {
 				'        idempotent (exit 0) on a unit not claimed here' \
 				"  see:  $ADR15"
 			;;
+		'backlog proof')
+			printf '%s\n' \
+				'clerk backlog proof — print the JSON proof skeleton consumed by submit' \
+				'  usage: clerk backlog proof <id>' \
+				'  runs: resolves the unit acceptance criteria and prints proof-only JSON:' \
+				'        {"acceptance":[{"text":"<normalized criterion>","evidence":""}]}' \
+				"  see:  $ADR16"
+			;;
 		'backlog submit')
 			printf '%s\n' \
 				'clerk backlog submit — open the unit'"'"'s PR (once per unit; iteration repeats finish)' \
-				'  runs: stamps the unit'"'"'s acceptance criteria into the PR body, runs clerk backlog gate as a local preflight, pushes delivery/<id>, then gh pr create; never arms auto-merge' \
+				'  usage: clerk backlog submit <id> <proof.json|->   (legacy: --body-file <path>)' \
+				'  runs: consumes proof JSON, renders the PR body with the unit criteria and Clerk-run checks, runs clerk backlog gate as a local preflight, pushes delivery/<id>, then gh pr create; never arms auto-merge' \
 				"  see:  $ADR16"
 			;;
 		'backlog gate')
@@ -1933,27 +1942,120 @@ cmd_backlog_gate() {
 	gate_finish
 }
 
+cmd_backlog_proof() {
+	local backend="$1" _root="$2"
+	shift 2
+	if [ $# -eq 0 ]; then
+		usage_error 'clerk backlog proof: missing id — usage: clerk backlog proof <id>'
+	fi
+	local id_arg="$1"
+	shift
+	if [ $# -gt 0 ]; then
+		usage_error "clerk backlog proof: unknown argument '$1' — usage: clerk backlog proof <id>"
+	fi
+	if ! claim_resolve_id "$backend" "$id_arg"; then
+		usage_error "clerk backlog proof: $id_arg not found — check the id ('clerk backlog next' shows ready units)"
+	fi
+	local criteria_file
+	criteria_file=$(mktemp)
+	unit_acceptance_bullets >"$criteria_file"
+	if [ ! -s "$criteria_file" ]; then
+		rm -f "$criteria_file"
+		usage_error "clerk backlog proof: $CLAIM_FULL has no acceptance criteria — return it to discovery before submitting"
+	fi
+	jq -Rn '
+		{acceptance: [inputs | select(length > 0) | sub("^- "; "") | {text: ., evidence: ""}]}
+	' <"$criteria_file"
+	rm -f "$criteria_file"
+}
+
+proof_evidence_nonempty() { # $1=evidence
+	grep -q '[^[:space:]]' <<<"$1"
+}
+
+render_body_from_proof() { # $1=full-id $2=short $3=proof-file $4=criteria-file $5=output-file
+	local full="$1" short="$2" proof_file="$3" criteria_file="$4" out_file="$5" expected_count actual_count idx=0 bullet expected actual evidence first=1 line
+	if ! jq -e '.acceptance | type == "array"' "$proof_file" >/dev/null 2>&1; then
+		usage_error 'clerk backlog submit: proof JSON must contain an acceptance array'
+	fi
+	expected_count=$(sed '/^$/d' "$criteria_file" | wc -l | tr -d ' ')
+	actual_count=$(jq '.acceptance | length' "$proof_file")
+	if [ "$actual_count" -ne "$expected_count" ]; then
+		usage_error "clerk backlog submit: proof JSON acceptance count $actual_count does not match $expected_count criterion/criteria — rerun 'clerk backlog proof $full'"
+	fi
+	{
+		printf '## Verification\n\n'
+		printf 'Unit: dotfiles-%s\n\n' "$short"
+		printf 'Checks:\n'
+		printf -- '- `bats tests/clerk` passed\n'
+		printf -- '- `shellcheck -S error bin/*` passed\n\n'
+		printf '## Acceptance criteria\n'
+	} >"$out_file"
+	while IFS= read -r bullet || [ -n "$bullet" ]; do
+		[ -n "$bullet" ] || continue
+		expected="${bullet#- }"
+		actual=$(jq -r --argjson i "$idx" '.acceptance[$i].text // ""' "$proof_file")
+		if [ "$actual" != "$expected" ]; then
+			usage_error "clerk backlog submit: proof JSON is stale at acceptance[$idx]
+expected: $expected
+got: $actual
+rerun: clerk backlog proof $full"
+		fi
+		evidence=$(jq -r --argjson i "$idx" '.acceptance[$i].evidence // ""' "$proof_file")
+		if ! proof_evidence_nonempty "$evidence"; then
+			usage_error "clerk backlog submit: missing evidence for criterion: $expected"
+		fi
+		printf -- '- %s\n' "$expected" >>"$out_file"
+		first=1
+		while IFS= read -r line || [ -n "$line" ]; do
+			if [ "$first" -eq 1 ]; then
+				printf '  evidence: %s\n' "$line" >>"$out_file"
+				first=0
+			else
+				printf '    %s\n' "$line" >>"$out_file"
+			fi
+		done <<<"$evidence"
+		idx=$((idx + 1))
+	done <"$criteria_file"
+}
+
 cmd_backlog_submit() {
 	local backend="$1" root="$2"
 	shift 2
 	if [ $# -eq 0 ]; then
-		usage_error 'clerk backlog submit: missing id — usage: clerk backlog submit <id> --body-file <path>'
+		usage_error 'clerk backlog submit: missing id — usage: clerk backlog submit <id> <proof.json|->'
 	fi
-	local id_arg="$1" body_file=""
+	local id_arg="$1" body_file="" proof_file=""
 	shift
 	while [ $# -gt 0 ]; do
 		case "$1" in
 			--body-file)
 				[ $# -ge 2 ] || usage_error 'clerk backlog submit: --body-file needs a path — usage: clerk backlog submit <id> --body-file <path>'
+				[ -z "$proof_file" ] || usage_error 'clerk backlog submit: choose either proof JSON or --body-file, not both'
 				body_file="$2"
 				shift
 				;;
-			*) usage_error "clerk backlog submit: unknown argument '$1' — usage: clerk backlog submit <id> --body-file <path>" ;;
+			-)
+				[ -z "$body_file" ] || usage_error 'clerk backlog submit: choose either proof JSON or --body-file, not both'
+				[ -z "$proof_file" ] || usage_error 'clerk backlog submit: only one proof JSON input is allowed'
+				proof_file="-"
+				;;
+			*)
+				[ -z "$body_file" ] || usage_error 'clerk backlog submit: choose either proof JSON or --body-file, not both'
+				[ -z "$proof_file" ] || usage_error 'clerk backlog submit: only one proof JSON input is allowed'
+				proof_file="$1"
+				;;
 		esac
 		shift
 	done
-	[ -n "$body_file" ] || usage_error 'clerk backlog submit: missing --body-file — usage: clerk backlog submit <id> --body-file <path>'
-	[ -f "$body_file" ] || usage_error "clerk backlog submit: body file not found: $body_file"
+	if [ -z "$body_file" ] && [ -z "$proof_file" ]; then
+		usage_error 'clerk backlog submit: missing proof JSON — usage: clerk backlog submit <id> <proof.json|->'
+	fi
+	if [ -n "$body_file" ]; then
+		[ -f "$body_file" ] || usage_error "clerk backlog submit: body file not found: $body_file"
+	elif [ "$proof_file" != - ]; then
+		[ -f "$proof_file" ] || usage_error "clerk backlog submit: proof JSON not found: $proof_file"
+	fi
 
 	if ! claim_resolve_id "$backend" "$id_arg"; then
 		usage_error "clerk backlog submit: $id_arg not found — check the id ('clerk backlog next' shows ready units)"
@@ -1965,7 +2067,7 @@ cmd_backlog_submit() {
 		usage_error "clerk backlog submit: not inside $branch — cd to $root/.worktrees/$short after 'clerk backlog claim $full'"
 	fi
 
-	local criteria_file stamped_body
+	local criteria_file stamped_body proof_tmp=""
 	criteria_file=$(mktemp)
 	stamped_body=$(mktemp)
 	unit_acceptance_bullets >"$criteria_file"
@@ -1973,12 +2075,21 @@ cmd_backlog_submit() {
 		rm -f "$criteria_file" "$stamped_body"
 		usage_error "clerk backlog submit: $full has no acceptance criteria — return it to discovery before submitting"
 	fi
-	stamp_body_with_unit_criteria "$body_file" "$criteria_file" "$stamped_body"
+	if [ -n "$body_file" ]; then
+		stamp_body_with_unit_criteria "$body_file" "$criteria_file" "$stamped_body"
+	else
+		if [ "$proof_file" = - ]; then
+			proof_tmp=$(mktemp)
+			cat >"$proof_tmp"
+			proof_file="$proof_tmp"
+		fi
+		render_body_from_proof "$full" "$short" "$proof_file" "$criteria_file" "$stamped_body"
+	fi
 
 	"$0" backlog gate --branch "$branch" --body-file "$stamped_body"
 	local rc=$?
 	if [ "$rc" -ne 0 ]; then
-		rm -f "$criteria_file" "$stamped_body"
+		rm -f "$criteria_file" "$stamped_body" "$proof_tmp"
 		if [ "$rc" -eq 6 ]; then
 			return 6
 		fi
@@ -1986,14 +2097,14 @@ cmd_backlog_submit() {
 	fi
 
 	if ! git -C "$root" push -u origin "$branch" >/dev/null 2>&1; then
-		rm -f "$criteria_file" "$stamped_body"
+		rm -f "$criteria_file" "$stamped_body" "$proof_tmp"
 		backend_fail "submit failed — could not push $branch to origin"
 	fi
 	if ! gh pr create --head "$branch" --base main --title "$title (dotfiles-$short)" --body-file "$stamped_body"; then
-		rm -f "$criteria_file" "$stamped_body"
+		rm -f "$criteria_file" "$stamped_body" "$proof_tmp"
 		backend_fail 'submit failed — gh pr create did not succeed'
 	fi
-	rm -f "$criteria_file" "$stamped_body"
+	rm -f "$criteria_file" "$stamped_body" "$proof_tmp"
 	printf '%sclerk:%s submitted %s — PR created; awaiting review\n' "$C_GRN" "$C_RST" "$full"
 	return 0
 }
@@ -2838,7 +2949,7 @@ main() {
 			if [ "$noun" = inbox ]; then
 				roster="list show dups ready drop pregrill"
 			else
-				roster="next show claim release submit gate finish return"
+				roster="next show claim release proof submit gate finish return"
 			fi
 			# Exact-word match — a glob over " $roster " would misread one argument
 			# equal to two adjacent roster words (e.g. 'list show') as a known verb.
@@ -2944,6 +3055,10 @@ main() {
 			;;
 		"backlog gate")
 			cmd_backlog_gate "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"backlog proof")
+			cmd_backlog_proof "$backend" "$root" "$@"
 			exit "$?"
 			;;
 		"backlog submit")
