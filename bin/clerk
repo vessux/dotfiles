@@ -369,7 +369,7 @@ bd_ensure_impediment_type() {
 # implemented: computing cluster membership is a `bd find-duplicates` pass, and running
 # that on every `inbox list` call is exactly the expense "keep it cheap (metadata only)"
 # rules out — dup-driven staleness stays a documented gap, not a silent wrong answer.
-PREGRILL_STALE_TOLERANCE_S=10
+PREGRILL_STALE_TOLERANCE_S=${CLERK_PREGRILL_STALE_TOLERANCE_S:-10}
 pregrill_marker() { # $1 = last pregrill-tag timestamp (or ""), $2 = issue updated-at
 	local note_ts="$1" upd_ts="$2" note_epoch upd_epoch
 	if [ -z "$note_ts" ]; then
