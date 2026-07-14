@@ -281,7 +281,7 @@ explain_verb() {
 		'backlog gate')
 			printf '%s\n' \
 				'clerk backlog gate — validate delivery proof classes C1-C4' \
-				'  runs: C1 branch/link/current protocol checks; C2 PR-body verification schema check; C3 bats tests/clerk plus shellcheck bin/; C4 one evidence line per acceptance criterion' \
+				'  runs: C1 branch/link/current protocol checks; C2 PR-body verification schema check; C3 bats tests/clerk (parallel with --jobs when GNU parallel/rush is available) plus shellcheck bin/; C4 one evidence line per acceptance criterion' \
 				'        local mode: --branch delivery/<id> --body-file <file>; CI mode: reads GITHUB_* and gh pr view' \
 				"  see:  $ADR16"
 			;;
@@ -1858,11 +1858,36 @@ gate_check_acceptance_evidence() { # $1=body
 	done <<<"$failures"
 }
 
+gate_bats_jobs() {
+	printf '%s\n' "${CLERK_BATS_JOBS:-4}"
+}
+
+gate_bats_parallel_available() {
+	command -v parallel >/dev/null 2>&1 || command -v rush >/dev/null 2>&1
+}
+
+gate_bats_command() {
+	if gate_bats_parallel_available; then
+		printf 'bats --jobs %s tests/clerk\n' "$(gate_bats_jobs)"
+	else
+		printf 'bats tests/clerk\n'
+	fi
+}
+
+gate_run_bats() {
+	if gate_bats_parallel_available; then
+		bats --jobs "$(gate_bats_jobs)" tests/clerk
+	else
+		bats tests/clerk
+	fi
+}
+
 gate_check_executable() {
-	local log
+	local log bats_cmd
 	log=$(mktemp)
-	if ! (cd "$GATE_ROOT" && bats tests/clerk) >"$log" 2>&1; then
-		gate_fail 'C3 executable: bats tests/clerk failed'
+	bats_cmd=$(gate_bats_command)
+	if ! (cd "$GATE_ROOT" && gate_run_bats) >"$log" 2>&1; then
+		gate_fail "C3 executable: $bats_cmd failed"
 		while IFS= read -r line || [ -n "$line" ]; do
 			gate_fail "C3 bats: $line"
 		done <"$log"
@@ -1987,7 +2012,7 @@ render_body_from_proof() { # $1=full-id $2=short $3=proof-file $4=criteria-file 
 		printf '## Verification\n\n'
 		printf 'Unit: dotfiles-%s\n\n' "$short"
 		printf 'Checks:\n'
-		printf -- '- `bats tests/clerk` passed\n'
+		printf -- '- `%s` passed\n' "$(gate_bats_command)"
 		printf -- '- `shellcheck -S error bin/*` passed\n\n'
 		printf '## Acceptance criteria\n'
 	} >"$out_file"
