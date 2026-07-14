@@ -324,7 +324,7 @@ break_origin() { # $1 = repo
 	old_suffix=$(git -C "$repo" rev-parse --short "returned/$short")
 
 	bd update "$id" --add-label stage:ready >/dev/null
-	"$CLERK" backlog claim "$id" >/dev/null
+	"$CLERK" backlog claim "$id" --fresh --returned keep >/dev/null
 	wt="$repo/.worktrees/$short"
 	printf 'second\n' >"$wt/attempt.txt"
 	git -C "$wt" add attempt.txt
@@ -358,7 +358,7 @@ break_origin() { # $1 = repo
 	old_suffix=$(git -C "$repo" rev-parse --short "returned/$short")
 
 	bd update "$id" --add-label stage:ready >/dev/null
-	"$CLERK" backlog claim "$id" >/dev/null
+	"$CLERK" backlog claim "$id" --fresh --returned keep >/dev/null
 	wt="$repo/.worktrees/$short"
 	git -C "$wt" commit -q --allow-empty -m "second offline archive attempt"
 	new_tip=$(git -C "$repo" rev-parse "delivery/$short")

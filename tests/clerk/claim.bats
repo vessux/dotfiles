@@ -226,7 +226,7 @@ advance_main() { # $1=repo $2=file $3=content $4=subject
 	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = open ]
 }
 
-@test "claim (bd): plain claim ignores returned work and remains based on main" {
+@test "claim (bd): plain claim with returned attempt refuses before side effects" {
 	repo=$(make_claim_repo claim_plain_with_returned)
 	cd "$repo"
 	id=$(mk_ac_unit "plain claim with returned unit")
@@ -234,14 +234,96 @@ advance_main() { # $1=repo $2=file $3=content $4=subject
 	seed_returned_attempt "$repo" "$short" attempt.txt returned-work "returned attempt subject"
 	advance_main "$repo" base.txt current-main "advance main for plain claim"
 	git -C "$repo" fetch -q origin
-	main_tip=$(git -C "$repo" rev-parse origin/main)
 
 	run "$CLERK" backlog claim "$id"
+	[ "$status" -eq 2 ]
+	[ "$output" = "clerk backlog claim: returned/$short exists — choose how to claim
+  reuse returned work: clerk backlog claim $id --from-returned
+  start fresh:         clerk backlog claim $id --fresh --returned keep|discard" ]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/delivery/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"
+	[ ! -d "$repo/.worktrees/$short" ]
+	git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = open ]
+}
+
+@test "claim (bd): --fresh --returned keep claims from main and preserves returned refs" {
+	repo=$(make_claim_repo claim_fresh_keep_returned)
+	cd "$repo"
+	id=$(mk_ac_unit "fresh keep returned unit")
+	short="${id#*-}"
+	seed_returned_attempt "$repo" "$short" attempt.txt returned-work "returned attempt subject"
+	advance_main "$repo" base.txt current-main "advance main for fresh claim"
+	git -C "$repo" fetch -q origin
+	main_tip=$(git -C "$repo" rev-parse origin/main)
+
+	run "$CLERK" backlog claim "$id" --fresh --returned keep
 	[ "$status" -eq 0 ]
+	[ "${lines[-1]}" = "$repo/.worktrees/$short" ]
 	[ "$(git -C "$repo" rev-parse "delivery/$short")" = "$main_tip" ]
-	[ -f "$repo/.worktrees/$short/base.txt" ]
+	[ "$(cat "$repo/.worktrees/$short/base.txt")" = current-main ]
 	[ ! -e "$repo/.worktrees/$short/attempt.txt" ]
 	git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+	git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/returned/$short"
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = in_progress ]
+}
+
+@test "claim (bd): --fresh --returned discard claims from main and removes canonical and archived returned refs" {
+	repo=$(make_claim_repo claim_fresh_discard_returned)
+	cd "$repo"
+	id=$(mk_ac_unit "fresh discard returned unit")
+	short="${id#*-}"
+	seed_returned_attempt "$repo" "$short" attempt.txt returned-work "returned attempt subject"
+	git -C "$repo" branch "returned/$short-archive" "returned/$short"
+	git -C "$repo" push -q origin "returned/$short-archive"
+	advance_main "$repo" base.txt current-main "advance main for fresh discard claim"
+	git -C "$repo" fetch -q origin
+	main_tip=$(git -C "$repo" rev-parse origin/main)
+
+	run "$CLERK" backlog claim "$id" --fresh --returned discard
+	[ "$status" -eq 0 ]
+	[ "${lines[-1]}" = "$repo/.worktrees/$short" ]
+	[ "$(git -C "$repo" rev-parse "delivery/$short")" = "$main_tip" ]
+	[ "$(cat "$repo/.worktrees/$short/base.txt")" = current-main ]
+	[ ! -e "$repo/.worktrees/$short/attempt.txt" ]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/returned/$short-archive"
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/returned/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/returned/$short-archive"
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = in_progress ]
+}
+
+@test "claim (bd): --fresh with returned attempt requires returned disposition" {
+	repo=$(make_claim_repo claim_fresh_missing_disposition)
+	cd "$repo"
+	id=$(mk_ac_unit "fresh missing disposition unit")
+	short="${id#*-}"
+	seed_returned_attempt "$repo" "$short" attempt.txt returned-work "returned attempt subject"
+
+	run "$CLERK" backlog claim "$id" --fresh
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"returned/$short exists — choose how to claim"* ]]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/delivery/$short"
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = open ]
+}
+
+@test "claim (bd): invalid returned claim flag combinations fail before side effects" {
+	repo=$(make_claim_repo claim_invalid_returned_flags)
+	cd "$repo"
+	id=$(mk_ac_unit "invalid returned flags unit")
+	short="${id#*-}"
+	seed_returned_attempt "$repo" "$short" attempt.txt returned-work "returned attempt subject"
+
+	run "$CLERK" backlog claim "$id" --from-returned --fresh
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"choose only one of --from-returned or --fresh"* ]]
+	run "$CLERK" backlog claim "$id" --from-returned --returned keep
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"--returned is only valid with --fresh"* ]]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/delivery/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"
+	[ ! -d "$repo/.worktrees/$short" ]
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = open ]
 }
 
 @test "claim (bd): --from-returned conflict leaves the claim lock and worktree for manual resolution" {
@@ -268,10 +350,11 @@ advance_main() { # $1=repo $2=file $3=content $4=subject
 	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = in_progress ]
 }
 
-@test "claim --explain documents --from-returned" {
+@test "claim --explain documents returned-attempt choices" {
 	run "$CLERK" backlog claim --explain
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"--from-returned"* ]]
+	[[ "$output" == *"--fresh --returned keep|discard"* ]]
 }
 
 @test "claim: missing id is a usage error, exit 2" {
