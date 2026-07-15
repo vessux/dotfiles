@@ -84,6 +84,19 @@ make_gh_repo() { # $1 = subdir name
 # A fake `gh` that logs every invocation's argv to $FAKE_GH_LOG (\x1f-joined per call,
 # ===CALL=== delimited — readable, grep-able, never parsed field-by-field) and returns
 # canned output driven by $FAKE_GH_CREATE_URL / $FAKE_GH_LIST_JSON.
+make_traced_bd() { # $1 = dir to place traced bd shim
+	mkdir -p "$1"
+	cat >"$1/bd" <<SHIM
+#!/bin/sh
+{
+	for a in "\$@"; do printf '%s\\x1f' "\$a"; done
+	printf '\\n'
+} >>"\$BD_TRACE_LOG"
+exec "$REAL_BD" "\$@"
+SHIM
+	chmod +x "$1/bd"
+}
+
 make_fake_gh() { # $1 = dir to place the fake gh
 	mkdir -p "$1"
 	cat >"$1/gh" <<'SHIM'
@@ -288,6 +301,62 @@ SHIM
 	[[ "$output" == *"$id  [pregrill:stale]"* ]]
 }
 
+@test "inbox list (bd): --limit 0 forwards unlimited limit and prints rows past the default cap" {
+	repo=$(make_bd_repo list_limit0)
+	tracedbin="$BATS_TEST_TMPDIR/list-limit0-tracedbin"
+	make_traced_bd "$tracedbin"
+	export BD_TRACE_LOG="$BATS_TEST_TMPDIR/list-limit0.trace"
+	: >"$BD_TRACE_LOG"
+	export PATH="$tracedbin:$PATH"
+	cd "$repo"
+	for n in $(seq 1 55); do
+		bd create "visible $n" --silent >/dev/null
+	done
+
+	run "$CLERK" inbox list --limit 0
+	[ "$status" -eq 0 ]
+	[[ "$output" == "Inbox (open, not ready) — 55 item(s):"* ]]
+	[[ "$output" == *"visible 55"* ]]
+	grep -F -q -- 'list\x1f--status\x1fopen\x1f--exclude-label\x1fstage:ready\x1f--readonly\x1f--json\x1f--limit\x1f0' "$BD_TRACE_LOG"
+}
+
+@test "inbox list (bd): --limit forwards a positive numeric limit" {
+	repo=$(make_bd_repo list_limit3)
+	tracedbin="$BATS_TEST_TMPDIR/list-limit3-tracedbin"
+	make_traced_bd "$tracedbin"
+	export BD_TRACE_LOG="$BATS_TEST_TMPDIR/list-limit3.trace"
+	: >"$BD_TRACE_LOG"
+	export PATH="$tracedbin:$PATH"
+	cd "$repo"
+	for n in $(seq 1 5); do
+		bd create "limited $n" --silent >/dev/null
+	done
+
+	run "$CLERK" inbox list --limit 3
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"Inbox (open, not ready) — 3 item(s):"* ]]
+	grep -F -q -- '--limit\x1f3' "$BD_TRACE_LOG"
+}
+
+@test "inbox list: invalid limits are usage errors before backend calls" {
+	repo=$(make_bd_repo list_bad_limit)
+	tracedbin="$BATS_TEST_TMPDIR/list-bad-limit-tracedbin"
+	make_traced_bd "$tracedbin"
+	export BD_TRACE_LOG="$BATS_TEST_TMPDIR/list-bad-limit.trace"
+	: >"$BD_TRACE_LOG"
+	export PATH="$tracedbin:$PATH"
+	cd "$repo"
+
+	run "$CLERK" inbox list --limit nope
+	[ "$status" -eq 2 ]
+	[ "$output" = 'clerk inbox list: --limit must be a non-negative integer' ]
+	[ ! -s "$BD_TRACE_LOG" ]
+	run "$CLERK" inbox list --limit
+	[ "$status" -eq 2 ]
+	[ "$output" = 'clerk inbox list: --limit needs a value — usage: clerk inbox list [--limit <n>]' ]
+	[ ! -s "$BD_TRACE_LOG" ]
+}
+
 @test "inbox list (bd): empty inbox prints (empty), exit 0" {
 	repo=$(make_bd_repo list5)
 	cd "$repo"
@@ -295,6 +364,35 @@ SHIM
 	[ "$status" -eq 0 ]
 	[ "$output" = "Inbox (open, not ready) — 0 item(s):
   (empty)" ]
+}
+
+@test "inbox list (gh): --limit forwards a positive limit" {
+	repo=$(make_gh_repo list_gh_limit)
+	fakebin="$BATS_TEST_TMPDIR/list-gh-limit-fakebin"
+	make_fake_gh "$fakebin"
+	export FAKE_GH_LIST_JSON="$BATS_TEST_TMPDIR/list-gh-limit.json"
+	printf '[]' >"$FAKE_GH_LIST_JSON"
+	export FAKE_GH_LOG="$BATS_TEST_TMPDIR/list-gh-limit.log"
+	: >"$FAKE_GH_LOG"
+	export PATH="$fakebin:$PATH"
+	cd "$repo"
+	run "$CLERK" inbox list --limit 17
+	[ "$status" -eq 0 ]
+	grep -F -q -- 'issue\x1flist\x1f--state\x1fopen\x1f--json\x1fnumber,title,labels,updatedAt,comments\x1f--limit\x1f17' "$FAKE_GH_LOG"
+}
+
+@test "inbox list (gh): --limit 0 refuses instead of pretending unlimited" {
+	repo=$(make_gh_repo list_gh_limit0)
+	fakebin="$BATS_TEST_TMPDIR/list-gh-limit0-fakebin"
+	make_fake_gh "$fakebin"
+	export FAKE_GH_LOG="$BATS_TEST_TMPDIR/list-gh-limit0.log"
+	: >"$FAKE_GH_LOG"
+	export PATH="$fakebin:$PATH"
+	cd "$repo"
+	run "$CLERK" inbox list --limit 0
+	[ "$status" -eq 2 ]
+	[ "$output" = 'clerk inbox list: --limit 0 is not supported for gh-backed repos; pass a positive --limit value' ]
+	[ ! -s "$FAKE_GH_LOG" ]
 }
 
 @test "inbox list (gh): excludes ready-for-agent labelled issues and reports the pregrill marker" {

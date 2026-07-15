@@ -177,8 +177,10 @@ explain_verb() {
 		'inbox list')
 			printf '%s\n' \
 				'clerk inbox list — list the unrefined pool' \
+				'  usage: clerk inbox list [--limit <n>]' \
 				'  runs: bd list, filtered to open minus stage:ready         (backlog: bd)' \
 				'        gh issue list, filtered to minus ready-for-agent    (backlog: gh)' \
+				'        --limit forwards the backend row limit; for bd, 0 = unlimited' \
 				"  see:  $ADR15"
 			;;
 		'inbox show')
@@ -492,6 +494,22 @@ cmd_capture() {
 cmd_inbox_list() {
 	local backend="$1"
 	shift 2
+	local limit="" arg
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--limit)
+				[ $# -ge 2 ] || usage_error 'clerk inbox list: --limit needs a value — usage: clerk inbox list [--limit <n>]'
+				arg="$2"
+				case "$arg" in
+					'' | *[!0-9]*) usage_error 'clerk inbox list: --limit must be a non-negative integer' ;;
+				esac
+				limit="$arg"
+				shift
+				;;
+			*) usage_error "clerk inbox list: unknown argument '$1' — usage: clerk inbox list [--limit <n>]" ;;
+		esac
+		shift
+	done
 	case "$backend" in
 		bd)
 			# stdout only: stderr is left to flow straight to the terminal (bd's own error
@@ -499,7 +517,9 @@ cmd_inbox_list() {
 			# stay pure JSON on success — a stray warning on stderr would otherwise corrupt
 			# the jq parse below.
 			local json
-			if ! json=$(bd list --status open --exclude-label stage:ready --readonly --json); then
+			local -a bd_args=(bd list --status open --exclude-label stage:ready --readonly --json)
+			[ -z "$limit" ] || bd_args+=(--limit "$limit")
+			if ! json=$("${bd_args[@]}"); then
 				backend_fail "inbox list failed — bd list did not succeed"
 			fi
 			local count
@@ -527,7 +547,12 @@ cmd_inbox_list() {
 			;;
 		gh)
 			local json
-			if ! json=$(gh issue list --state open --json number,title,labels,updatedAt,comments); then
+			if [ "$limit" = 0 ]; then
+				usage_error 'clerk inbox list: --limit 0 is not supported for gh-backed repos; pass a positive --limit value'
+			fi
+			local -a gh_args=(gh issue list --state open --json number,title,labels,updatedAt,comments)
+			[ -z "$limit" ] || gh_args+=(--limit "$limit")
+			if ! json=$("${gh_args[@]}"); then
 				backend_fail "inbox list failed — gh issue list did not succeed"
 			fi
 			json=$(printf '%s' "$json" | jq -c '[.[] | select((.labels | map(.name) | index("ready-for-agent")) == null)]')
@@ -3035,7 +3060,7 @@ main() {
 			exit "$?"
 			;;
 		"inbox list")
-			cmd_inbox_list "$backend" "$root"
+			cmd_inbox_list "$backend" "$root" "$@"
 			exit "$?"
 			;;
 		"inbox show")
