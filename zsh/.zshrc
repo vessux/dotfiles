@@ -181,6 +181,23 @@ if command -v tmux &> /dev/null; then
     source ~/.config/tmux/shell-integration.sh
 fi
 
+# `dev` — one command to land in the devbox work session and resume it across
+# sleeps / network changes. Eternal Terminal (et) holds a re-connectable session
+# to etserver and transparently relays the byte stream, so tmux, clipboard, mouse
+# and colors all behave like plain ssh; tmux keeps the session alive server-side.
+# `new-session -A -s main` attaches to `main` or creates it. et bootstraps over
+# ssh, so it reads ~/.ssh/config (Host devbox → User kovis). On the devbox itself
+# there's nothing to et into — attach locally; fall back to ssh if et is absent.
+dev() {
+    if [[ ${HOST%%.*} == devbox ]]; then
+        command tmux new-session -A -s main
+    elif command -v et &> /dev/null; then
+        et --command='tmux new-session -A -s main' devbox
+    else
+        ssh -t devbox 'tmux new-session -A -s main'
+    fi
+}
+
 # rbw: the unlock-popup labeling (the ~/Library/Caches/rbw-touchid-ctx "sticky
 # note" pinentry-rbw-touchid reads) and the post-fetch re-lock used to live here
 # as a zsh function. They now live in a wrapper around the rbw binary itself,
