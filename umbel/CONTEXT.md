@@ -110,6 +110,19 @@ is that **every judgment point in the workflow declares its loop**: the signals 
 the category that carries them, and the guidance artifact its lessons land in.
 _Avoid_: retro, sweep, scan, audit
 
+**Compound**:
+The cross-session *reduce* over the **Impediment** corpus. It reads every `type:impediment`
+**Capture**, clusters the recurring friction into a ranked taxonomy, and proposes — per class — the
+instruction, skill, or tool change that would retire it: a decision-free agenda the human takes
+into a grill. Where **Glean** *maps* (harvesting one session's friction into Captures), Compound
+*reduces* (turning the accumulated Captures into a fix agenda across sessions); both are the
+**compound engineering** discipline. It ranks by recurrence and flags recency — a class still
+recurring vs. one gone quiet — but claims no fix-linkage. Like **Pre-sort** it is a read-only,
+ephemeral fork: it proposes, never mutates the corpus, and writes no committed record. Distinct
+from the dormant `plannotator/compound` *tool*, which reduces the human's *plan-rejection* feedback
+to improve planning, not agent friction.
+_Avoid_: friction, digest, taxonomy, audit
+
 ## Relationships
 
 - **Refinement** shapes a **Capture** into a delivery-ready bead, or drops it.
@@ -133,6 +146,10 @@ _Avoid_: retro, sweep, scan, audit
   ambient capture records a signal as it surfaces, Glean recovers the ones that slipped past while
   the agent was heads-down. Both tracks run it (one source skill, dual-listed); it is itself a
   fork, like **Pre-sort**, but unlike Pre-sort it *writes* — because capture is ungated by design.
+- **Compound** is the cross-session **reduce** counterpart to **Glean**'s per-session harvest:
+  Glean files the **Impediment** **Capture**s, Compound ranks the recurring ones into a fix agenda.
+  Like **Pre-sort** it is a read-only, ephemeral fork that proposes and never mutates; unlike
+  **Glean** it writes nothing at all.
 
 ## Example dialogue
 
