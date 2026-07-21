@@ -51,12 +51,25 @@ setup() {
 
 @test "clerk SessionStart hook injects the seed and kicks async glean" {
 	cd "$REPO_ROOT"
+	local stub_bin clerk_args
+	stub_bin="$BATS_TEST_TMPDIR/bin"
+	clerk_args="$BATS_TEST_TMPDIR/clerk-args.txt"
+	mkdir -p "$stub_bin"
+	cat >"$stub_bin/clerk" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >"$CLERK_STUB_ARGS"
+SH
+	chmod +x "$stub_bin/clerk"
+	export PATH="$stub_bin:$PATH"
+	export CLERK_STUB_ARGS="$clerk_args"
+
 	grep -q 'clerk glean --async' umbel/hooks/local/clerk-session-start/session-start
 	run umbel/hooks/local/clerk-session-start/session-start
 	[ "$status" -eq 0 ]
 	[[ "$output" == *'"hookEventName": "SessionStart"'* ]]
 	[[ "$output" == *'clerk-operating-rules'* ]]
 	[[ "$output" == *'clerk backlog next|show|claim|release|return|submit|finish'* ]]
+	[ "$(cat "$clerk_args")" = "glean --async" ]
 }
 
 @test "presort successor speaks Clerk grammar and demotes criteria-less candidates" {

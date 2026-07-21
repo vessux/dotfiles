@@ -1,20 +1,19 @@
 # Triage Labels
 
-This repo tracks issues in **beads**, not GitHub, so the five canonical triage roles map onto
-beads **states** and **close-reasons** rather than GitHub labels. This is a **solo repo**, so the
-mapping is deliberately simplified — `needs-info` and `ready-for-human` are folded away.
+This repo tracks work through **Clerk**, so Matt Pocock's five canonical triage roles map to Clerk
+inbox/backlog dispositions rather than GitHub labels.
 
-| Canonical role (mattpocock/skills) | beads mechanism |
+| Canonical role (mattpocock/skills) | Clerk mechanism |
 | ---------------------------------- | --------------- |
-| `needs-triage`    | An **open** bead with no `stage:*` label — a raw capture awaiting refinement. |
-| `needs-info`      | *(not used)* — you are the reporter. Stays an open raw capture; add a `bd note <id>` if blocked on an external answer. |
-| `ready-for-agent` | `bd set-state <id> stage=ready` (label `stage:ready`) — the AFK-ready handoff to the delivery track. |
-| `ready-for-human` | *(not used)* — there is no separate human track. Anything ready becomes `stage:ready`; leave a `bd note` if a bead specifically needs you. |
-| `wontfix`         | `bd close <id> --reason "wontfix: …"` — a closed bead whose reason records the drop. |
+| `needs-triage` | An item shown by `clerk inbox list`: raw captured work that has not yet been promoted. |
+| `needs-info` | Keep it in the inbox. Record the missing external fact in the item body, a pregrill note, or the refinement output; do not promote until the fact is available. |
+| `ready-for-agent` | `clerk inbox ready <id>` after refinement has named the work and explicit acceptance criteria. Delivery then discovers it with `clerk backlog next`. |
+| `ready-for-human` | Not a separate track in this repo. Keep it in the inbox when human judgment is still needed; use pregrill/refinement notes to state the decision. |
+| `wontfix` | `clerk inbox drop <id>` with the reason. |
 
-When a skill mentions a role (e.g. "apply the AFK-ready triage label"), perform the corresponding
-beads action above. The one marker that matters day-to-day is **`stage:ready`** — the line between
-a raw capture and work the delivery track can pull.
+When a skill mentions applying a triage label, perform the corresponding Clerk disposition above.
+The most important boundary is **inbox vs delivery-ready**: do not call something `ready-for-agent`
+until `clerk inbox ready` can record acceptance criteria.
 
-Note: `bd set-state <id> stage=ready` both records an event bead (the source of truth) and
-maintains the `stage:ready` label as a fast-lookup cache.
+If setup or the next workflow step is unclear, run `clerk doctor` rather than dropping to lower-level
+tracker commands.

@@ -83,6 +83,41 @@ create_test_transcripts() {
 	[[ "$output" == *"clerk: glean"* ]] || [[ "$output" == *"glean"* ]]
 }
 
+@test "glean: default Claude judgment fork uses cheap bounded model" {
+	local tmpdir stub_bin args_file
+	tmpdir=$(mktemp -d)
+	cd "$tmpdir"
+	git init -q
+	git config user.email "test@test"
+	git config user.name "Test"
+	printf 'backlog: bd\n' >.clerk
+
+	stub_bin="${BATS_TEST_TMPDIR}/bin"
+	args_file="${BATS_TEST_TMPDIR}/claude-args.txt"
+	mkdir -p "$stub_bin"
+	cat >"$stub_bin/claude" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$CLERK_STUB_CLAUDE_ARGS"
+cat >/dev/null
+printf '{"type":"none","reason":"stub"}\n'
+SH
+	chmod +x "$stub_bin/claude"
+	export PATH="$stub_bin:$PATH"
+	export CLERK_STUB_CLAUDE_ARGS="$args_file"
+	unset CLERK_GLEAN_JUDGMENT_CMD
+	export CLERK_GLEAN_TRANSCRIPT_DIR="${CLERK_TEST_TRANSCRIPT_DIR}"
+	export CLERK_GLEAN_STATE_DIR="${CLERK_GLEAN_STATE_DIR}"
+	export CLERK_GLEAN_MIN_CHUNK_LINES=1
+	create_test_transcripts "${CLERK_TEST_TRANSCRIPT_DIR}"
+
+	run "$CLERK" glean
+	[ "$status" -eq 0 ]
+	grep -qx -- '--model' "$args_file"
+	grep -qx -- 'haiku' "$args_file"
+	grep -qx -- '--max-budget-usd' "$args_file"
+	grep -qx -- '0.05' "$args_file"
+}
+
 @test "glean: flock - two simultaneous invocations, only one harvests" {
 	local tmpdir
 	tmpdir=$(mktemp -d)

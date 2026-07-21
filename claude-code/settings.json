@@ -1,10 +1,9 @@
 {
-  "includeCoAuthoredBy": false,
   "attribution": {
     "sessionUrl": false
   },
+  "includeCoAuthoredBy": false,
   "permissions": {
-    "defaultMode": "auto",
     "allow": [
       "Bash(clerk capture:*)",
       "Bash(clerk inbox list)",
@@ -13,7 +12,8 @@
       "Bash(clerk backlog next)",
       "Bash(clerk backlog show:*)",
       "Bash(clerk backlog claim:*)"
-    ]
+    ],
+    "defaultMode": "auto"
   },
   "model": "opus[1m]",
   "enableAllProjectMcpServers": true,
@@ -66,7 +66,7 @@
       }
     }
   },
-  "effortLevel": "xhigh",
+  "effortLevel": "high",
   "voice": {
     "enabled": true,
     "mode": "hold"

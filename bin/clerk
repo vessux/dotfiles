@@ -2641,7 +2641,10 @@ glean_judgment_fork() {
 	if [ -n "${CLERK_GLEAN_JUDGMENT_CMD:-}" ]; then
 		bash -c "$CLERK_GLEAN_JUDGMENT_CMD" <"$prompt_file" >"$output_file" || rc=$?
 	elif command -v claude >/dev/null 2>&1; then
-		claude -p <"$prompt_file" >"$output_file" || rc=$?
+		claude -p \
+			--model "${CLERK_GLEAN_MODEL:-haiku}" \
+			--max-budget-usd "${CLERK_GLEAN_MAX_BUDGET_USD:-0.05}" \
+			<"$prompt_file" >"$output_file" || rc=$?
 	else
 		printf 'clerk glean: no judgment runner available (expected claude on PATH)\n' >&2
 		rm -f "$prompt_file" "$output_file" "$candidates_file"

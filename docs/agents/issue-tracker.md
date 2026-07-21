@@ -1,54 +1,60 @@
-# Issue tracker: beads
+# Issue tracker: Clerk
 
-Issues for this repo live in **beads** (the `bd` CLI), **not** GitHub. Beads is this repo's
-Clerk-backed backlog. Do **not** create GitHub issues here, even though the `origin` remote is
-GitHub.
+Work for this repo is tracked through **Clerk** (`clerk`), not GitHub Issues. Even though the
+remote is on GitHub, do **not** create GitHub issues for this repo's normal workflow.
+
+Clerk is the workflow facade. Skills and agents should speak Clerk verbs only; lower-level storage
+or tracker details belong in operator-maintenance docs, not runtime instructions.
 
 ## Lifecycle
 
-The whole lifecycle lives in beads:
+- **Raw capture / inbox item** — created with `clerk capture "<title>"`.
+- **Refinement** — inspect and shape inbox items with `clerk inbox list`, `clerk inbox show <id>`,
+  `clerk inbox dups`, `clerk inbox pregrill <id> ...`, `clerk inbox ready <id>`, and
+  `clerk inbox drop <id>`.
+- **Ready for delivery** — an item promoted by `clerk inbox ready <id>` and visible to delivery via
+  `clerk backlog next` / `clerk backlog show <id>`.
+- **Delivery** — claim, submit, reconcile, or return work with `clerk backlog ...` verbs.
+- **Resolved or dropped** — Clerk records the outcome through the relevant inbox/backlog verb.
 
-- **Raw capture** — an **open** bead with no `stage:*` label. Created ambiently with `bd create` (see below).
-- **Ready for delivery** — an open bead marked `stage:ready` (`bd set-state <id> stage=ready`).
-  This is the line between a raw capture and work the delivery track can pull.
-- **Resolved** — a **closed** bead. The close-reason says whether it was delivered or dropped
-  (`bd close <id> --reason "wontfix: …"`).
-
-`bd ready` + dependencies + epics drive the work directly. The delivery track pulls beads that are
-both unblocked (surfaced by `bd ready`) and marked `stage:ready`.
+Run `clerk doctor` when setup or the next workflow step is unclear.
 
 ## When a skill says "publish to the issue tracker" / "create an issue"
 
-Capture into beads with `bd create` — there is no `bd q` here, and never `gh issue create`. A
-capture holds the context you have *at the moment it surfaces*, so it carries a body, not just a
-title:
+Use `clerk capture`, with a concise title and enough body/context for later refinement. Do not use
+`gh issue create` for this repo.
 
-- **Title** — a one-line summary (a few words, not a paragraph; ~80 chars is the target, 500 the
-  hard cap). It's a pointer, not the content.
-- **Body** — the reasoning, evidence, and options in `-d` (or `--stdin` / `--body-file -` for a
-  multi-line dump; no length limit). Add `--silent` for just the ID.
+Examples:
 
 ```bash
-bd create "two bundle seeds duplicate the same skill instructions" \
-  -d "noticed while editing one bundle that another carries a near-identical copy of the same skill,
-and the two have already drifted in wording; options: factor the shared text into one leaf both
-bundles reference, or leave the copies and reconcile only if the drift causes a real bug." \
-  --silent
+clerk capture "two bundle seeds duplicate the same skill instructions" --stdin <<'EOF'
+While editing one bundle, another carried a near-identical copy of the same skill guidance and the
+two copies had already drifted. Options include factoring the shared text into one artifact or
+leaving the copies until drift causes a real bug.
+EOF
 ```
 
-Don't cram the dump into the title.
+If the capture is already well-shaped and you are in a refinement pass, continue through
+`clerk inbox ...` rather than bypassing Clerk.
 
 ## When a skill says "fetch the relevant ticket"
 
-`bd show <id>`. The user normally passes the bead ID directly.
+Use Clerk:
 
-## When a skill says "break this into issues" (e.g. /to-issues)
+- Inbox/refinement item: `clerk inbox show <id>`
+- Delivery-ready/backlog item: `clerk backlog show <id>`
 
-`bd create` one bead per vertical slice, wire dependencies with `bd dep`, group into an epic where
-useful, and mark each ready slice `stage:ready`. There is no PRD-to-self and no separate promotion
-step — the bead *is* the work item.
+The user normally passes the Clerk ID directly.
+
+## When a skill says "break this into issues" or "publish tickets"
+
+Create one Clerk capture per vertical slice with `clerk capture`, then refine those captures through
+`clerk inbox ...` until each keeper has explicit acceptance criteria and can be promoted with
+`clerk inbox ready <id>`.
+
+Do not create GitHub Issues. Do not use lower-level tracker commands in normal agent workflow.
 
 ## Triage state
 
-See `docs/agents/triage-labels.md` for how the canonical triage roles map onto beads states and
-close-reasons.
+See `docs/agents/triage-labels.md` for how Matt Pocock's canonical triage roles map to Clerk
+inbox/backlog dispositions.

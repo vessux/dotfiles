@@ -12,8 +12,8 @@
   ],
   "lastChangelogVersion": "0.80.3",
   "theme": "dark",
-  "defaultProvider": "nvidia",
-  "defaultModel": "deepseek-ai/deepseek-v4-flash",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.5",
   "defaultThinkingLevel": "high",
   "transport": "auto",
   "hideThinkingBlock": false,
@@ -24,5 +24,6 @@
     "nvidia/z-ai/glm-5.2",
     "nvidia/minimaxai/minimax-m3",
     "nvidia/nvidia/nemotron-3-ultra-550b-a55b"
-  ]
+  ],
+  "enableSkillCommands": true
 }
