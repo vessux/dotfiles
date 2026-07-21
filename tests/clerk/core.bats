@@ -233,9 +233,9 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 @test "--explain capture: underlying commands + ADR pointer, verbatim" {
 	run "$CLERK" --explain capture
 	[ "$status" -eq 0 ]
-	[ "${lines[0]}" = 'clerk capture — file one raw capture into the inbox' ]
-	[ "${lines[1]}" = '  runs: bd create "<title>" [--stdin]           (backlog: bd)' ]
-	[ "${lines[2]}" = '        gh issue create --title "<title>"       (backlog: gh)' ]
+	[ "${lines[0]}" = 'clerk capture — file one raw capture into the bd inbox' ]
+	[ "${lines[1]}" = '  runs: bd create "<title>" [--stdin]           (backlog: bd|gh)' ]
+	[ "${lines[2]}" = '        (GitHub-backed repos use GitHub only after inbox ready promotion)' ]
 	[ "${lines[3]}" = '  see:  ADR 0015 — umbel/docs/adr/0015-clerk-opaque-workflow-verb-facade.md' ]
 }
 
@@ -275,14 +275,14 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	cd "$repo"
 	run "$CLERK" capture --help
 	[ "$status" -eq 0 ]
-	[ "${lines[0]}" = 'clerk capture — file one raw capture into the inbox' ]
+	[ "${lines[0]}" = 'clerk capture — file one raw capture into the bd inbox' ]
 	[[ "$output" == *'bd create "<title>"'* ]]
 	[[ "$output" != *'jq:'* ]]
 	[[ "$output" != *'capture failed'* ]]
 
 	run "$CLERK" inbox ready -h
 	[ "$status" -eq 0 ]
-	[ "${lines[0]}" = 'clerk inbox ready — write refinement output, then promote a groomed unit' ]
+	[ "${lines[0]}" = 'clerk inbox ready — write refinement output, then promote a groomed bd capture' ]
 	[[ "$output" == *'--acceptance-file <path>'* ]]
 }
 

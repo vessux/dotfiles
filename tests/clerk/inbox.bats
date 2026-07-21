@@ -9,6 +9,8 @@
 # personal ~/.config/bin/bd auto-sync shim (ADR 0013) — that shim triggers a background
 # dolt push after every mutating call, which is unwanted noise (and a real-remote risk) for
 # a scratch db; resolving straight to the underlying bd binary keeps these tests hermetic.
+# In `backlog: gh` fixtures, bd is still initialized because GitHub is only the ready
+# delivery backlog; raw capture/inbox storage remains bd.
 
 setup() {
 	source "$BATS_TEST_DIRNAME/helpers.bash"
@@ -69,15 +71,18 @@ advance_main() { # $1=repo
 	git -C "$repo" push -q origin main 2>/dev/null || true
 }
 
-# Scratch git repo + `.clerk` (backlog: gh); no bd involved at all.
+# Scratch public-style repo + `.clerk` (backlog: gh) + a fresh scratch bd db.
+# GitHub is the delivery backlog; bd remains the raw capture/inbox store.
 make_gh_repo() { # $1 = subdir name
 	local dir="$BATS_TEST_TMPDIR/$1"
 	mkdir -p "$dir"
 	dir="$(cd "$dir" && pwd -P)"
 	git init -q -b main "$dir"
+	printf 'public\n' >"$dir/.repo-visibility"
 	printf 'backlog: gh\n' >"$dir/.clerk"
 	git -C "$dir" add -A
 	git -C "$dir" -c user.email=clerk@test -c user.name=clerk commit -q -m fixture
+	(cd "$dir" && bd init -q --non-interactive --skip-hooks --skip-agents >/dev/null 2>&1)
 	printf '%s\n' "$dir"
 }
 
@@ -221,7 +226,7 @@ SHIM
 	[ "$output" = 'clerk capture: missing title — usage: clerk capture "<title>" [--stdin|--impediment]' ]
 }
 
-@test "capture (gh): creates the issue via gh issue create --title, no --body-file without --stdin" {
+@test "capture (gh backlog): files raw captures in bd, not GitHub" {
 	repo=$(make_gh_repo cap6)
 	fakebin="$BATS_TEST_TMPDIR/cap6-fakebin"
 	make_fake_gh "$fakebin"
@@ -229,24 +234,21 @@ SHIM
 	: >"$FAKE_GH_LOG"
 	export PATH="$fakebin:$PATH"
 	cd "$repo"
-	run "$CLERK" capture "a gh capture"
+	run "$CLERK" capture "a gh-backed raw capture"
 	[ "$status" -eq 0 ]
-	[ "$output" = "clerk: filed https://github.com/acme/repo/issues/42" ]
-	grep -qF 'issue\x1fcreate\x1f--title\x1fa gh capture' "$FAKE_GH_LOG"
-	! grep -qF 'body-file' "$FAKE_GH_LOG"
+	[[ "$output" == "clerk: filed "* ]]
+	id="${output#clerk: filed }"
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].title')" = "a gh-backed raw capture" ]
+	[ ! -s "$FAKE_GH_LOG" ]
 }
 
-@test "capture (gh) --stdin passes --body-file -" {
+@test "capture (gh backlog) --stdin passes body to bd" {
 	repo=$(make_gh_repo cap7)
-	fakebin="$BATS_TEST_TMPDIR/cap7-fakebin"
-	make_fake_gh "$fakebin"
-	export FAKE_GH_LOG="$BATS_TEST_TMPDIR/cap7.log"
-	: >"$FAKE_GH_LOG"
-	export PATH="$fakebin:$PATH"
 	cd "$repo"
-	run "$CLERK" capture "a gh capture" --stdin
+	run bash -c 'printf "%s\n" "details from stdin" | "$1" capture "a gh-backed stdin capture" --stdin' _ "$CLERK"
 	[ "$status" -eq 0 ]
-	grep -qF 'issue\x1fcreate\x1f--title\x1fa gh capture\x1f--body-file\x1f-' "$FAKE_GH_LOG"
+	id="${output#clerk: filed }"
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].description')" = "details from stdin" ]
 }
 
 # ---------------------------------------------------------------- inbox list -
@@ -366,43 +368,44 @@ SHIM
   (empty)" ]
 }
 
-@test "inbox list (gh): --limit forwards a positive limit" {
+@test "inbox list (gh backlog): --limit forwards to bd and never lists GitHub issues" {
 	repo=$(make_gh_repo list_gh_limit)
+	tracedbin="$BATS_TEST_TMPDIR/list-gh-limit-tracedbin"
+	make_traced_bd "$tracedbin"
 	fakebin="$BATS_TEST_TMPDIR/list-gh-limit-fakebin"
 	make_fake_gh "$fakebin"
-	export FAKE_GH_LIST_JSON="$BATS_TEST_TMPDIR/list-gh-limit.json"
-	printf '[]' >"$FAKE_GH_LIST_JSON"
+	export BD_TRACE_LOG="$BATS_TEST_TMPDIR/list-gh-limit.trace"
 	export FAKE_GH_LOG="$BATS_TEST_TMPDIR/list-gh-limit.log"
+	: >"$BD_TRACE_LOG"
 	: >"$FAKE_GH_LOG"
-	export PATH="$fakebin:$PATH"
+	export PATH="$tracedbin:$fakebin:$PATH"
 	cd "$repo"
-	run "$CLERK" inbox list --limit 17
+	bd create "bd capture 1" --silent >/dev/null
+	bd create "bd capture 2" --silent >/dev/null
+	run "$CLERK" inbox list --limit 1
 	[ "$status" -eq 0 ]
-	grep -F -q -- 'issue\x1flist\x1f--state\x1fopen\x1f--json\x1fnumber,title,labels,updatedAt,comments\x1f--limit\x1f17' "$FAKE_GH_LOG"
-}
-
-@test "inbox list (gh): --limit 0 refuses instead of pretending unlimited" {
-	repo=$(make_gh_repo list_gh_limit0)
-	fakebin="$BATS_TEST_TMPDIR/list-gh-limit0-fakebin"
-	make_fake_gh "$fakebin"
-	export FAKE_GH_LOG="$BATS_TEST_TMPDIR/list-gh-limit0.log"
-	: >"$FAKE_GH_LOG"
-	export PATH="$fakebin:$PATH"
-	cd "$repo"
-	run "$CLERK" inbox list --limit 0
-	[ "$status" -eq 2 ]
-	[ "$output" = 'clerk inbox list: --limit 0 is not supported for gh-backed repos; pass a positive --limit value' ]
+	[[ "$output" == *"Inbox (open, not ready) — 1 item(s):"* ]]
+	grep -F -q -- 'list\x1f--status\x1fopen\x1f--exclude-label\x1fstage:ready\x1f--readonly\x1f--json\x1f--limit\x1f1' "$BD_TRACE_LOG"
 	[ ! -s "$FAKE_GH_LOG" ]
 }
 
-@test "inbox list (gh): excludes ready-for-agent labelled issues and reports the pregrill marker" {
+@test "inbox list (gh backlog): --limit 0 remains bd unlimited" {
+	repo=$(make_gh_repo list_gh_limit0)
+	cd "$repo"
+	bd create "visible after migration" --silent >/dev/null
+	run "$CLERK" inbox list --limit 0
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"visible after migration"* ]]
+}
+
+@test "public gh backlog keeps bd raw captures separate from GitHub ready issues" {
 	repo=$(make_gh_repo list6)
 	fakebin="$BATS_TEST_TMPDIR/list6-fakebin"
 	make_fake_gh "$fakebin"
 	cat >"$BATS_TEST_TMPDIR/list6.json" <<'JSON'
 [
-  {"number": 1, "title": "already ready", "labels": [{"name":"ready-for-agent"}], "updatedAt":"2026-07-07T10:00:00Z", "comments": []},
-  {"number": 2, "title": "still open", "labels": [], "updatedAt":"2026-07-07T10:00:00Z", "comments": []}
+  {"number": 57, "title": "ready GitHub delivery"},
+  {"number": 47, "title": "another ready GitHub delivery"}
 ]
 JSON
 	export FAKE_GH_LIST_JSON="$BATS_TEST_TMPDIR/list6.json"
@@ -410,10 +413,22 @@ JSON
 	: >"$FAKE_GH_LOG"
 	export PATH="$fakebin:$PATH"
 	cd "$repo"
+	id=$(bd create "bd-only raw capture" --silent)
+	bd create "ready bead is not the gh backlog" --labels stage:ready --silent >/dev/null
+
 	run "$CLERK" inbox list
 	[ "$status" -eq 0 ]
 	[ "$output" = "Inbox (open, not ready) — 1 item(s):
-  #2  [pregrill:absent]  still open" ]
+  $id  [pregrill:absent]  bd-only raw capture" ]
+	[ ! -s "$FAKE_GH_LOG" ]
+
+	run "$CLERK" backlog next
+	[ "$status" -eq 0 ]
+	[ "$output" = "Backlog (ready) — 2 item(s):
+  #57  ready GitHub delivery
+  #47  another ready GitHub delivery" ]
+	[[ "$output" != *"bd-only raw capture"* ]]
+	grep -F -q -- 'issue\x1flist\x1f--label\x1fready-for-agent' "$FAKE_GH_LOG"
 }
 
 # ---------------------------------------------------------------- inbox show -
@@ -479,7 +494,7 @@ JSON
 	[ "$output" = 'clerk inbox show: missing id — usage: clerk inbox show <id>' ]
 }
 
-@test "inbox show (gh) shows the issue" {
+@test "inbox show (gh backlog) shows the bd capture" {
 	repo=$(make_gh_repo show3)
 	fakebin="$BATS_TEST_TMPDIR/show3-fakebin"
 	make_fake_gh "$fakebin"
@@ -487,9 +502,11 @@ JSON
 	: >"$FAKE_GH_LOG"
 	export PATH="$fakebin:$PATH"
 	cd "$repo"
-	run "$CLERK" inbox show 7
+	id=$(bd create "look at my bd capture" --silent)
+	run "$CLERK" inbox show "$id"
 	[ "$status" -eq 0 ]
-	[ "$output" = "fake gh issue view: 7" ]
+	[[ "$output" == *"$id"*"look at my bd capture"* ]]
+	[ ! -s "$FAKE_GH_LOG" ]
 }
 
 # ---------------------------------------------------------------- inbox dups -
@@ -516,12 +533,15 @@ JSON
   (none)" ]
 }
 
-@test "inbox dups (gh): documented stub, exit 0" {
+@test "inbox dups (gh backlog) uses the bd capture pool" {
 	repo=$(make_gh_repo dups3)
 	cd "$repo"
+	bd create "fix the auth bug" --silent >/dev/null
+	bd create "fix the auth bug again" --silent >/dev/null
 	run "$CLERK" inbox dups
 	[ "$status" -eq 0 ]
-	[ "$output" = "clerk: inbox dups (gh backend): not implemented — no similarity pass yet; see ADR 0016" ]
+	[[ "$output" == "Duplicate candidates — "* ]]
+	[[ "$output" == *"fix the auth bug"* ]]
 }
 
 # --------------------------------------------------------------- inbox ready -
@@ -750,16 +770,17 @@ JSON
 	[[ "$output" == *"run 'clerk doctor' to check the backend"* ]]
 }
 
-@test "inbox ready (gh preset) without --title/--body-file: refusal text prescribes both flags, exit 2" {
+@test "inbox ready (gh backlog) without --title/--body-file: refusal text prescribes both flags, exit 2" {
 	repo=$(make_gh_repo ready5)
 	cd "$repo"
-	run "$CLERK" inbox ready 9
+	id=$(bd create "ready gh needs args" --silent)
+	run "$CLERK" inbox ready "$id"
 	[ "$status" -eq 2 ]
 	[[ "$output" == *"--title"* ]]
 	[[ "$output" == *"--body-file"* ]]
 }
 
-@test "inbox ready (gh preset) with --title/--body-file: creates then closes, in that order" {
+@test "inbox ready (gh backlog) creates a ready GitHub issue, then closes the bd capture" {
 	repo=$(make_gh_repo ready6)
 	fakebin="$BATS_TEST_TMPDIR/ready6-fakebin"
 	make_fake_gh "$fakebin"
@@ -767,16 +788,15 @@ JSON
 	: >"$FAKE_GH_LOG"
 	export PATH="$fakebin:$PATH"
 	cd "$repo"
+	id=$(bd create "raw capture to promote" --silent)
 	printf 'the groomed body\n' >body.md
-	run "$CLERK" inbox ready 9 --title "promoted title" --body-file body.md
+	run "$CLERK" inbox ready "$id" --title "promoted title" --body-file body.md
 	[ "$status" -eq 0 ]
-	[ "$output" = "clerk: promoted 9 to #42 (https://github.com/acme/repo/issues/42)" ]
-	create_ln=$(grep -nF 'issue\x1fcreate' "$FAKE_GH_LOG" | head -1 | cut -d: -f1)
-	close_ln=$(grep -nF 'issue\x1fclose' "$FAKE_GH_LOG" | head -1 | cut -d: -f1)
-	[ -n "$create_ln" ]
-	[ -n "$close_ln" ]
-	[ "$create_ln" -lt "$close_ln" ]
-	grep -qF 'issue\x1fclose\x1f9\x1f--comment\x1fpromoted: #42' "$FAKE_GH_LOG"
+	[ "$output" = "clerk: promoted $id to #42 (https://github.com/acme/repo/issues/42)" ]
+	grep -qF 'issue\x1fcreate\x1f--title\x1fpromoted title\x1f--body-file\x1fbody.md\x1f--label\x1fready-for-agent' "$FAKE_GH_LOG"
+	! grep -qF 'issue\x1fclose' "$FAKE_GH_LOG"
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = closed ]
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].close_reason')" = "promoted to GitHub #42" ]
 }
 
 @test "inbox ready: missing id is a usage error, exit 2" {
@@ -872,7 +892,7 @@ JSON
 	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = closed ]
 }
 
-@test "inbox drop (gh) closes the issue" {
+@test "inbox drop (gh backlog) closes the bd capture" {
 	repo=$(make_gh_repo drop2)
 	fakebin="$BATS_TEST_TMPDIR/drop2-fakebin"
 	make_fake_gh "$fakebin"
@@ -880,10 +900,12 @@ JSON
 	: >"$FAKE_GH_LOG"
 	export PATH="$fakebin:$PATH"
 	cd "$repo"
-	run "$CLERK" inbox drop 3
+	id=$(bd create "drop gh-backed capture" --silent)
+	run "$CLERK" inbox drop "$id"
 	[ "$status" -eq 0 ]
-	[ "$output" = "clerk: dropped 3" ]
-	grep -qF 'issue\x1fclose\x1f3' "$FAKE_GH_LOG"
+	[ "$output" = "clerk: dropped $id (wontfix)" ]
+	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = closed ]
+	[ ! -s "$FAKE_GH_LOG" ]
 }
 
 @test "inbox drop: missing id is a usage error, exit 2" {
@@ -935,7 +957,7 @@ JSON
 	[[ "$notes" == *"Draft acceptance criteria:"$'\n'"- (none)"* ]]
 }
 
-@test "inbox pregrill (gh) posts a comment" {
+@test "inbox pregrill (gh backlog) appends notes to the bd capture" {
 	repo=$(make_gh_repo preg4)
 	fakebin="$BATS_TEST_TMPDIR/preg4-fakebin"
 	make_fake_gh "$fakebin"
@@ -943,9 +965,13 @@ JSON
 	: >"$FAKE_GH_LOG"
 	export PATH="$fakebin:$PATH"
 	cd "$repo"
-	run "$CLERK" inbox pregrill 5 --decision "d"
+	id=$(bd create "pregrill gh-backed capture" --silent)
+	run "$CLERK" inbox pregrill "$id" --decision "d"
 	[ "$status" -eq 0 ]
-	grep -qF 'issue\x1fcomment\x1f5\x1f--body\x1fclerk-pregrill:' "$FAKE_GH_LOG"
+	notes=$(bd show "$id" --readonly --json | jq -r '.[0].notes')
+	[[ "$notes" == "clerk-pregrill: "* ]]
+	[[ "$notes" == *"- d"* ]]
+	[ ! -s "$FAKE_GH_LOG" ]
 }
 
 @test "inbox pregrill: missing id is a usage error, exit 2" {

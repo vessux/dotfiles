@@ -148,9 +148,9 @@ explain_verb() {
 	case "$1" in
 		capture)
 			printf '%s\n' \
-				'clerk capture — file one raw capture into the inbox' \
-				'  runs: bd create "<title>" [--stdin]           (backlog: bd)' \
-				'        gh issue create --title "<title>"       (backlog: gh)' \
+				'clerk capture — file one raw capture into the bd inbox' \
+				'  runs: bd create "<title>" [--stdin]           (backlog: bd|gh)' \
+				'        (GitHub-backed repos use GitHub only after inbox ready promotion)' \
 				"  see:  $ADR15"
 			;;
 		sync)
@@ -176,52 +176,48 @@ explain_verb() {
 			;;
 		'inbox list')
 			printf '%s\n' \
-				'clerk inbox list — list the unrefined pool' \
+				'clerk inbox list — list the unrefined bd capture pool' \
 				'  usage: clerk inbox list [--limit <n>]' \
-				'  runs: bd list, filtered to open minus stage:ready         (backlog: bd)' \
-				'        gh issue list, filtered to minus ready-for-agent    (backlog: gh)' \
-				'        --limit forwards the backend row limit; for bd, 0 = unlimited' \
+				'  runs: bd list, filtered to open minus stage:ready         (backlog: bd|gh)' \
+				'        --limit forwards to bd; 0 = unlimited' \
 				"  see:  $ADR15"
 			;;
 		'inbox show')
 			printf '%s\n' \
-				'clerk inbox show — show one inbox item' \
-				'  runs: bd show <id>          (backlog: bd)' \
-				'        gh issue view <id>    (backlog: gh)' \
+				'clerk inbox show — show one bd-backed inbox item' \
+				'  runs: bd show <id>          (backlog: bd|gh)' \
 				"  see:  $ADR15"
 			;;
 		'inbox dups')
 			printf '%s\n' \
-				'clerk inbox dups — cluster duplicate captures for pre-sort' \
-				'  runs: bd duplicates         (backlog: bd)' \
-				'        gh issue list + a similarity pass    (backlog: gh)' \
+				'clerk inbox dups — cluster duplicate bd captures for pre-sort' \
+				'  runs: bd duplicates         (backlog: bd|gh)' \
 				"  see:  $ADR16"
 			;;
 		'inbox ready')
 			printf '%s\n' \
-				'clerk inbox ready — write refinement output, then promote a groomed unit' \
+				'clerk inbox ready — write refinement output, then promote a groomed bd capture' \
 				'  usage: clerk inbox ready <id> [--design-file <path>] [--acceptance-file <path>] [--returned keep|discard]' \
 				'         (gh: --title "<title>" --body-file <path>)' \
 				'  runs: for bd, optional bd update --design-file / --acceptance, then refuses' \
 				'        units still lacking acceptance criteria (ADR 0016); if returned/<id> exists,' \
-				'        requires --returned keep|discard before stage:ready; for gh, creates the' \
-				'        ready issue and closes the capture as promoted' \
+				'        requires --returned keep|discard before stage:ready; for gh, creates a' \
+				'        GitHub issue labelled ready-for-agent, then closes the bd capture as promoted' \
 				"  see:  $ADR16"
 			;;
 		'inbox drop')
 			printf '%s\n' \
-				'clerk inbox drop — close a capture as not worth doing' \
+				'clerk inbox drop — close a bd capture as not worth doing' \
 				'  usage: clerk inbox drop <id> [--returned keep|discard]' \
 				'  runs: if returned/<id> exists, requires --returned keep|discard; discard deletes' \
 				'        that evidence branch, keep preserves it; then bd close <id> --reason wontfix' \
-				'        (backlog: bd) / gh issue close <id> (backlog: gh)' \
+				'        (backlog: bd|gh)' \
 				"  see:  $ADR16"
 			;;
 		'inbox pregrill')
 			printf '%s\n' \
-				'clerk inbox pregrill — append prep notes onto a unit before its grill' \
-				'  runs: bd update <id> --notes "<dated, state-neutral prep note>"    (backlog: bd)' \
-				'        gh issue comment <id> --body "<prep note>"                   (backlog: gh)' \
+				'clerk inbox pregrill — append prep notes onto a bd capture before its grill' \
+				'  runs: bd update <id> --notes "<dated, state-neutral prep note>"    (backlog: bd|gh)' \
 				'        note carries open decisions, premises with suggested verifications, draft criteria' \
 				"  see:  $ADR16"
 			;;
@@ -449,7 +445,9 @@ cmd_capture() {
 	done
 
 	case "$backend" in
-		bd)
+		bd | gh)
+			# Even when the delivery backlog is GitHub, raw captures live in bd; GitHub is
+			# only the ready backlog surface after `clerk inbox ready` promotes a capture.
 			[ "$use_impediment" -eq 1 ] && bd_ensure_impediment_type
 			local -a args=(bd create "$title" --silent)
 			[ "$use_stdin" -eq 1 ] && args+=(--stdin)
@@ -468,22 +466,6 @@ cmd_capture() {
 				printf '%sclerk:%s filed %s (type: impediment)\n' "$C_GRN" "$C_RST" "$id"
 			else
 				printf '%sclerk:%s filed %s\n' "$C_GRN" "$C_RST" "$id"
-			fi
-			;;
-		gh)
-			local -a args=(gh issue create --title "$title")
-			[ "$use_stdin" -eq 1 ] && args+=(--body-file -)
-			# gh has no first-class issue "type" reachable from `issue create`; a label is
-			# this backend's closest analogue to bd's `--type impediment` (documented choice).
-			[ "$use_impediment" -eq 1 ] && args+=(--label type:impediment)
-			local url
-			if ! url=$("${args[@]}"); then
-				backend_fail "capture failed — gh issue create did not succeed for \"$title\""
-			fi
-			if [ "$use_impediment" -eq 1 ]; then
-				printf '%sclerk:%s filed %s (type: impediment)\n' "$C_GRN" "$C_RST" "$url"
-			else
-				printf '%sclerk:%s filed %s\n' "$C_GRN" "$C_RST" "$url"
 			fi
 			;;
 	esac
@@ -511,7 +493,9 @@ cmd_inbox_list() {
 		shift
 	done
 	case "$backend" in
-		bd)
+		bd | gh)
+			# Inbox storage is bd for both backlog bindings. In `backlog: gh` repos this keeps
+			# pre-promotion captures visible instead of confusing them with GitHub delivery issues.
 			# stdout only: stderr is left to flow straight to the terminal (bd's own error
 			# text lands there on failure) rather than being folded into $json, which must
 			# stay pure JSON on success — a stray warning on stderr would otherwise corrupt
@@ -544,34 +528,6 @@ cmd_inbox_list() {
 					| [scan("clerk-pregrill: ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)")] as $m
 					| if ($m|length)==0 then "" else $m[-1][0] end;
 				.[] | [.id, .title, pregrill_ts, (.updated_at // "")] | join("\u001f")')
-			;;
-		gh)
-			local json
-			if [ "$limit" = 0 ]; then
-				usage_error 'clerk inbox list: --limit 0 is not supported for gh-backed repos; pass a positive --limit value'
-			fi
-			local -a gh_args=(gh issue list --state open --json number,title,labels,updatedAt,comments)
-			[ -z "$limit" ] || gh_args+=(--limit "$limit")
-			if ! json=$("${gh_args[@]}"); then
-				backend_fail "inbox list failed — gh issue list did not succeed"
-			fi
-			json=$(printf '%s' "$json" | jq -c '[.[] | select((.labels | map(.name) | index("ready-for-agent")) == null)]')
-			local count
-			count=$(printf '%s' "$json" | jq 'length')
-			printf 'Inbox (open, not ready) — %s item(s):\n' "$count"
-			if [ "$count" -eq 0 ]; then
-				printf '  (empty)\n'
-				return 0
-			fi
-			local num title note_ts upd_ts marker
-			while IFS=$'\x1f' read -r num title note_ts upd_ts; do
-				marker=$(pregrill_marker "$note_ts" "$upd_ts")
-				printf '  #%s  [pregrill:%s]  %s\n' "$num" "$marker" "$title"
-			done < <(printf '%s' "$json" | jq -r '
-				def pregrill_ts: ([.comments[]?.body] | join("\n")) as $all
-					| [$all | scan("clerk-pregrill: ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)")] as $m
-					| if ($m|length)==0 then "" else $m[-1][0] end;
-				.[] | [.number, .title, pregrill_ts, (.updatedAt // "")] | join("\u001f")')
 			;;
 	esac
 }
@@ -617,12 +573,8 @@ cmd_inbox_show() {
 		usage_error 'clerk inbox show: missing id — usage: clerk inbox show <id>'
 	fi
 	case "$backend" in
-		bd)
+		bd | gh)
 			bd show "$id" --readonly
-			returned_attempt_banner "$root" "$(returned_short_from_id "$id")" "$id" 'inbox ready|drop'
-			;;
-		gh)
-			gh issue view "$id"
 			returned_attempt_banner "$root" "$(returned_short_from_id "$id")" "$id" 'inbox ready|drop'
 			;;
 	esac
@@ -634,7 +586,7 @@ cmd_inbox_dups() {
 	local backend="$1"
 	shift 2
 	case "$backend" in
-		bd)
+		bd | gh)
 			local json
 			if ! json=$(bd find-duplicates --readonly --json); then
 				backend_fail "inbox dups failed — bd find-duplicates did not succeed"
@@ -647,13 +599,6 @@ cmd_inbox_dups() {
 				return 0
 			fi
 			printf '%s' "$json" | jq -r '.pairs[] | "  \(.issue_a_id) \"\(.issue_a_title)\"  ~  \(.issue_b_id) \"\(.issue_b_title)\"  (score: \(.similarity))"'
-			;;
-		gh)
-			# Documented stub (the unit spec explicitly allows this): gh has no
-			# `find-duplicates` analogue, and bd is this repo's real backend. A genuine
-			# text-similarity pass over `gh issue list` is deferred until a gh-backed repo
-			# actually needs it.
-			printf 'clerk: inbox dups (gh backend): not implemented — no similarity pass yet; see ADR 0016\n'
 			;;
 	esac
 }
@@ -834,18 +779,33 @@ cmd_inbox_ready() {
 		gh)
 			[ -z "$design_file" ] || usage_error 'clerk inbox ready: --design-file is only for bd-backed promotion; use --title/--body-file for gh'
 			[ -z "$acceptance_file" ] || usage_error 'clerk inbox ready: --acceptance-file is only for bd-backed promotion; use --title/--body-file for gh'
-			[ -z "$returned_disposition" ] || usage_error 'clerk inbox ready: --returned is only implemented for bd-backed returned branches'
 			if [ -z "$title" ] || [ -z "$body_file" ]; then
 				usage_error "clerk inbox ready: gh backend needs both --title \"<title>\" and --body-file <file> — rerun as 'clerk inbox ready $id --title \"<title>\" --body-file <file>'"
 			fi
+			[ -f "$body_file" ] || usage_error "clerk inbox ready: body file not found: $body_file"
+			local json
+			json=$(bd show "$id" --readonly --json 2>/dev/null)
+			if [ -z "$json" ] || [ "$json" = null ] ||
+				! printf '%s' "$json" | jq -e 'if type != "array" then false else (length > 0) end' >/dev/null 2>&1; then
+				usage_error "clerk inbox ready: $id not found — check the id ('clerk inbox list' shows open units)"
+			fi
+			local short
+			short=$(returned_short_from_id "$id")
+			handle_returned_disposition 'inbox ready' "$root" "$short" "$returned_disposition"
 			local url
-			if ! url=$(gh issue create --title "$title" --body-file "$body_file"); then
+			if ! url=$(gh issue create --title "$title" --body-file "$body_file" --label ready-for-agent); then
 				backend_fail "inbox ready failed — gh issue create did not succeed"
 			fi
 			local num="${url##*/}"
-			# create, THEN close the capture referencing it — in that order (spec-mandated).
-			if ! gh issue close "$id" --comment "promoted: #$num" >/dev/null; then
-				backend_fail "inbox ready failed — gh issue close did not succeed for $id"
+			if ! bd close "$id" --reason "promoted to GitHub #$num" >/dev/null; then
+				backend_fail "inbox ready failed — bd close did not succeed for $id"
+			fi
+			local status close_reason
+			json=$(bd show "$id" --readonly --json 2>/dev/null)
+			status=$(printf '%s' "$json" | jq -r '.[0].status // ""')
+			close_reason=$(printf '%s' "$json" | jq -r '.[0].close_reason // ""')
+			if [ "$status" != closed ] || [ "$close_reason" != "promoted to GitHub #$num" ]; then
+				backend_fail "inbox ready failed — $id was not confirmed closed after promotion"
 			fi
 			printf '%sclerk:%s promoted %s to #%s (%s)\n' "$C_GRN" "$C_RST" "$id" "$num" "$url"
 			;;
@@ -874,7 +834,7 @@ cmd_inbox_drop() {
 		shift
 	done
 	case "$backend" in
-		bd)
+		bd | gh)
 			local short
 			short=$(returned_short_from_id "$id")
 			handle_returned_disposition 'inbox drop' "$root" "$short" "$returned_disposition"
@@ -887,13 +847,6 @@ cmd_inbox_drop() {
 				backend_fail "inbox drop failed — $id was not confirmed closed"
 			fi
 			printf '%sclerk:%s dropped %s (wontfix)\n' "$C_GRN" "$C_RST" "$id"
-			;;
-		gh)
-			[ -z "$returned_disposition" ] || usage_error 'clerk inbox drop: --returned is only implemented for bd-backed returned branches'
-			if ! gh issue close "$id" >/dev/null; then
-				backend_fail "inbox drop failed — gh issue close did not succeed for $id"
-			fi
-			printf '%sclerk:%s dropped %s\n' "$C_GRN" "$C_RST" "$id"
 			;;
 	esac
 }
@@ -938,7 +891,7 @@ cmd_inbox_pregrill() {
 	note=$(build_pregrill_note "$ts" decisions premises criteria)
 
 	case "$backend" in
-		bd)
+		bd | gh)
 			local before after
 			before=$(bd show "$id" --readonly --json 2>/dev/null | jq -c '.[0] | {status, labels}' 2>/dev/null)
 			if [ -z "$before" ] || [ "$before" = null ]; then
@@ -950,12 +903,6 @@ cmd_inbox_pregrill() {
 			after=$(bd show "$id" --readonly --json 2>/dev/null | jq -c '.[0] | {status, labels}' 2>/dev/null)
 			if [ "$before" != "$after" ]; then
 				backend_fail "inbox pregrill failed — $id status/labels changed (not state-neutral)"
-			fi
-			printf '%sclerk:%s pregrilled %s (dated %s)\n' "$C_GRN" "$C_RST" "$id" "$ts"
-			;;
-		gh)
-			if ! gh issue comment "$id" --body "$note" >/dev/null; then
-				backend_fail "inbox pregrill failed — gh issue comment did not succeed for $id"
 			fi
 			printf '%sclerk:%s pregrilled %s (dated %s)\n' "$C_GRN" "$C_RST" "$id" "$ts"
 			;;
