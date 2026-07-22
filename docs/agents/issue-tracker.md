@@ -56,7 +56,18 @@ Create one Clerk capture per vertical slice with `clerk capture`, then refine th
 ## Wayfinding operations
 
 Use Clerk's generic inbox graph primitives rather than raw tracker commands or a
-workflow-specific namespace:
+workflow-specific namespace.
+
+Wayfinder map cheat sheet when the user names a map by title instead of ID:
+
+1. Find and inspect the map with `clerk inbox list` and `clerk inbox show <map-id>`.
+2. Work the Refinement map frontier with `clerk inbox frontier <map-id>` to see open, takeable
+   children. Do not use `clerk backlog next` here; that is only for delivery-ready work.
+3. Claim a planning child with `clerk inbox claim <ticket-id>`.
+4. Resolve non-delivery planning work with `clerk inbox resolve <ticket-id>`.
+5. Update the map with `clerk inbox update <map-id> ...` after reading the current `body_guard`.
+
+Common operations:
 
 - Create a map/epic: `clerk capture "<map title>" --type epic --stdin`.
 - Create direct children: `clerk capture "<ticket title>" --parent <map-id> --type task --stdin`.
