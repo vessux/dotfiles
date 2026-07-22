@@ -53,20 +53,25 @@ Create one Clerk capture per vertical slice with `clerk capture`, then refine th
 `clerk inbox ...` until each keeper has explicit acceptance criteria and can be promoted with
 `clerk inbox ready <id>`.
 
-For planning maps, use Clerk's generic inbox graph primitives rather than raw tracker commands or a
+## Wayfinding operations
+
+Use Clerk's generic inbox graph primitives rather than raw tracker commands or a
 workflow-specific namespace:
 
 - Create a map/epic: `clerk capture "<map title>" --type epic --stdin`.
 - Create direct children: `clerk capture "<ticket title>" --parent <map-id> --type task --stdin`.
   Use canonical core types (`task`, `bug`, `feature`, `epic`, `chore`, `decision`) or configured
-  custom types.
+  custom types. Wayfinder ticket kind can live in the body or existing `wayfinder:<type>` labels;
+  Clerk's graph semantics do not depend on those labels.
 - Wire sibling blockers: `clerk inbox dep add <child> <blocker>`; remove with
   `clerk inbox dep remove <child> <blocker>`. Dependency edges are only between siblings with the
   same immediate parent.
 - Query a map: `clerk inbox children <map-id>` for direct children, `clerk inbox frontier <map-id>`
-  for open direct children whose blockers are all closed, `clerk inbox blockers <id>` for what
-  blocks an item, and `clerk inbox blocked <id>` for what it blocks. These query verbs emit
-  Clerk-owned JSON by default; add `--pretty` for formatted JSON.
+  for open, unassigned direct children whose blockers are all closed, `clerk inbox blockers <id>`
+  for what blocks an item, and `clerk inbox blocked <id>` for what it blocks. These query verbs
+  emit Clerk-owned JSON by default; add `--pretty` for formatted JSON.
+- Claim a planning ticket before work with `clerk inbox claim <id>`; release an abandoned claim with
+  `clerk inbox release <id>`. A claimed ticket no longer appears in `clerk inbox frontier`.
 - Correct parentage: `clerk inbox parent set <child> <parent>` or
   `clerk inbox parent clear <child>`. If moving would leave invalid sibling-only dependency edges,
   rerun with `--drop-invalid-deps` only when dropping those edges is intended.

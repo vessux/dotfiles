@@ -54,7 +54,7 @@ print_roster() {
 	printf '%s\n' \
 		'Known verbs:' \
 		'  capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>]' \
-		'  inbox list|show|dups|ready|drop|pregrill|children|frontier|blockers|blocked|parent|dep|note|update|resolve' \
+		'  inbox list|show|dups|ready|drop|pregrill|children|frontier|blockers|blocked|parent|dep|claim|release|note|update|resolve' \
 		'  backlog next|show|claim|release|proof|submit|gate|finish|return' \
 		'  sync' \
 		'  doctor [--fix --backend bd|gh]' \
@@ -230,10 +230,10 @@ explain_verb() {
 				'  runs: bd show <id> --readonly --json and normalizes parent-child / blocks edges' \
 				"  see:  $ADR15"
 			;;
-		'inbox parent' | 'inbox dep' | 'inbox note' | 'inbox update' | 'inbox resolve')
+		'inbox parent' | 'inbox dep' | 'inbox claim' | 'inbox release' | 'inbox note' | 'inbox update' | 'inbox resolve')
 			printf '%s\n' \
 				"clerk $1 — mutate generic inbox graph/planning state" \
-				'  usage: clerk inbox parent set|clear ...; clerk inbox dep add|remove ...; clerk inbox note|update|resolve ...' \
+				'  usage: clerk inbox parent set|clear ...; clerk inbox dep add|remove ...; clerk inbox claim|release <id>; clerk inbox note|update|resolve ...' \
 				'  runs: bd update / bd dep / bd close behind validated Clerk guards' \
 				"  see:  $ADR15"
 			;;
@@ -424,6 +424,12 @@ issue_json_is_open_inbox() { # stdin/object or $1 object: open and not stage:rea
 	local obj="${1:-}"
 	[ -n "$obj" ] || obj=$(cat)
 	printf '%s' "$obj" | jq -e '.status == "open" and (((.labels // []) | index("stage:ready")) == null)' >/dev/null 2>&1
+}
+
+issue_json_is_active_inbox() { # stdin/object or $1 object: open/in_progress and not stage:ready
+	local obj="${1:-}"
+	[ -n "$obj" ] || obj=$(cat)
+	printf '%s' "$obj" | jq -e '(.status == "open" or .status == "in_progress") and (((.labels // []) | index("stage:ready")) == null)' >/dev/null 2>&1
 }
 
 issue_parent_id() { # $1=id
@@ -1168,6 +1174,7 @@ cmd_inbox_frontier() {
 		[ -n "$child_id" ] || continue
 		child=$(bd_issue_json_or_usage 'clerk inbox frontier' "$child_id")
 		issue_json_is_open_inbox "$child" || continue
+		[ -z "$(printf '%s' "$child" | jq -r '.assignee // ""')" ] || continue
 		# A frontier child is takeable only when every direct blocker is closed; missing
 		# blocker status fails closed by treating the blocker as still open.
 		if printf '%s' "$child" | jq -e '(.dependencies // []) | any(.dependency_type == "blocks" and ((.status // "open") != "closed"))' >/dev/null; then
@@ -1338,6 +1345,63 @@ read_nonempty_text_arg() { # $1=verb; remaining args: [--file path|--stdin]; ech
 	printf '%s' "$text"
 }
 
+cmd_inbox_claim() {
+	local _backend="$1" root="$2" id="${3:-}" obj holder me check
+	shift 2
+	id="${1:-}"; [ -n "$id" ] || usage_error 'clerk inbox claim: missing id — usage: clerk inbox claim <id>'
+	shift
+	[ $# -eq 0 ] || usage_error "clerk inbox claim: unknown argument '$1' — usage: clerk inbox claim <id>"
+	obj=$(bd_issue_json_or_usage 'clerk inbox claim' "$id")
+	issue_json_is_active_inbox "$obj" || usage_error "clerk inbox claim: $id must be an open inbox item (not ready/promoted/closed)"
+	me=$(claim_current_actor "$root")
+	holder=$(printf '%s' "$obj" | jq -r '.assignee // ""')
+	if [ -n "$holder" ]; then
+		if [ "$holder" = "$me" ]; then
+			printf '%sclerk:%s %s already claimed by you\n' "$C_GRN" "$C_RST" "$id"
+			return 0
+		fi
+		printf 'clerk: inbox claim refused — %s is already claimed by %s\n' "$id" "$holder" >&2
+		exit 5
+	fi
+	issue_json_is_open_inbox "$obj" || usage_error "clerk inbox claim: $id must be an open inbox item (not already in progress)"
+	issue_has_open_blockers "$id" && usage_error "clerk inbox claim: $id has open blockers — claim an unblocked frontier item"
+	issue_has_open_children "$id" && usage_error "clerk inbox claim: $id has open children — claim a leaf item, not its parent"
+	if ! bd update "$id" --claim >/dev/null; then
+		holder=$(bd_issue_json_or_usage 'clerk inbox claim' "$id" | jq -r '.assignee // ""')
+		if [ -n "$holder" ] && [ "$holder" != "$me" ]; then
+			printf 'clerk: inbox claim refused — %s is already claimed by %s\n' "$id" "$holder" >&2
+			exit 5
+		fi
+		backend_fail "inbox claim failed — bd update --claim did not succeed for $id"
+	fi
+	check=$(bd_issue_json_or_usage 'clerk inbox claim' "$id" | jq -r '.assignee // ""')
+	[ "$check" = "$me" ] || backend_fail "inbox claim failed — $id was not confirmed claimed by $me"
+	printf '%sclerk:%s claimed %s\n' "$C_GRN" "$C_RST" "$id"
+}
+
+cmd_inbox_release() {
+	local _backend="$1" root="$2" id="${3:-}" obj holder me check
+	shift 2
+	id="${1:-}"; [ -n "$id" ] || usage_error 'clerk inbox release: missing id — usage: clerk inbox release <id>'
+	shift
+	[ $# -eq 0 ] || usage_error "clerk inbox release: unknown argument '$1' — usage: clerk inbox release <id>"
+	obj=$(bd_issue_json_or_usage 'clerk inbox release' "$id")
+	me=$(claim_current_actor "$root")
+	holder=$(printf '%s' "$obj" | jq -r '.assignee // ""')
+	if [ -z "$holder" ]; then
+		printf '%sclerk:%s %s is not claimed — nothing to release\n' "$C_GRN" "$C_RST" "$id"
+		return 0
+	fi
+	if [ "$holder" != "$me" ]; then
+		printf 'clerk: inbox release refused — %s is claimed by %s\n' "$id" "$holder" >&2
+		exit 5
+	fi
+	bd update "$id" --status open --assignee "" >/dev/null || backend_fail "inbox release failed — bd update --status open --assignee did not succeed for $id"
+	check=$(bd_issue_json_or_usage 'clerk inbox release' "$id" | jq -r '.assignee // ""')
+	[ -z "$check" ] || backend_fail "inbox release failed — $id was not confirmed unclaimed"
+	printf '%sclerk:%s released %s\n' "$C_GRN" "$C_RST" "$id"
+}
+
 cmd_inbox_note() {
 	local _backend="$1" _root="$2" id="${3:-}" text before after
 	shift 2
@@ -1410,7 +1474,14 @@ cmd_inbox_resolve() {
 	shift
 	local obj
 	obj=$(bd_issue_json_or_usage 'clerk inbox resolve' "$id")
-	issue_json_is_open_inbox "$obj" || usage_error "clerk inbox resolve: $id must be an open inbox item (not ready/promoted/closed)"
+	issue_json_is_active_inbox "$obj" || usage_error "clerk inbox resolve: $id must be an open inbox item (not ready/promoted/closed)"
+	local holder me
+	holder=$(printf '%s' "$obj" | jq -r '.assignee // ""')
+	me=$(claim_current_actor "$_root")
+	if [ -n "$holder" ] && [ "$holder" != "$me" ]; then
+		printf 'clerk: inbox resolve refused — %s is claimed by %s\n' "$id" "$holder" >&2
+		exit 5
+	fi
 	issue_has_open_blockers "$id" && usage_error "clerk inbox resolve: $id has open blockers — resolve blockers first"
 	issue_has_open_children "$id" && usage_error "clerk inbox resolve: $id has open children — resolve or reparent children first"
 	text=$(read_nonempty_text_arg 'clerk inbox resolve' "$@")
@@ -3459,7 +3530,7 @@ main() {
 			fi
 			sub="$1"
 			if [ "$noun" = inbox ]; then
-				roster="list show dups ready drop pregrill children frontier blockers blocked parent dep note update resolve"
+				roster="list show dups ready drop pregrill children frontier blockers blocked parent dep claim release note update resolve"
 			else
 				roster="next show claim release proof submit gate finish return"
 			fi
@@ -3567,6 +3638,14 @@ main() {
 			;;
 		"inbox dep")
 			cmd_inbox_dep "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox claim")
+			cmd_inbox_claim "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox release")
+			cmd_inbox_release "$backend" "$root" "$@"
 			exit "$?"
 			;;
 		"inbox note")

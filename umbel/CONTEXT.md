@@ -65,6 +65,19 @@ only Clerk verbs and never name the backing store — which tracker holds the in
 private business.
 _Avoid_: dispatcher, wrapper, helper, tool, facade (as a name)
 
+**Inbox graph**:
+The parent/child and blocking relationships among inbox items during Refinement. The graph is
+collection-scoped: v1 relationships do not cross from inbox to backlog, and sibling dependency
+rules are evaluated against an item's immediate parent.
+_Avoid_: global graph, cross-tracker dependency graph, Wayfinder graph
+
+**Frontier**:
+The takeable edge of an Inbox graph parent: direct children whose status is `open`, have no
+assignee, and whose blockers are all closed. A Frontier query is a discovery/refinement aid, not a
+delivery dispatch queue; completed, claimed, or promoted children remain visible in child history,
+but only open takeable children appear on the Frontier.
+_Avoid_: queue, backlog, nextdelivery
+
 **Track**:
 One of the two arms of the workflow — **discovery** (raw input → ready backlog) or **delivery**
 (build and ship a ready unit). A session runs under exactly one track, declared by its injected
@@ -78,12 +91,18 @@ swappable method such as **delivery-superpowers**).
 _Avoid_: plugin, pack, preset
 
 **Claim**:
-The atomic, identity-independent acquisition of one ready unit by a single worker before work
-begins. Every Claim creates the canonical work-branch, which is the universal lock at the remote
-(first push wins — ADR 0011); a bd-backed backlog adds a status transition as the online fast
-path. Claiming without remote confirmation is a degraded, attended-only move — the collision is
-caught at first push, never silently. Assignment alone is never a Claim.
+The atomic, identity-independent acquisition of one ready unit by a single worker before delivery
+begins. Every delivery Claim creates the canonical work-branch, which is the universal lock at the
+remote (first push wins — ADR 0011); a bd-backed backlog adds a status transition as the online
+fast path. Claiming without remote confirmation is a degraded, attended-only move — the collision
+is caught at first push, never silently. Assignment alone is never a delivery Claim.
 _Avoid_: assign, take, grab, lock
+
+**Planning claim**:
+A lightweight assignment marker on an Inbox graph item while a discovery/planning session is
+working it. A Planning claim exists to hide the item from the Frontier for concurrent sessions; it
+is not a delivery Claim, creates no work branch, and carries no merge/worktree semantics.
+_Avoid_: delivery claim, lock, work branch
 
 **Impediment**:
 A Capture whose subject is the *workflow itself* — friction between the agent and the harness,

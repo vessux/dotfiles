@@ -53,21 +53,23 @@ make_bd_repo() {
 	[ "$(bd show "$custom" --readonly --json | jq -r '.[0].issue_type')" = research ]
 }
 
-@test "children/frontier/blockers/blocked return normalized JSON and frontier only open unblocked direct children" {
+@test "children/frontier/blockers/blocked return normalized JSON and frontier only open unblocked unclaimed direct children" {
 	repo=$(make_bd_repo queries)
 	cd "$repo"
 	parent=$(bd create "map" --type epic --silent)
 	a=$(bd create "a" --parent "$parent" --silent)
 	b=$(bd create "b" --parent "$parent" --silent)
+	assigned=$(bd create "assigned" --parent "$parent" --silent)
 	closed=$(bd create "closed" --parent "$parent" --silent)
 	ready=$(bd create "ready" --parent "$parent" --labels stage:ready --silent)
 	bd dep add "$b" "$a" >/dev/null
+	bd update "$assigned" --assignee other >/dev/null
 	bd close "$closed" --reason done >/dev/null
 
 	run "$CLERK" inbox children "$parent"
 	[ "$status" -eq 0 ]
 	[ "$(jq -r '.parent.id' <<<"$output")" = "$parent" ]
-	[ "$(jq '.items | length' <<<"$output")" -eq 4 ]
+	[ "$(jq '.items | length' <<<"$output")" -eq 5 ]
 
 	run "$CLERK" inbox frontier "$parent"
 	[ "$status" -eq 0 ]
@@ -149,6 +151,47 @@ make_bd_repo() {
 	run "$CLERK" inbox dep add "$b" "$a"
 	[ "$status" -eq 0 ]
 	jq -e --arg a "$a" '.[0].dependencies | any(.dependency_type == "blocks" and .id == $a and .status == "closed")' < <(bd show "$b" --readonly --json) >/dev/null
+}
+
+@test "claim and release manage planning-item assignment and frontier visibility" {
+	repo=$(make_bd_repo planning_claim)
+	cd "$repo"
+	parent=$(bd create "map" --type epic --silent)
+	a=$(bd create "a" --parent "$parent" --silent)
+	b=$(bd create "b" --parent "$parent" --silent)
+	blocked=$(bd create "blocked" --parent "$parent" --silent)
+	bd dep add "$blocked" "$a" >/dev/null
+	bd update "$b" --assignee other >/dev/null
+
+	run "$CLERK" inbox claim "$blocked"
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"open blockers"* ]]
+
+	run "$CLERK" inbox claim "$b"
+	[ "$status" -eq 5 ]
+	[[ "$output" == *"already claimed by other"* ]]
+
+	run "$CLERK" inbox claim "$a"
+	[ "$status" -eq 0 ]
+	[ "$output" = "clerk: claimed $a" ]
+	[ -n "$(bd show "$a" --readonly --json | jq -r '.[0].assignee // ""')" ]
+
+	run "$CLERK" inbox frontier "$parent"
+	[ "$status" -eq 0 ]
+	[ "$(jq '.items | length' <<<"$output")" -eq 0 ]
+
+	run "$CLERK" inbox claim "$a"
+	[ "$status" -eq 0 ]
+	[ "$output" = "clerk: $a already claimed by you" ]
+
+	run "$CLERK" inbox release "$a"
+	[ "$status" -eq 0 ]
+	[ "$output" = "clerk: released $a" ]
+	[ -z "$(bd show "$a" --readonly --json | jq -r '.[0].assignee // ""')" ]
+
+	run "$CLERK" inbox frontier "$parent"
+	[ "$status" -eq 0 ]
+	[ "$(jq -r '.items[].id' <<<"$output")" = "$a" ]
 }
 
 @test "note, guarded update, and resolve mutate planning items without promotion" {

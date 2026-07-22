@@ -20,7 +20,7 @@ setup() {
 		"capture" "sync" "glean"
 		"inbox list" "inbox show" "inbox dups" "inbox ready" "inbox drop" "inbox pregrill"
 		"inbox children" "inbox frontier" "inbox blockers" "inbox blocked" "inbox parent" "inbox dep"
-		"inbox note" "inbox update" "inbox resolve"
+		"inbox claim" "inbox release" "inbox note" "inbox update" "inbox resolve"
 		"backlog next" "backlog show" "backlog claim" "backlog release" "backlog proof" "backlog submit"
 		"backlog gate" "backlog finish" "backlog return"
 	)
@@ -67,7 +67,7 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	local i="$1"
 	[ "${lines[i]}" = "Known verbs:" ]
 	[ "${lines[i + 1]}" = '  capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>]' ]
-	[ "${lines[i + 2]}" = '  inbox list|show|dups|ready|drop|pregrill|children|frontier|blockers|blocked|parent|dep|note|update|resolve' ]
+	[ "${lines[i + 2]}" = '  inbox list|show|dups|ready|drop|pregrill|children|frontier|blockers|blocked|parent|dep|claim|release|note|update|resolve' ]
 	[ "${lines[i + 3]}" = '  backlog next|show|claim|release|proof|submit|gate|finish|return' ]
 	[ "${lines[i + 4]}" = '  sync' ]
 	[ "${lines[i + 5]}" = '  doctor [--fix --backend bd|gh]' ]
