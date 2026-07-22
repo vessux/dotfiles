@@ -1,7 +1,8 @@
 # Issue tracker: Clerk
 
-Work for this repo is tracked through **Clerk** (`clerk`), not GitHub Issues. Even though the
-remote is on GitHub, do **not** create GitHub issues for this repo's normal workflow.
+Work for this repo uses a **Clerk-backed backlog** through **Clerk** (`clerk`), not GitHub
+Issues. Even though the remote is on GitHub, do **not** create GitHub issues for this repo's normal
+workflow.
 
 Clerk is the workflow facade. Skills and agents should speak Clerk verbs only; lower-level storage
 or tracker details belong in operator-maintenance docs, not runtime instructions.
@@ -51,6 +52,33 @@ The user normally passes the Clerk ID directly.
 Create one Clerk capture per vertical slice with `clerk capture`, then refine those captures through
 `clerk inbox ...` until each keeper has explicit acceptance criteria and can be promoted with
 `clerk inbox ready <id>`.
+
+For planning maps, use Clerk's generic inbox graph primitives rather than raw tracker commands or a
+workflow-specific namespace:
+
+- Create a map/epic: `clerk capture "<map title>" --type epic --stdin`.
+- Create direct children: `clerk capture "<ticket title>" --parent <map-id> --type task --stdin`.
+  Use canonical core types (`task`, `bug`, `feature`, `epic`, `chore`, `decision`) or configured
+  custom types.
+- Wire sibling blockers: `clerk inbox dep add <child> <blocker>`; remove with
+  `clerk inbox dep remove <child> <blocker>`. Dependency edges are only between siblings with the
+  same immediate parent.
+- Query a map: `clerk inbox children <map-id>` for direct children, `clerk inbox frontier <map-id>`
+  for open direct children whose blockers are all closed, `clerk inbox blockers <id>` for what
+  blocks an item, and `clerk inbox blocked <id>` for what it blocks. These query verbs emit
+  Clerk-owned JSON by default; add `--pretty` for formatted JSON.
+- Correct parentage: `clerk inbox parent set <child> <parent>` or
+  `clerk inbox parent clear <child>`. If moving would leave invalid sibling-only dependency edges,
+  rerun with `--drop-invalid-deps` only when dropping those edges is intended.
+- Claim delivery only after promotion: planning graph items remain inbox items until
+  `clerk inbox ready <id>` promotes a leaf. `clerk inbox ready` refuses open blockers and open
+  children, but a child may still have a parent.
+- Record planning progress with `clerk inbox note <id> [--file <path>|--stdin]`.
+- Resolve non-delivery planning items with `clerk inbox resolve <id> [--file <path>|--stdin]`; it
+  appends the resolution note and closes the inbox item without backlog promotion.
+- Update a planning item with `clerk inbox update <id> --title "..." --type <type>`. To replace the
+  body, first read `body_guard` from `clerk inbox show <id> --json`, then pass it with
+  `--body-guard <guard>` alongside `--body-file <path>` or `--stdin`.
 
 Do not create GitHub Issues. Do not use lower-level tracker commands in normal agent workflow.
 

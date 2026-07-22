@@ -19,7 +19,9 @@ setup() {
 	ALL_VERBS=(
 		"capture" "sync" "glean"
 		"inbox list" "inbox show" "inbox dups" "inbox ready" "inbox drop" "inbox pregrill"
-		"backlog next" "backlog show" "backlog claim" "backlog release" "backlog submit"
+		"inbox children" "inbox frontier" "inbox blockers" "inbox blocked" "inbox parent" "inbox dep"
+		"inbox note" "inbox update" "inbox resolve"
+		"backlog next" "backlog show" "backlog claim" "backlog release" "backlog proof" "backlog submit"
 		"backlog gate" "backlog finish" "backlog return"
 	)
 	# dotfiles-dft.6 implements the final top-level stub (`glean`), so the stub matrix is
@@ -64,8 +66,8 @@ phys() { # echoes the physical path of an existing dir
 assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	local i="$1"
 	[ "${lines[i]}" = "Known verbs:" ]
-	[ "${lines[i + 1]}" = '  capture "<title>" [--stdin|--impediment]' ]
-	[ "${lines[i + 2]}" = '  inbox list|show|dups|ready|drop|pregrill' ]
+	[ "${lines[i + 1]}" = '  capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>]' ]
+	[ "${lines[i + 2]}" = '  inbox list|show|dups|ready|drop|pregrill|children|frontier|blockers|blocked|parent|dep|note|update|resolve' ]
 	[ "${lines[i + 3]}" = '  backlog next|show|claim|release|proof|submit|gate|finish|return' ]
 	[ "${lines[i + 4]}" = '  sync' ]
 	[ "${lines[i + 5]}" = '  doctor [--fix --backend bd|gh]' ]
@@ -234,9 +236,10 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	run "$CLERK" --explain capture
 	[ "$status" -eq 0 ]
 	[ "${lines[0]}" = 'clerk capture — file one raw capture into the bd inbox' ]
-	[ "${lines[1]}" = '  runs: bd create "<title>" [--stdin]           (backlog: bd|gh)' ]
-	[ "${lines[2]}" = '        (GitHub-backed repos use GitHub only after inbox ready promotion)' ]
-	[ "${lines[3]}" = '  see:  ADR 0015 — umbel/docs/adr/0015-clerk-opaque-workflow-verb-facade.md' ]
+	[ "${lines[1]}" = '  usage: clerk capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>...]' ]
+	[ "${lines[2]}" = '  runs: bd create "<title>" [--stdin] [--type ...] [--parent ...] [--deps ...]           (backlog: bd|gh)' ]
+	[ "${lines[3]}" = '        (GitHub-backed repos use GitHub only after inbox ready promotion)' ]
+	[ "${lines[4]}" = '  see:  ADR 0015 — umbel/docs/adr/0015-clerk-opaque-workflow-verb-facade.md' ]
 }
 
 @test "--explain backlog submit points at the delivery gate (ADR 0016)" {
@@ -291,7 +294,7 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	cd "$repo"
 	run "$CLERK" capture "real title" --bogus
 	[ "$status" -eq 2 ]
-	[ "$output" = 'clerk capture: unknown argument '\''--bogus'\'' — usage: clerk capture "<title>" [--stdin|--impediment]' ]
+	[ "$output" = 'clerk capture: unknown argument '\''--bogus'\'' — usage: clerk capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>]' ]
 }
 
 @test "--explain covers every roster verb, with or without a marker" {
