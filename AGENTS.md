@@ -23,8 +23,8 @@ Multi-context; `umbel/` is the first documented context (ADRs at `umbel/docs/adr
 
 ### Issue tracker
 
-Work is tracked through Clerk, not GitHub Issues. Use `clerk capture`, `clerk inbox ...`, and
-`clerk backlog ...`. See `docs/agents/issue-tracker.md`.
+Work is tracked through Clerk, not an external issue tracker. Use `clerk capture`,
+`clerk inbox ...`, and `clerk backlog ...`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

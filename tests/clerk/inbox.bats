@@ -223,7 +223,7 @@ SHIM
 	cd "$repo"
 	run "$CLERK" capture
 	[ "$status" -eq 2 ]
-	[ "$output" = 'clerk capture: missing title — usage: clerk capture "<title>" [--stdin|--impediment]' ]
+	[ "$output" = 'clerk capture: missing title — usage: clerk capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>]' ]
 }
 
 @test "capture (gh backlog): files raw captures in bd, not GitHub" {
@@ -491,7 +491,7 @@ JSON
 	cd "$repo"
 	run "$CLERK" inbox show
 	[ "$status" -eq 2 ]
-	[ "$output" = 'clerk inbox show: missing id — usage: clerk inbox show <id>' ]
+	[ "$output" = 'clerk inbox show: missing id — usage: clerk inbox show <id> [--json|--pretty]' ]
 }
 
 @test "inbox show (gh backlog) shows the bd capture" {

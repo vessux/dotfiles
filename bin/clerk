@@ -53,8 +53,8 @@ ADR17="ADR 0017 — umbel/docs/adr/0017-tier-retired-backlog-location-and-merge-
 print_roster() {
 	printf '%s\n' \
 		'Known verbs:' \
-		'  capture "<title>" [--stdin|--impediment]' \
-		'  inbox list|show|dups|ready|drop|pregrill' \
+		'  capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>]' \
+		'  inbox list|show|dups|ready|drop|pregrill|children|frontier|blockers|blocked|parent|dep|note|update|resolve' \
 		'  backlog next|show|claim|release|proof|submit|gate|finish|return' \
 		'  sync' \
 		'  doctor [--fix --backend bd|gh]' \
@@ -149,7 +149,8 @@ explain_verb() {
 		capture)
 			printf '%s\n' \
 				'clerk capture — file one raw capture into the bd inbox' \
-				'  runs: bd create "<title>" [--stdin]           (backlog: bd|gh)' \
+				'  usage: clerk capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>...]' \
+				'  runs: bd create "<title>" [--stdin] [--type ...] [--parent ...] [--deps ...]           (backlog: bd|gh)' \
 				'        (GitHub-backed repos use GitHub only after inbox ready promotion)' \
 				"  see:  $ADR15"
 			;;
@@ -185,6 +186,7 @@ explain_verb() {
 		'inbox show')
 			printf '%s\n' \
 				'clerk inbox show — show one bd-backed inbox item' \
+				'  usage: clerk inbox show <id> [--json|--pretty]' \
 				'  runs: bd show <id>          (backlog: bd|gh)' \
 				"  see:  $ADR15"
 			;;
@@ -220,6 +222,20 @@ explain_verb() {
 				'  runs: bd update <id> --notes "<dated, state-neutral prep note>"    (backlog: bd|gh)' \
 				'        note carries open decisions, premises with suggested verifications, draft criteria' \
 				"  see:  $ADR16"
+			;;
+		'inbox children' | 'inbox frontier' | 'inbox blockers' | 'inbox blocked')
+			printf '%s\n' \
+				"clerk $1 — query inbox graph relationships as Clerk-owned JSON" \
+				'  usage: clerk inbox children|frontier|blockers|blocked <id> [--pretty]' \
+				'  runs: bd show <id> --readonly --json and normalizes parent-child / blocks edges' \
+				"  see:  $ADR15"
+			;;
+		'inbox parent' | 'inbox dep' | 'inbox note' | 'inbox update' | 'inbox resolve')
+			printf '%s\n' \
+				"clerk $1 — mutate generic inbox graph/planning state" \
+				'  usage: clerk inbox parent set|clear ...; clerk inbox dep add|remove ...; clerk inbox note|update|resolve ...' \
+				'  runs: bd update / bd dep / bd close behind validated Clerk guards' \
+				"  see:  $ADR15"
 			;;
 		'backlog next')
 			printf '%s\n' \
@@ -265,7 +281,7 @@ explain_verb() {
 			printf '%s\n' \
 				'clerk backlog proof — print the JSON proof skeleton consumed by submit' \
 				'  usage: clerk backlog proof <id>' \
-				'  runs: resolves the unit acceptance criteria and prints proof-only JSON:' \
+				'  runs: bd show <id> --readonly --json / gh issue view <id>, then prints proof-only JSON:' \
 				'        {"acceptance":[{"text":"<normalized criterion>","evidence":""}]}' \
 				"  see:  $ADR16"
 			;;
@@ -355,6 +371,85 @@ bd_ensure_impediment_type() {
 	fi
 }
 
+bd_custom_types_csv() {
+	local current
+	current=$(bd config get types.custom 2>/dev/null || true)
+	case "$current" in
+		*'(not set)'*) current="" ;;
+	esac
+	printf '%s' "$current"
+}
+
+clerk_type_valid() { # $1=canonical type
+	local t="$1" current v
+	case "$t" in
+		bug | feature | task | epic | chore | decision) return 0 ;;
+	esac
+	current=$(bd_custom_types_csv)
+	IFS=',' read -ra _clerk_custom_types <<<"$current"
+	for v in "${_clerk_custom_types[@]+"${_clerk_custom_types[@]}"}"; do
+		v="${v#"${v%%[![:space:]]*}"}"
+		v="${v%"${v##*[![:space:]]}"}"
+		[ "$v" = "$t" ] && return 0
+	done
+	[ "$t" = impediment ] && return 0
+	return 1
+}
+
+clerk_json_emit() { # $1=pretty(0|1), stdin=json
+	if [ "$1" -eq 1 ]; then
+		jq .
+	else
+		jq -c .
+	fi
+}
+
+bd_issue_json_or_usage() { # $1=verb label $2=id; echoes a single bd issue object
+	local verb="$1" id="$2" json
+	json=$(bd show "$id" --readonly --json 2>/dev/null || true)
+	if [ -z "$json" ] || [ "$json" = null ] ||
+		! printf '%s' "$json" | jq -e 'if type != "array" then false else (length > 0) end' >/dev/null 2>&1; then
+		usage_error "$verb: $id not found — check the id ('clerk inbox list' shows open units)"
+	fi
+	printf '%s' "$json" | jq -c '.[0]'
+}
+
+issue_json_is_ready_promoted() { # stdin/object or $1 object
+	local obj="${1:-}"
+	[ -n "$obj" ] || obj=$(cat)
+	printf '%s' "$obj" | jq -e '(((.labels // []) | index("stage:ready")) != null) or ((.close_reason // "") | startswith("promoted"))' >/dev/null 2>&1
+}
+
+issue_json_is_open_inbox() { # stdin/object or $1 object: open and not stage:ready
+	local obj="${1:-}"
+	[ -n "$obj" ] || obj=$(cat)
+	printf '%s' "$obj" | jq -e '.status == "open" and (((.labels // []) | index("stage:ready")) == null)' >/dev/null 2>&1
+}
+
+issue_parent_id() { # $1=id
+	bd_issue_json_or_usage 'clerk inbox graph' "$1" | jq -r '.parent // ""'
+}
+
+issue_has_open_blockers() { # $1=id; status absent/non-closed is fail-closed
+	local obj
+	obj=$(bd_issue_json_or_usage 'clerk inbox graph' "$1")
+	printf '%s' "$obj" | jq -e '(.dependencies // []) | any(.dependency_type == "blocks" and ((.status // "open") != "closed"))' >/dev/null
+}
+
+issue_has_open_children() { # $1=id
+	local obj
+	obj=$(bd_issue_json_or_usage 'clerk inbox graph' "$1")
+	printf '%s' "$obj" | jq -e '(.dependents // []) | any(.dependency_type == "parent-child" and .status == "open")' >/dev/null
+}
+
+issue_blocker_ids() { # $1=id; prints direct blocker ids, one per line
+	bd_issue_json_or_usage 'clerk inbox graph' "$1" | jq -r '(.dependencies // [])[] | select(.dependency_type == "blocks") | .id'
+}
+
+issue_blocked_ids() { # $1=id; prints directly blocked ids, one per line
+	bd_issue_json_or_usage 'clerk inbox graph' "$1" | jq -r '(.dependents // [])[] | select(.dependency_type == "blocks") | .id'
+}
+
 # C-d (pregrill marker: absent|present|stale): derived cheaply from metadata already
 # present on every `bd list --json` / `gh issue list --json` row — no extra per-issue fetch.
 # A pregrill note carries a full-timestamp tag line ("clerk-pregrill: <ISO-8601>"); present
@@ -425,33 +520,79 @@ build_pregrill_note() { # $1=ts $2=decisions-arrayname $3=premises-arrayname $4=
 	printf '%s' "$note"
 }
 
-# clerk capture "<title>" [--stdin|--impediment]
+# clerk capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>...]
 cmd_capture() {
 	local backend="$1"
 	shift 2
 	if [ $# -eq 0 ]; then
-		usage_error 'clerk capture: missing title — usage: clerk capture "<title>" [--stdin|--impediment]'
+		usage_error 'clerk capture: missing title — usage: clerk capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>]'
 	fi
 	local title="$1"
 	shift
-	local use_stdin=0 use_impediment=0
+	local use_stdin=0 use_impediment=0 issue_type="" parent=""
+	local -a blockers=()
 	while [ $# -gt 0 ]; do
 		case "$1" in
 			--stdin) use_stdin=1 ;;
 			--impediment) use_impediment=1 ;;
-			*) usage_error "clerk capture: unknown argument '$1' — usage: clerk capture \"<title>\" [--stdin|--impediment]" ;;
+			--type)
+				[ $# -ge 2 ] || usage_error 'clerk capture: --type needs a value'
+				issue_type="$2"
+				shift
+				;;
+			--parent)
+				[ $# -ge 2 ] || usage_error 'clerk capture: --parent needs an inbox id'
+				parent="$2"
+				shift
+				;;
+			--blocked-by)
+				[ $# -ge 2 ] || usage_error 'clerk capture: --blocked-by needs an inbox id'
+				blockers+=("$2")
+				shift
+				;;
+			*) usage_error "clerk capture: unknown argument '$1' — usage: clerk capture \"<title>\" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>]" ;;
 		esac
 		shift
 	done
+	if [ "$use_impediment" -eq 1 ] && [ -n "$issue_type" ]; then
+		usage_error 'clerk capture: --impediment is compatibility sugar for --type impediment; do not combine them'
+	fi
+	[ "$use_impediment" -eq 1 ] && issue_type=impediment
+	if [ -n "$issue_type" ] && ! clerk_type_valid "$issue_type"; then
+		usage_error "clerk capture: invalid --type '$issue_type' — use a canonical core type or configure types.custom"
+	fi
+	if [ "${#blockers[@]}" -gt 0 ] && [ -z "$parent" ]; then
+		usage_error 'clerk capture: --blocked-by requires --parent so the new dependency edge is sibling-only'
+	fi
 
 	case "$backend" in
 		bd | gh)
 			# Even when the delivery backlog is GitHub, raw captures live in bd; GitHub is
 			# only the ready backlog surface after `clerk inbox ready` promotes a capture.
-			[ "$use_impediment" -eq 1 ] && bd_ensure_impediment_type
+			[ "$issue_type" = impediment ] && bd_ensure_impediment_type
+			if [ -n "$parent" ]; then
+				local parent_json
+				parent_json=$(bd_issue_json_or_usage 'clerk capture' "$parent")
+				if ! issue_json_is_open_inbox "$parent_json"; then
+					usage_error "clerk capture: --parent $parent must name an open inbox item"
+				fi
+			fi
+			local blocker blocker_json blocker_parent
+			for blocker in "${blockers[@]+"${blockers[@]}"}"; do
+				blocker_json=$(bd_issue_json_or_usage 'clerk capture' "$blocker")
+				if issue_json_is_ready_promoted "$blocker_json"; then
+					usage_error "clerk capture: --blocked-by $blocker must name an inbox item, not a ready/promoted item"
+				fi
+				if [ -n "$parent" ]; then
+					blocker_parent=$(printf '%s' "$blocker_json" | jq -r '.parent // ""')
+					[ "$blocker_parent" = "$parent" ] || usage_error "clerk capture: --blocked-by $blocker must be a sibling under $parent"
+				fi
+			done
 			local -a args=(bd create "$title" --silent)
 			[ "$use_stdin" -eq 1 ] && args+=(--stdin)
-			[ "$use_impediment" -eq 1 ] && args+=(--type impediment)
+			[ -z "$issue_type" ] || args+=(--type "$issue_type")
+			[ -z "$parent" ] || args+=(--parent "$parent")
+			for blocker in "${blockers[@]+"${blockers[@]}"}"; do args+=(--deps "$blocker"); done
 			local id
 			if ! id=$("${args[@]}"); then
 				backend_fail "capture failed — bd create did not succeed for \"$title\""
@@ -462,7 +603,7 @@ cmd_capture() {
 			if [ "$seen" != "$id" ]; then
 				backend_fail "capture failed — $id was not confirmed after creation"
 			fi
-			if [ "$use_impediment" -eq 1 ]; then
+			if [ "$issue_type" = impediment ]; then
 				printf '%sclerk:%s filed %s (type: impediment)\n' "$C_GRN" "$C_RST" "$id"
 			else
 				printf '%sclerk:%s filed %s\n' "$C_GRN" "$C_RST" "$id"
@@ -564,18 +705,36 @@ returned_attempt_banner() { # $1=root $2=short $3=id $4=dispose-verb-hint
 	esac
 }
 
-# clerk inbox show <id>
+# clerk inbox show <id> [--json|--pretty]
 cmd_inbox_show() {
 	local backend="$1" root="$2"
 	shift 2
-	local id="${1:-}"
+	local id="${1:-}" json_mode=0 pretty=0
 	if [ -z "$id" ]; then
-		usage_error 'clerk inbox show: missing id — usage: clerk inbox show <id>'
+		usage_error 'clerk inbox show: missing id — usage: clerk inbox show <id> [--json|--pretty]'
 	fi
+	shift
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--json) json_mode=1 ;;
+			--pretty) json_mode=1; pretty=1 ;;
+			*) usage_error "clerk inbox show: unknown argument '$1' — usage: clerk inbox show <id> [--json|--pretty]" ;;
+		esac
+		shift
+	done
 	case "$backend" in
 		bd | gh)
-			bd show "$id" --readonly
-			returned_attempt_banner "$root" "$(returned_short_from_id "$id")" "$id" 'inbox ready|drop'
+			if [ "$json_mode" -eq 1 ]; then
+				local obj updated body guard
+				obj=$(bd_issue_json_or_usage 'clerk inbox show' "$id")
+				updated=$(printf '%s' "$obj" | jq -r '.updated_at // ""')
+				body=$(printf '%s' "$obj" | jq -r '.description // ""')
+				guard=$(printf '%s\0%s' "$updated" "$body" | sha256sum | awk '{print $1}')
+				printf '%s' "$obj" | jq --arg body_guard "$guard" '{id,title,status,type:.issue_type,assignee:(.assignee // ""),labels:(.labels // []),parent:(.parent // null),body:(.description // ""),body_guard:$body_guard,notes:(.notes // ""),design:(.design // ""),acceptance:(.acceptance_criteria // ""),created_at,updated_at}' | clerk_json_emit "$pretty"
+			else
+				bd show "$id" --readonly
+				returned_attempt_banner "$root" "$(returned_short_from_id "$id")" "$id" 'inbox ready|drop'
+			fi
 			;;
 	esac
 }
@@ -733,6 +892,12 @@ cmd_inbox_ready() {
 			local short
 			short=$(returned_short_from_id "$id")
 			handle_returned_disposition 'inbox ready' "$root" "$short" "$returned_disposition"
+			if issue_has_open_blockers "$id"; then
+				usage_error "clerk inbox ready: $id has open blockers — clear or close blockers before promoting it"
+			fi
+			if issue_has_open_children "$id"; then
+				usage_error "clerk inbox ready: $id has open children — resolve, drop, or promote children before promoting the parent"
+			fi
 			# C-e also covers bd's first-class `acceptance_criteria` field (populated by
 			# `bd create --acceptance`/`--acceptance-file`), not just prose in description or
 			# design: that dedicated field IS the structural section by construction, so its
@@ -792,6 +957,12 @@ cmd_inbox_ready() {
 			local short
 			short=$(returned_short_from_id "$id")
 			handle_returned_disposition 'inbox ready' "$root" "$short" "$returned_disposition"
+			if issue_has_open_blockers "$id"; then
+				usage_error "clerk inbox ready: $id has open blockers — clear or close blockers before promoting it"
+			fi
+			if issue_has_open_children "$id"; then
+				usage_error "clerk inbox ready: $id has open children — resolve, drop, or promote children before promoting the parent"
+			fi
 			local url
 			if ! url=$(gh issue create --title "$title" --body-file "$body_file" --label ready-for-agent); then
 				backend_fail "inbox ready failed — gh issue create did not succeed"
@@ -907,6 +1078,347 @@ cmd_inbox_pregrill() {
 			printf '%sclerk:%s pregrilled %s (dated %s)\n' "$C_GRN" "$C_RST" "$id" "$ts"
 			;;
 	esac
+}
+
+normalize_graph_items_jq='def norm: {id,title,status,type:.issue_type,assignee:(.assignee // ""),labels:(.labels // []),parent:(.parent // null),created_at,updated_at};'
+
+cmd_inbox_children() {
+	local _backend="$1" _root="$2" id="" pretty=0
+	shift 2
+	id="${1:-}"
+	[ -n "$id" ] || usage_error 'clerk inbox children: missing parent id — usage: clerk inbox children <parent> [--pretty]'
+	shift
+	while [ $# -gt 0 ]; do
+		case "$1" in --pretty) pretty=1 ;; *) usage_error "clerk inbox children: unknown argument '$1' — usage: clerk inbox children <parent> [--pretty]" ;; esac
+		shift
+	done
+	local parent child_id child items_file
+	parent=$(bd_issue_json_or_usage 'clerk inbox children' "$id")
+	items_file=$(mktemp)
+	while IFS= read -r child_id; do
+		[ -n "$child_id" ] || continue
+		child=$(bd_issue_json_or_usage 'clerk inbox children' "$child_id")
+		printf '%s\n' "$child" | jq -c "$normalize_graph_items_jq norm" >>"$items_file"
+	done < <(printf '%s' "$parent" | jq -r '(.dependents // [])[] | select(.dependency_type == "parent-child") | .id')
+	jq -n --argjson parent "$(printf '%s' "$parent" | jq -c "$normalize_graph_items_jq norm")" --slurpfile items "$items_file" '{parent:$parent,items:$items}' | clerk_json_emit "$pretty"
+	rm -f "$items_file"
+}
+
+cmd_inbox_blockers() {
+	local _backend="$1" _root="$2" id="" pretty=0
+	shift 2
+	id="${1:-}"
+	[ -n "$id" ] || usage_error 'clerk inbox blockers: missing id — usage: clerk inbox blockers <id> [--pretty]'
+	shift
+	while [ $# -gt 0 ]; do
+		case "$1" in --pretty) pretty=1 ;; *) usage_error "clerk inbox blockers: unknown argument '$1' — usage: clerk inbox blockers <id> [--pretty]" ;; esac
+		shift
+	done
+	local item blocker_id blocker items_file
+	item=$(bd_issue_json_or_usage 'clerk inbox blockers' "$id")
+	items_file=$(mktemp)
+	while IFS= read -r blocker_id; do
+		[ -n "$blocker_id" ] || continue
+		blocker=$(bd_issue_json_or_usage 'clerk inbox blockers' "$blocker_id")
+		printf '%s\n' "$blocker" | jq -c "$normalize_graph_items_jq norm" >>"$items_file"
+	done < <(printf '%s' "$item" | jq -r '(.dependencies // [])[] | select(.dependency_type == "blocks") | .id')
+	jq -n --argjson item "$(printf '%s' "$item" | jq -c "$normalize_graph_items_jq norm")" --slurpfile items "$items_file" '{item:$item,items:$items}' | clerk_json_emit "$pretty"
+	rm -f "$items_file"
+}
+
+cmd_inbox_blocked() {
+	local _backend="$1" _root="$2" id="" pretty=0
+	shift 2
+	id="${1:-}"
+	[ -n "$id" ] || usage_error 'clerk inbox blocked: missing id — usage: clerk inbox blocked <id> [--pretty]'
+	shift
+	while [ $# -gt 0 ]; do
+		case "$1" in --pretty) pretty=1 ;; *) usage_error "clerk inbox blocked: unknown argument '$1' — usage: clerk inbox blocked <id> [--pretty]" ;; esac
+		shift
+	done
+	local item blocked_id blocked items_file
+	item=$(bd_issue_json_or_usage 'clerk inbox blocked' "$id")
+	items_file=$(mktemp)
+	while IFS= read -r blocked_id; do
+		[ -n "$blocked_id" ] || continue
+		blocked=$(bd_issue_json_or_usage 'clerk inbox blocked' "$blocked_id")
+		printf '%s\n' "$blocked" | jq -c "$normalize_graph_items_jq norm" >>"$items_file"
+	done < <(printf '%s' "$item" | jq -r '(.dependents // [])[] | select(.dependency_type == "blocks") | .id')
+	jq -n --argjson item "$(printf '%s' "$item" | jq -c "$normalize_graph_items_jq norm")" --slurpfile items "$items_file" '{item:$item,items:$items}' | clerk_json_emit "$pretty"
+	rm -f "$items_file"
+}
+
+cmd_inbox_frontier() {
+	local _backend="$1" _root="$2" id="" pretty=0
+	shift 2
+	id="${1:-}"
+	[ -n "$id" ] || usage_error 'clerk inbox frontier: missing parent id — usage: clerk inbox frontier <parent> [--pretty]'
+	shift
+	while [ $# -gt 0 ]; do
+		case "$1" in --pretty) pretty=1 ;; *) usage_error "clerk inbox frontier: unknown argument '$1' — usage: clerk inbox frontier <parent> [--pretty]" ;; esac
+		shift
+	done
+	local parent child_id child items_file
+	parent=$(bd_issue_json_or_usage 'clerk inbox frontier' "$id")
+	if ! issue_json_is_open_inbox "$parent"; then
+		usage_error "clerk inbox frontier: $id must be an open inbox parent"
+	fi
+	items_file=$(mktemp)
+	while IFS= read -r child_id; do
+		[ -n "$child_id" ] || continue
+		child=$(bd_issue_json_or_usage 'clerk inbox frontier' "$child_id")
+		issue_json_is_open_inbox "$child" || continue
+		# A frontier child is takeable only when every direct blocker is closed; missing
+		# blocker status fails closed by treating the blocker as still open.
+		if printf '%s' "$child" | jq -e '(.dependencies // []) | any(.dependency_type == "blocks" and ((.status // "open") != "closed"))' >/dev/null; then
+			continue
+		fi
+		printf '%s\n' "$child" | jq -c "$normalize_graph_items_jq norm" >>"$items_file"
+	done < <(printf '%s' "$parent" | jq -r '(.dependents // [])[] | select(.dependency_type == "parent-child") | .id')
+	jq -n --argjson parent "$(printf '%s' "$parent" | jq -c "$normalize_graph_items_jq norm")" --slurpfile items "$items_file" '{parent:$parent,items:$items}' | clerk_json_emit "$pretty"
+	rm -f "$items_file"
+}
+
+invalid_dep_edges_for_parent_move() { # $1=child $2=new-parent; prints "dependent blocker" pairs to remove
+	local child="$1" new_parent="$2" other other_parent
+	while IFS= read -r other; do
+		[ -n "$other" ] || continue
+		other_parent=$(issue_parent_id "$other")
+		if [ -z "$new_parent" ] || [ "$other_parent" != "$new_parent" ]; then
+			printf '%s %s\n' "$child" "$other"
+		fi
+	done < <(issue_blocker_ids "$child")
+	while IFS= read -r other; do
+		[ -n "$other" ] || continue
+		other_parent=$(issue_parent_id "$other")
+		if [ -z "$new_parent" ] || [ "$other_parent" != "$new_parent" ]; then
+			printf '%s %s\n' "$other" "$child"
+		fi
+	done < <(issue_blocked_ids "$child")
+}
+
+parent_cycle_would_form() { # $1=child $2=parent
+	local child="$1" cur="$2"
+	while [ -n "$cur" ]; do
+		[ "$cur" = "$child" ] && return 0
+		cur=$(issue_parent_id "$cur")
+	done
+	return 1
+}
+
+cmd_inbox_parent() {
+	local _backend="$1" _root="$2" action="${3:-}" child="${4:-}" parent="${5:-}" drop=0
+	shift 2
+	action="${1:-}"; shift || true
+	case "$action" in
+		set)
+			child="${1:-}"; parent="${2:-}"; [ -n "$child" ] && [ -n "$parent" ] || usage_error 'clerk inbox parent set: usage: clerk inbox parent set <child> <parent> [--drop-invalid-deps]'
+			shift 2
+			;;
+		clear)
+			child="${1:-}"; [ -n "$child" ] || usage_error 'clerk inbox parent clear: usage: clerk inbox parent clear <child> [--drop-invalid-deps]'
+			parent=""
+			shift
+			;;
+		*) usage_error 'clerk inbox parent: usage: clerk inbox parent set <child> <parent> | clerk inbox parent clear <child>' ;;
+	esac
+	while [ $# -gt 0 ]; do
+		case "$1" in --drop-invalid-deps) drop=1 ;; *) usage_error "clerk inbox parent $action: unknown argument '$1'" ;; esac
+		shift
+	done
+	local child_json parent_json invalid_file line dependent blocker
+	child_json=$(bd_issue_json_or_usage "clerk inbox parent $action" "$child")
+	issue_json_is_open_inbox "$child_json" || usage_error "clerk inbox parent $action: $child must be an open inbox item"
+	if [ -n "$parent" ]; then
+		parent_json=$(bd_issue_json_or_usage 'clerk inbox parent set' "$parent")
+		issue_json_is_open_inbox "$parent_json" || usage_error "clerk inbox parent set: $parent must be an open inbox parent"
+		parent_cycle_would_form "$child" "$parent" && usage_error "clerk inbox parent set: refusing parent cycle ($child under $parent)"
+	fi
+	invalid_file=$(mktemp)
+	invalid_dep_edges_for_parent_move "$child" "$parent" >"$invalid_file"
+	if [ -s "$invalid_file" ] && [ "$drop" -eq 0 ]; then
+		rm -f "$invalid_file"
+		usage_error "clerk inbox parent $action: move would leave non-sibling dependency edges — rerun with --drop-invalid-deps to remove them"
+	fi
+	while read -r dependent blocker; do
+		[ -n "${dependent:-}" ] || continue
+		bd dep remove "$dependent" "$blocker" >/dev/null || backend_fail "inbox parent $action failed — could not drop invalid dependency $dependent -> $blocker"
+	done <"$invalid_file"
+	rm -f "$invalid_file"
+	bd update "$child" --parent "$parent" >/dev/null || backend_fail "inbox parent $action failed — bd update --parent did not succeed for $child"
+	local actual
+	actual=$(issue_parent_id "$child")
+	[ "$actual" = "$parent" ] || backend_fail "inbox parent $action failed — parent was not confirmed for $child"
+	if [ -n "$parent" ]; then
+		printf '%sclerk:%s parent set %s -> %s\n' "$C_GRN" "$C_RST" "$child" "$parent"
+	else
+		printf '%sclerk:%s parent cleared %s\n' "$C_GRN" "$C_RST" "$child"
+	fi
+}
+
+dep_path_exists() { # $1=start $2=target over blocks edges
+	local start="$1" target="$2" seen_file next
+	seen_file=$(mktemp)
+	_dep_path_exists_inner "$start" "$target" "$seen_file"
+	local rc=$?
+	rm -f "$seen_file"
+	return "$rc"
+}
+
+_dep_path_exists_inner() {
+	local start="$1" target="$2" seen_file="$3" next
+	grep -Fxq "$start" "$seen_file" 2>/dev/null && return 1
+	printf '%s\n' "$start" >>"$seen_file"
+	while IFS= read -r next; do
+		[ -n "$next" ] || continue
+		[ "$next" = "$target" ] && return 0
+		_dep_path_exists_inner "$next" "$target" "$seen_file" && return 0
+	done < <(issue_blocker_ids "$start")
+	return 1
+}
+
+cmd_inbox_dep() {
+	local _backend="$1" _root="$2" action="${3:-}" child="" blocker=""
+	shift 2
+	action="${1:-}"; shift || true
+	case "$action" in
+		add | remove) child="${1:-}"; blocker="${2:-}"; [ -n "$child" ] && [ -n "$blocker" ] || usage_error "clerk inbox dep $action: usage: clerk inbox dep $action <child> <blocker>"; shift 2 ;;
+		*) usage_error 'clerk inbox dep: usage: clerk inbox dep add <child> <blocker> | clerk inbox dep remove <child> <blocker>' ;;
+	esac
+	[ $# -eq 0 ] || usage_error "clerk inbox dep $action: unknown argument '$1'"
+	[ "$child" != "$blocker" ] || usage_error "clerk inbox dep $action: an item cannot block itself"
+	local child_json blocker_json child_parent blocker_parent
+	child_json=$(bd_issue_json_or_usage "clerk inbox dep $action" "$child")
+	blocker_json=$(bd_issue_json_or_usage "clerk inbox dep $action" "$blocker")
+	issue_json_is_open_inbox "$child_json" || usage_error "clerk inbox dep $action: $child must be an open inbox item"
+	issue_json_is_ready_promoted "$blocker_json" && usage_error "clerk inbox dep $action: $blocker must be an inbox item, not a ready/promoted item"
+	child_parent=$(printf '%s' "$child_json" | jq -r '.parent // ""')
+	blocker_parent=$(printf '%s' "$blocker_json" | jq -r '.parent // ""')
+	[ -n "$child_parent" ] && [ "$child_parent" = "$blocker_parent" ] || usage_error "clerk inbox dep $action: dependency edges are sibling-only; $child and $blocker must share the same immediate parent"
+	if [ "$action" = add ]; then
+		dep_path_exists "$blocker" "$child" && usage_error "clerk inbox dep add: refusing dependency cycle ($child blocked by $blocker)"
+		bd dep add "$child" "$blocker" >/dev/null || backend_fail "inbox dep add failed — bd dep add did not succeed for $child <- $blocker"
+		bd_issue_json_or_usage 'clerk inbox dep add' "$child" | jq -e --arg blocker "$blocker" '(.dependencies // []) | any(.dependency_type == "blocks" and .id == $blocker)' >/dev/null || backend_fail "inbox dep add failed — edge was not confirmed for $child <- $blocker"
+		printf '%sclerk:%s dependency added %s blocked-by %s\n' "$C_GRN" "$C_RST" "$child" "$blocker"
+	else
+		bd dep remove "$child" "$blocker" >/dev/null || backend_fail "inbox dep remove failed — bd dep remove did not succeed for $child <- $blocker"
+		if bd_issue_json_or_usage 'clerk inbox dep remove' "$child" | jq -e --arg blocker "$blocker" '(.dependencies // []) | any(.dependency_type == "blocks" and .id == $blocker)' >/dev/null; then
+			backend_fail "inbox dep remove failed — edge still exists for $child <- $blocker"
+		fi
+		printf '%sclerk:%s dependency removed %s blocked-by %s\n' "$C_GRN" "$C_RST" "$child" "$blocker"
+	fi
+}
+
+read_nonempty_text_arg() { # $1=verb; remaining args: [--file path|--stdin]; echoes body
+	local verb="$1" input_source=stdin input_seen=0 file=""
+	shift
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--file)
+				[ $# -ge 2 ] || usage_error "$verb: --file needs a path"
+				[ "$input_seen" -eq 0 ] || usage_error "$verb: choose only one input source"
+				input_source=file; input_seen=1; file="$2"; shift
+				;;
+			--stdin)
+				[ "$input_seen" -eq 0 ] || usage_error "$verb: choose only one input source"
+				input_source=stdin; input_seen=1
+				;;
+			*) usage_error "$verb: unknown argument '$1'" ;;
+		esac
+		shift
+	done
+	local text
+	if [ "$input_source" = file ]; then
+		[ -f "$file" ] || usage_error "$verb: file not found: $file"
+		text=$(cat "$file")
+	else
+		text=$(cat)
+	fi
+	printf '%s' "$text" | grep -q '[^[:space:]]' || usage_error "$verb: note text must be non-empty"
+	printf '%s' "$text"
+}
+
+cmd_inbox_note() {
+	local _backend="$1" _root="$2" id="${3:-}" text before after
+	shift 2
+	id="${1:-}"; [ -n "$id" ] || usage_error 'clerk inbox note: missing id — usage: clerk inbox note <id> [--file <path>|--stdin]'
+	shift
+	bd_issue_json_or_usage 'clerk inbox note' "$id" >/dev/null
+	text=$(read_nonempty_text_arg 'clerk inbox note' "$@")
+	before=$(bd_issue_json_or_usage 'clerk inbox note' "$id" | jq -c '{status,labels}')
+	bd update "$id" --append-notes "$text" >/dev/null || backend_fail "inbox note failed — bd update --append-notes did not succeed for $id"
+	after=$(bd_issue_json_or_usage 'clerk inbox note' "$id" | jq -c '{status,labels}')
+	[ "$before" = "$after" ] || backend_fail "inbox note failed — $id state changed while appending note"
+	printf '%sclerk:%s noted %s\n' "$C_GRN" "$C_RST" "$id"
+}
+
+cmd_inbox_update() {
+	local _backend="$1" _root="$2" id="${3:-}" title="" type="" body_file="" use_stdin=0 guard="" body="" have_body=0
+	shift 2
+	id="${1:-}"; [ -n "$id" ] || usage_error 'clerk inbox update: missing id — usage: clerk inbox update <id> [--title <title>] [--type <type>] [--body-file <path>|--stdin --body-guard <guard>]'
+	shift
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--title) [ $# -ge 2 ] || usage_error 'clerk inbox update: --title needs a value'; title="$2"; shift ;;
+			--type) [ $# -ge 2 ] || usage_error 'clerk inbox update: --type needs a value'; type="$2"; shift ;;
+			--body-file)
+				[ $# -ge 2 ] || usage_error 'clerk inbox update: --body-file needs a path'
+				[ "$have_body" -eq 0 ] || usage_error 'clerk inbox update: choose only one of --stdin or --body-file'
+				body_file="$2"; have_body=1; shift
+				;;
+			--stdin)
+				[ "$have_body" -eq 0 ] || usage_error 'clerk inbox update: choose only one of --stdin or --body-file'
+				use_stdin=1; have_body=1
+				;;
+			--body-guard) [ $# -ge 2 ] || usage_error 'clerk inbox update: --body-guard needs a value from clerk inbox show --json'; guard="$2"; shift ;;
+			*) usage_error "clerk inbox update: unknown argument '$1'" ;;
+		esac
+		shift
+	done
+	[ -n "$title" ] || [ -n "$type" ] || [ "$have_body" -eq 1 ] || usage_error 'clerk inbox update: nothing to update'
+	if [ -n "$type" ]; then
+		clerk_type_valid "$type" || usage_error "clerk inbox update: invalid --type '$type' — use a canonical core type or configure types.custom"
+		[ "$type" = impediment ] && bd_ensure_impediment_type
+	fi
+	local obj updated current_body current_guard
+	obj=$(bd_issue_json_or_usage 'clerk inbox update' "$id")
+	updated=$(printf '%s' "$obj" | jq -r '.updated_at // ""')
+	current_body=$(printf '%s' "$obj" | jq -r '.description // ""')
+	current_guard=$(printf '%s\0%s' "$updated" "$current_body" | sha256sum | awk '{print $1}')
+	local -a update_args=(bd update "$id")
+	[ -z "$title" ] || update_args+=(--title "$title")
+	[ -z "$type" ] || update_args+=(--type "$type")
+	if [ "$have_body" -eq 1 ]; then
+		[ -n "$guard" ] || usage_error 'clerk inbox update: replacing the body requires --body-guard from clerk inbox show --json'
+		[ "$guard" = "$current_guard" ] || usage_error 'clerk inbox update: stale body guard — rerun clerk inbox show --json and retry'
+		if [ -n "$body_file" ]; then
+			[ -f "$body_file" ] || usage_error "clerk inbox update: body file not found: $body_file"
+			body=$(cat "$body_file")
+		else
+			body=$(cat)
+		fi
+		update_args+=(--description "$body" --allow-empty-description)
+	fi
+	"${update_args[@]}" >/dev/null || backend_fail "inbox update failed — bd update did not succeed for $id"
+	printf '%sclerk:%s updated %s\n' "$C_GRN" "$C_RST" "$id"
+}
+
+cmd_inbox_resolve() {
+	local _backend="$1" _root="$2" id="${3:-}" text ts
+	shift 2
+	id="${1:-}"; [ -n "$id" ] || usage_error 'clerk inbox resolve: missing id — usage: clerk inbox resolve <id> [--file <path>|--stdin]'
+	shift
+	local obj
+	obj=$(bd_issue_json_or_usage 'clerk inbox resolve' "$id")
+	issue_json_is_open_inbox "$obj" || usage_error "clerk inbox resolve: $id must be an open inbox item (not ready/promoted/closed)"
+	issue_has_open_blockers "$id" && usage_error "clerk inbox resolve: $id has open blockers — resolve blockers first"
+	issue_has_open_children "$id" && usage_error "clerk inbox resolve: $id has open children — resolve or reparent children first"
+	text=$(read_nonempty_text_arg 'clerk inbox resolve' "$@")
+	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	bd update "$id" --append-notes "clerk-resolution: $ts"$'\n'"$text" >/dev/null || backend_fail "inbox resolve failed — could not append resolution note for $id"
+	bd close "$id" --reason resolved >/dev/null || backend_fail "inbox resolve failed — bd close did not succeed for $id"
+	[ "$(bd_issue_json_or_usage 'clerk inbox resolve' "$id" | jq -r '.status // ""')" = closed ] || backend_fail "inbox resolve failed — $id was not confirmed closed"
+	printf '%sclerk:%s resolved %s\n' "$C_GRN" "$C_RST" "$id"
 }
 
 # ------------------------------------------------------------------ backlog ----
@@ -2947,7 +3459,7 @@ main() {
 			fi
 			sub="$1"
 			if [ "$noun" = inbox ]; then
-				roster="list show dups ready drop pregrill"
+				roster="list show dups ready drop pregrill children frontier blockers blocked parent dep note update resolve"
 			else
 				roster="next show claim release proof submit gate finish return"
 			fi
@@ -3031,6 +3543,42 @@ main() {
 			;;
 		"inbox pregrill")
 			cmd_inbox_pregrill "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox children")
+			cmd_inbox_children "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox frontier")
+			cmd_inbox_frontier "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox blockers")
+			cmd_inbox_blockers "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox blocked")
+			cmd_inbox_blocked "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox parent")
+			cmd_inbox_parent "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox dep")
+			cmd_inbox_dep "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox note")
+			cmd_inbox_note "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox update")
+			cmd_inbox_update "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"inbox resolve")
+			cmd_inbox_resolve "$backend" "$root" "$@"
 			exit "$?"
 			;;
 		"backlog next")
