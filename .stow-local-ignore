@@ -17,6 +17,7 @@ tmp_config.json
 ^\.local$
 ^\.repo-visibility$
 ^\.clerk$
+^clerk$
 ^tests$
 ^\.umbel-bundle$
 ^\.worktrees$

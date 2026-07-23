@@ -77,6 +77,61 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 
 # ------------------------------------------------------------- version ------
 
+@test "launcher invokes the Python Clerk project, which falls back to legacy behavior" {
+	real_python=$(python3 -c 'import sys; print(sys.executable)')
+	fake_python="$BATS_TEST_TMPDIR/python3"
+	log="$BATS_TEST_TMPDIR/python-argv.log"
+	cat >"$fake_python" <<EOF
+#!/bin/sh
+if [ "\$1" = - ]; then
+	exec "$real_python" "\$@"
+fi
+printf '%s\n' "\$*" >>"$log"
+exec "$real_python" "\$@"
+EOF
+	chmod +x "$fake_python"
+
+	run env -i CLERK_PYTHON="$fake_python" PATH="/usr/bin:/bin" "$CLERK" --version
+	[ "$status" -eq 0 ]
+	[ "$output" = "clerk 0.1.0" ]
+	[ "$(cat "$log")" = "-m clerk --version" ]
+}
+
+@test "launcher resolves a Stow-style symlink to the checkout" {
+	link="$BATS_TEST_TMPDIR/stowed-clerk"
+	ln -s "$CLERK" "$link"
+
+	run "$link" --version
+	[ "$status" -eq 0 ]
+	[ "$output" = "clerk 0.1.0" ]
+}
+
+@test "force-legacy override bypasses the Python runtime" {
+	fake_python="$BATS_TEST_TMPDIR/python3"
+	cat >"$fake_python" <<'EOF'
+#!/bin/sh
+echo "python should not run" >&2
+exit 99
+EOF
+	chmod +x "$fake_python"
+
+	run env -i CLERK_FORCE_LEGACY=1 CLERK_PYTHON="$fake_python" PATH="/usr/bin:/bin" "$CLERK" --version
+	[ "$status" -eq 0 ]
+	[ "$output" = "clerk 0.1.0" ]
+}
+
+@test "launcher reports a prescriptive Clerk-shaped error when Python 3.11+ is unavailable" {
+	fake_bin="$BATS_TEST_TMPDIR/no-python-bin"
+	mkdir -p "$fake_bin"
+	ln -s "$(command -v bash)" "$fake_bin/bash"
+
+	run env -i PATH="$fake_bin" "$CLERK" --version
+	[ "$status" -eq 4 ]
+	[ "${lines[0]}" = "clerk: Python 3.11 or newer is required to run Clerk" ]
+	[ "${lines[1]}" = "       install Python 3.11+, set CLERK_PYTHON to its path, or rerun with CLERK_FORCE_LEGACY=1" ]
+	[ "${lines[2]}" = "       then run 'clerk doctor' if setup is still unclear" ]
+}
+
 @test "--version prints the single-sourced version string" {
 	run "$CLERK" --version
 	[ "$status" -eq 0 ]
