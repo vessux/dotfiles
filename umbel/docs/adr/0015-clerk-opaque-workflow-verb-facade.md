@@ -32,12 +32,14 @@ contract at the command boundary. Callers may rely on successful mutations being
 before a success line is printed, and on repeated reconciliation converging rather than duplicating
 work.
 
-The current `bin/clerk` Bash implementation is **v0 implementation detail**. Bash was acceptable
-for the first cut because the tool is mostly process orchestration around `git`/`bd`/`gh` and needs
-zero packaging burden in dotfiles. It is not a permanent language commitment: once the facade is
-stable, the internals may be ported to Go, Python, TypeScript, Rust, or another substrate without a
-bundle-visible change. A port must preserve the CLI contract first; implementation neatness alone is
-not a reason to change the public surface.
+The current `bin/clerk` Bash implementation is **v0 implementation detail** and is now being
+retired via a strangler port to a self-contained, stdlib-only Python 3.11+ implementation. The
+public `clerk` command remains the launcher and compatibility boundary: callers continue to invoke
+the same executable and rely on the same verb grammar, exit-code taxonomy, prescriptive output,
+manifest handling, mutation verification, delivery-gate behaviour, and reconciliation semantics.
+During migration, the Bash implementation is preserved temporarily as the legacy fallback for
+unported verb paths. Compatibility is proven at the public CLI contract, especially the command
+boundary tests, not by preserving shell functions, shell helper APIs, or other Bash internals.
 
 ### Umbel bundle contract
 
@@ -87,8 +89,9 @@ verb grammar. Large changes require a focused grill before delivery resumes.
   reimplementing every underlying capability. Existing primitives remain first-choice internals
   where they match the contract.
 - **Implementation language is not the contract.** The Bash script is the v0 executable form and is
-  intentionally portable in this dotfiles repo, but the CLI contract above is what survives a future
-  port.
+  intentionally portable in this dotfiles repo, but the CLI contract above is what survives the
+  stdlib-only Python 3.11+ strangler port. The public command remains the launcher and contract
+  boundary while unported verb paths fall back to the preserved Bash implementation.
 - **Umbel bundles consume Clerk; they do not own it.** The bundle layer provides operating rules and
   hook wiring. Clerk owns workflow mechanism and repo-local state.
 - **Grammar is noun-scoped by collection (place)**: `inbox` (refinement views over non-ready work)
@@ -207,6 +210,10 @@ verb grammar. Large changes require a focused grill before delivery resumes.
 
 ## History
 
+- 2026-07-23: Python-port clarification added for epic dotfiles-9urv. Clerk is being moved from
+  Bash to stdlib-only Python 3.11+ behind the existing public command; the current Bash
+  implementation remains only as a temporary legacy fallback during migration. Compatibility is
+  judged at the public CLI contract and command boundary, not by retaining shell internals.
 - 2026-07-11: design pause before dotfiles cutover clarified the boundary contract: Clerk's durable
   asset is the CLI facade over primitives, not a permanent bespoke substrate; Bash is the v0
   implementation, not the language contract; Umbel bundles consume Clerk and own only operating
