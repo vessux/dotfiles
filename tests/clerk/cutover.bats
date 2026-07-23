@@ -32,6 +32,14 @@ setup() {
 	grep -qxF '^\.clerk$' .stow-local-ignore
 }
 
+@test "Python bytecode and cache artifacts stay out of git" {
+	cd "$REPO_ROOT"
+	git check-ignore -q clerk/src/clerk/__pycache__/cli.cpython-311.pyc
+	git check-ignore -q clerk/src/clerk/cli.pyc
+	git check-ignore -q clerk/src/clerk/cli.pyo
+	git check-ignore -q clerk/src/clerk/_native.pyd
+}
+
 @test "operator issue-tracker doc no longer calls this repo private-tier" {
 	cd "$REPO_ROOT"
 	run grep -n 'private tier' docs/agents/issue-tracker.md

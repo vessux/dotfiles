@@ -71,6 +71,7 @@ if ! python_bin=$(find_python); then
 	exit 4
 fi
 
+PYTHONDONTWRITEBYTECODE=1 \
 PYTHONPATH="$python_src${PYTHONPATH:+:$PYTHONPATH}" \
 CLERK_REPO_ROOT="$repo_root" \
 CLERK_LEGACY_PATH="$legacy_path" \

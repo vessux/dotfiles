@@ -9,7 +9,8 @@
 setup() {
 	source "$BATS_TEST_DIRNAME/helpers.bash"
 	git_sandbox
-	CLERK="$BATS_TEST_DIRNAME/../../bin/clerk"
+	REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
+	CLERK="$REPO_ROOT/bin/clerk"
 	ESC=$'\033'
 	OK_TAG="  ${ESC}[32m[ ok ]${ESC}[0m"
 	# shellcheck disable=SC2034 # symmetry with OK/FAIL tags; warn lines not asserted yet
@@ -75,6 +76,15 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	[ "${lines[i + 7]}" = "Next: run 'clerk --explain <verb>' to see what a verb does." ]
 }
 
+assert_no_python_bytecode() { # $1 = package root to inspect
+	local found
+	found=$(find "$1" \( -type d -name __pycache__ -o -type f \( -name '*.py[co]' -o -name '*.pyd' \) \) -print)
+	if [ -n "$found" ]; then
+		printf 'Python bytecode/cache artifacts found:\n%s\n' "$found" >&2
+		return 1
+	fi
+}
+
 # ------------------------------------------------------------- version ------
 
 @test "launcher invokes the Python Clerk project, which falls back to legacy behavior" {
@@ -95,6 +105,22 @@ EOF
 	[ "$status" -eq 0 ]
 	[ "$output" = "clerk 0.1.0" ]
 	[ "$(cat "$log")" = "-m clerk --version" ]
+}
+
+@test "launcher does not write Python bytecode into its checkout" {
+	real_python=$(python3 -c 'import sys; print(sys.executable)')
+	fresh="$BATS_TEST_TMPDIR/fresh-checkout"
+	mkdir -p "$fresh/bin" "$fresh/clerk/src" "$fresh/clerk/legacy"
+	cp "$REPO_ROOT/bin/clerk" "$fresh/bin/clerk"
+	cp "$REPO_ROOT/clerk/legacy/clerk.bash" "$fresh/clerk/legacy/clerk.bash"
+	cp -R "$REPO_ROOT/clerk/src/clerk" "$fresh/clerk/src/"
+	rm -rf "$fresh/clerk/src/clerk/__pycache__"
+	find "$fresh/clerk/src/clerk" -type f \( -name '*.py[co]' -o -name '*.pyd' \) -delete
+
+	run env -i CLERK_PYTHON="$real_python" PATH="/usr/bin:/bin" "$fresh/bin/clerk" --version
+	[ "$status" -eq 0 ]
+	[ "$output" = "clerk 0.1.0" ]
+	assert_no_python_bytecode "$fresh/clerk/src/clerk"
 }
 
 @test "launcher resolves a Stow-style symlink to the checkout" {
