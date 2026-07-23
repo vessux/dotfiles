@@ -71,6 +71,26 @@ class CliBoundaryTests(unittest.TestCase):
         self.assertEqual((code, out, err), (0, "", ""))
         self.assertEqual(calls, [["capture", "title"]])
 
+    def test_python_query_verb_uses_manifest_context_without_legacy(self):
+        seen = []
+
+        def fake_query(path, backend, root, remaining):
+            seen.append((path, backend, root.name, remaining))
+            return 0
+
+        with tempfile.TemporaryDirectory() as td:
+            subprocess.run(["git", "init", "-q", "-b", "main", td], check=True)
+            Path(td, ".clerk").write_text("backlog: bd\n")
+            cwd = os.getcwd()
+            try:
+                os.chdir(td)
+                with mock.patch("clerk.cli.run_query", side_effect=fake_query):
+                    code, out, err, calls = self.invoke(["backlog", "show", "dotfiles-123"], legacy_code=77)
+            finally:
+                os.chdir(cwd)
+        self.assertEqual((code, out, err, calls), (0, "", "", []))
+        self.assertEqual(seen, [(("backlog", "show"), "bd", Path(td).name, ["dotfiles-123"])])
+
     def test_known_workflow_verb_with_bad_manifest_refuses_before_legacy(self):
         with tempfile.TemporaryDirectory() as td:
             subprocess.run(["git", "init", "-q", "-b", "main", td], check=True)

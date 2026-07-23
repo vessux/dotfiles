@@ -25,11 +25,22 @@ class OwnershipTests(unittest.TestCase):
             with self.subTest(argv=argv):
                 self.assertTrue(is_python_owned(argv))
 
-    def test_workflow_verb_bodies_still_route_to_legacy_fallback(self):
+    def test_read_only_item_queries_are_python_owned(self):
+        for argv in (
+            ["inbox", "list"],
+            ["inbox", "show", "dotfiles-123"],
+            ["inbox", "dups"],
+            ["backlog", "next"],
+            ["backlog", "show", "dotfiles-123"],
+        ):
+            with self.subTest(argv=argv):
+                self.assertTrue(is_python_owned(argv))
+
+    def test_unported_workflow_verb_bodies_still_route_to_legacy_fallback(self):
         for argv in (
             ["capture", "title"],
-            ["inbox", "list"],
-            ["backlog", "next"],
+            ["inbox", "ready", "dotfiles-123"],
+            ["backlog", "claim", "dotfiles-123"],
             ["glean"],
         ):
             with self.subTest(argv=argv):
