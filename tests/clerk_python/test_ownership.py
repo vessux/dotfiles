@@ -11,14 +11,26 @@ class LegacyPathTests(unittest.TestCase):
 
 
 class OwnershipTests(unittest.TestCase):
-    def test_project_shell_owns_no_public_workflow_paths_yet(self):
+    def test_python_owns_core_command_boundary_surfaces(self):
         for argv in (
+            [],
             ["doctor"],
+            ["--version"],
+            ["--help"],
+            ["--explain", "backlog", "claim"],
+            ["--explain", "frobnicate"],
+            ["capture", "--help"],
+            ["frobnicate"],
+        ):
+            with self.subTest(argv=argv):
+                self.assertTrue(is_python_owned(argv))
+
+    def test_workflow_verb_bodies_still_route_to_legacy_fallback(self):
+        for argv in (
             ["capture", "title"],
             ["inbox", "list"],
             ["backlog", "next"],
             ["glean"],
-            ["--explain", "backlog", "claim"],
         ):
             with self.subTest(argv=argv):
                 self.assertFalse(is_python_owned(argv))
