@@ -13,9 +13,12 @@ or tracker details belong in operator-maintenance docs, not runtime instructions
 - **Refinement** — inspect and shape inbox items with `clerk inbox list`, `clerk inbox show <id>`,
   `clerk inbox dups`, `clerk inbox pregrill <id> ...`, `clerk inbox ready <id>`, and
   `clerk inbox drop <id>`.
-- **Ready for delivery** — an item promoted by `clerk inbox ready <id>` and visible to delivery via
-  `clerk backlog next` / `clerk backlog show <id>`.
-- **Delivery** — claim, submit, reconcile, or return work with `clerk backlog ...` verbs.
+- **Ready for delivery** — an item promoted by `clerk inbox ready <id>`. Ready means
+  refinement-complete; it appears in `clerk backlog next` only when it is currently pickable.
+- **Waiting backlog work** — ready but not pickable because of open blockers or open direct
+  children; inspect it with `clerk backlog waiting` / `clerk backlog show <id>`.
+- **Delivery** — claim, resolve without code, submit, reconcile, or return work with
+  `clerk backlog ...` verbs.
 - **Resolved or dropped** — Clerk records the outcome through the relevant inbox/backlog verb.
 
 Run `clerk doctor` when setup or the next workflow step is unclear.
@@ -51,7 +54,8 @@ The user normally passes the Clerk ID directly.
 
 Create one Clerk capture per vertical slice with `clerk capture`, then refine those captures through
 `clerk inbox ...` until each keeper has explicit acceptance criteria and can be promoted with
-`clerk inbox ready <id>`.
+`clerk inbox ready <id>`. Blocked children may still be promoted once refined; blockers affect
+backlog pickability, not readiness.
 
 ## Wayfinding operations
 
@@ -71,9 +75,10 @@ Common operations:
 
 - Create a map/epic: `clerk capture "<map title>" --type epic --stdin`.
 - Create direct children: `clerk capture "<ticket title>" --parent <map-id> --type task --stdin`.
-  Use canonical core types (`task`, `bug`, `feature`, `epic`, `chore`, `decision`) or configured
-  custom types. Wayfinder ticket kind can live in the body or existing `wayfinder:<type>` labels;
-  Clerk's graph semantics do not depend on those labels.
+  The parent may be any non-closed Work graph item, including an already-ready spec/epic. Use
+  canonical core types (`task`, `bug`, `feature`, `epic`, `chore`, `decision`) or configured custom
+  types. Wayfinder ticket kind can live in the body or existing `wayfinder:<type>` labels; Clerk's
+  graph semantics do not depend on those labels.
 - Wire sibling blockers: `clerk inbox dep add <child> <blocker>`; remove with
   `clerk inbox dep remove <child> <blocker>`. Dependency edges are only between siblings with the
   same immediate parent.
@@ -86,12 +91,17 @@ Common operations:
 - Correct parentage: `clerk inbox parent set <child> <parent>` or
   `clerk inbox parent clear <child>`. If moving would leave invalid sibling-only dependency edges,
   rerun with `--drop-invalid-deps` only when dropping those edges is intended.
-- Claim delivery only after promotion: planning graph items remain inbox items until
-  `clerk inbox ready <id>` promotes a leaf. `clerk inbox ready` refuses open blockers and open
-  children, but a child may still have a parent.
+- Promote after refinement: planning graph items remain inbox items until `clerk inbox ready <id>`
+  records Acceptance criteria and marks them ready. It may promote blocked items and parents with
+  open children; those ready items then leave `clerk inbox list` / refinement frontier and appear in
+  `clerk backlog waiting` until blockers/children close. `clerk backlog next`, `claim`, and
+  `resolve` only use pickable ready work: open, unclaimed, no open blockers, no open direct
+  children.
 - Record planning progress with `clerk inbox note <id> [--file <path>|--stdin]`.
 - Resolve non-delivery planning items with `clerk inbox resolve <id> [--file <path>|--stdin]`; it
-  appends the resolution note and closes the inbox item without backlog promotion.
+  appends the resolution note and closes the inbox item without backlog promotion. Resolve a
+  pickable ready backlog item that needs no code with
+  `clerk backlog resolve <id> [--returned keep|discard] [--file <path>|--stdin]`.
 - Update a planning item with `clerk inbox update <id> --title "..." --type <type>`. To replace the
   body, first read `body_guard` from `clerk inbox show <id> --json`, then pass it with
   `--body-guard <guard>` alongside `--body-file <path>` or `--stdin`.

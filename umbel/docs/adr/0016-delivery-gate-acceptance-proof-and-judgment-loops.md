@@ -28,11 +28,14 @@ Four proof classes, with a strict authority split:
   shellcheck on `bin/`), so the no-CI floor is genuine CI, not a placeholder.
 - **C4 — acceptance proof**: Refinement's output is twofold — the work *and the proof it is done
   as designed*. `clerk inbox ready` refuses units without acceptance criteria (presence is
-  structural; quality is grill judgment); `submit` stamps the unit's criteria into the PR body and
-  requires one evidence entry per criterion — delivery may add evidence, never narrow; **an
-  executable criterion must land as a test, not a transcript** (workflow-level TDD). If delivery
-  cannot fulfil the criteria as designed, `backlog return` sends the unit back to discovery with a
-  mandatory reason, auto-filed as a capture.
+  structural; quality is grill judgment) but does **not** require the unit to be pickable: a
+  blocked item or a parent with open children can still be refinement-complete. `submit` stamps the
+  unit's criteria into the PR body and requires one evidence entry per criterion — delivery may add
+  evidence, never narrow; **an executable criterion must land as a test, not a transcript**
+  (workflow-level TDD). If delivery cannot fulfil the criteria as designed, `backlog return` sends
+  the unit back to discovery with a mandatory reason, auto-filed as a capture. If the criteria are
+  satisfied without delivery code, `backlog resolve` closes the pickable unit with a distinct
+  no-code reason and resolution note.
 
 Authority split: the server-side check is authoritative for what the server can see (C1–C3, and
 C4's criterion-evidence correspondence, which submit made server-visible); claim-state truth stays
@@ -91,9 +94,10 @@ the pregrill's premises live.
 
 - This repo gains CI (the delivery-gate workflow) and branch protection as part of the epic —
   no repo in the workflow stays gate-less.
-- `stage:ready` is redefined: no open decision **and** stated acceptance criteria. Pre-sort may
-  not propose `ready` for a criteria-less capture (demotes to grill, may draft criteria as a
-  proposal).
+- `stage:ready` is redefined: no open decision **and** stated acceptance criteria. It means
+  refinement-complete, not immediately claimable. Pre-sort may not propose `ready` for a
+  criteria-less capture (demotes to grill, may draft criteria as a proposal). Backlog pickability
+  is computed separately as open + ready + unclaimed + no open blockers + no open direct children.
 - The squash commit carries the criteria-evidence summary, so `git log` is the audit surface the
   `criteria-miss` glean reads.
 - Glean's category list grows to four; `/glean`'s harvest mechanism is unchanged (ADR 0012,

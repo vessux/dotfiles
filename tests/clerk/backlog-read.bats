@@ -150,6 +150,32 @@ mk_ac_unit() { # $1 = title
 	grep -q -- '--readonly' "$BD_TRACE_LOG"
 }
 
+@test "backlog next and waiting split pickable ready work from blocked-ready graph work" {
+	repo=$(make_bd_repo next_waiting)
+	cd "$repo"
+	pickable=$(mk_ac_unit "pickable")
+	blocked=$(mk_ac_unit "blocked ready")
+	blocker=$(bd create "blocker" --silent)
+	parent=$(bd create "ready parent" --acceptance "parent ac" --silent)
+	child=$(bd create "open child" --parent "$parent" --silent)
+	bd update "$pickable" --add-label stage:ready >/dev/null
+	bd update "$blocked" --add-label stage:ready >/dev/null
+	bd update "$parent" --add-label stage:ready >/dev/null
+	bd dep add "$blocked" "$blocker" >/dev/null
+
+	run "$CLERK" backlog next
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"$pickable  pickable"* ]]
+	! grep -F -q "  $blocked  " <<<"$output"
+	! grep -F -q "  $parent  " <<<"$output"
+
+	run "$CLERK" backlog waiting
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"$blocked  blockers:1 children:0  blocked ready"* ]]
+	[[ "$output" == *"$parent  blockers:0 children:1  ready parent"* ]]
+	[[ "$output" != *"$pickable"* ]]
+}
+
 @test "backlog next (bd): empty ready pool prints (empty)" {
 	repo=$(make_bd_repo next2)
 	cd "$repo"

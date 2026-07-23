@@ -21,8 +21,8 @@ setup() {
 		"inbox list" "inbox show" "inbox dups" "inbox ready" "inbox drop" "inbox pregrill"
 		"inbox children" "inbox frontier" "inbox blockers" "inbox blocked" "inbox parent" "inbox dep"
 		"inbox claim" "inbox release" "inbox note" "inbox update" "inbox resolve"
-		"backlog next" "backlog show" "backlog claim" "backlog release" "backlog proof" "backlog submit"
-		"backlog gate" "backlog finish" "backlog return"
+		"backlog next" "backlog show" "backlog waiting" "backlog claim" "backlog release" "backlog resolve"
+		"backlog proof" "backlog submit" "backlog gate" "backlog finish" "backlog return"
 	)
 	# dotfiles-dft.6 implements the final top-level stub (`glean`), so the stub matrix is
 	# intentionally empty. Keep it as a matrix so a future generation gap can add entries
@@ -68,7 +68,7 @@ assert_roster() { # $1 = index of the 'Known verbs:' line in ${lines[@]}
 	[ "${lines[i]}" = "Known verbs:" ]
 	[ "${lines[i + 1]}" = '  capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>]' ]
 	[ "${lines[i + 2]}" = '  inbox list|show|dups|ready|drop|pregrill|children|frontier|blockers|blocked|parent|dep|claim|release|note|update|resolve' ]
-	[ "${lines[i + 3]}" = '  backlog next|show|claim|release|proof|submit|gate|finish|return' ]
+	[ "${lines[i + 3]}" = '  backlog next|show|waiting|claim|release|resolve|proof|submit|gate|finish|return' ]
 	[ "${lines[i + 4]}" = '  sync' ]
 	[ "${lines[i + 5]}" = '  doctor [--fix --backend bd|gh]' ]
 	[ "${lines[i + 6]}" = '  glean' ]
