@@ -53,6 +53,22 @@ make_bd_repo() {
 	[ "$(bd show "$custom" --readonly --json | jq -r '.[0].issue_type')" = research ]
 }
 
+@test "capture can add children under a ready parent and depend on a ready sibling" {
+	repo=$(make_bd_repo capture_ready_parent)
+	cd "$repo"
+	parent=$(bd create "ready parent" --acceptance "parent ac" --silent)
+	ready_sibling=$(bd create "ready sibling" --parent "$parent" --acceptance "sibling ac" --silent)
+	"$CLERK" inbox ready "$parent" >/dev/null
+	"$CLERK" inbox ready "$ready_sibling" >/dev/null
+
+	run "$CLERK" capture "new blocked child" --parent "$parent" --blocked-by "$ready_sibling"
+	[ "$status" -eq 0 ]
+	child="${output#clerk: filed }"
+	json=$(bd show "$child" --readonly --json)
+	[ "$(jq -r '.[0].parent' <<<"$json")" = "$parent" ]
+	jq -e --arg blocker "$ready_sibling" '.[0].dependencies | any(.dependency_type == "blocks" and .id == $blocker)' <<<"$json" >/dev/null
+}
+
 @test "children/frontier/blockers/blocked return normalized JSON and frontier only open unblocked unclaimed direct children" {
 	repo=$(make_bd_repo queries)
 	cd "$repo"
@@ -91,7 +107,7 @@ make_bd_repo() {
 	bd close "$parent" --reason done --force >/dev/null
 	run "$CLERK" inbox frontier "$parent"
 	[ "$status" -eq 2 ]
-	[[ "$output" == *"open inbox parent"* ]]
+	[[ "$output" == *"non-closed Work graph parent"* ]]
 }
 
 @test "parent mutation refuses cycles and dependency-invalidating moves unless dropped" {
@@ -194,6 +210,38 @@ make_bd_repo() {
 	[ "$(jq -r '.items[].id' <<<"$output")" = "$a" ]
 }
 
+@test "current planning claim may ready resolve or drop; another actor's claim refuses" {
+	repo=$(make_bd_repo planning_claim_disposition)
+	cd "$repo"
+	mine_ready=$(bd create "mine ready" --acceptance "ready ac" --silent)
+	mine_resolve=$(bd create "mine resolve" --silent)
+	mine_drop=$(bd create "mine drop" --silent)
+	other=$(bd create "other" --acceptance "other ac" --silent)
+	bd update "$mine_ready" --claim >/dev/null
+	bd update "$mine_resolve" --claim >/dev/null
+	bd update "$mine_drop" --claim >/dev/null
+	bd update "$other" --claim --actor other-agent >/dev/null
+
+	run "$CLERK" inbox ready "$mine_ready"
+	[ "$status" -eq 0 ]
+	json=$(bd show "$mine_ready" --readonly --json)
+	[ "$(jq -r '.[0].status' <<<"$json")" = open ]
+	[ -z "$(jq -r '.[0].assignee // ""' <<<"$json")" ]
+	[ "$(jq -r '.[0].labels | index("stage:ready")' <<<"$json")" != null ]
+
+	run bash -c 'printf "done" | "$1" inbox resolve "$2"' _ "$CLERK" "$mine_resolve"
+	[ "$status" -eq 0 ]
+	[ "$(bd show "$mine_resolve" --readonly --json | jq -r '.[0].status')" = closed ]
+
+	run "$CLERK" inbox drop "$mine_drop"
+	[ "$status" -eq 0 ]
+	[ "$(bd show "$mine_drop" --readonly --json | jq -r '.[0].status')" = closed ]
+
+	run "$CLERK" inbox ready "$other"
+	[ "$status" -eq 5 ]
+	[[ "$output" == *"claimed by other-agent"* ]]
+}
+
 @test "note, guarded update, and resolve mutate planning items without promotion" {
 	repo=$(make_bd_repo planning_mutations)
 	cd "$repo"
@@ -224,24 +272,28 @@ make_bd_repo() {
 	[[ "$(jq -r '.[0].notes' <<<"$json")" == *"clerk-resolution:"* ]]
 }
 
-@test "inbox ready refuses open blockers and open children but allows a parented unblocked leaf" {
+@test "inbox ready promotes refined items despite blockers or children; ready items leave refinement views" {
 	repo=$(make_bd_repo ready_graph)
 	cd "$repo"
 	parent=$(bd create "parent" --acceptance "parent ac" --silent)
-	blocker=$(bd create "blocker" --parent "$parent" --silent)
+	blocker=$(bd create "blocker" --parent "$parent" --acceptance "blocker ac" --silent)
 	leaf=$(bd create "leaf" --parent "$parent" --acceptance "leaf ac" --silent)
 	bd dep add "$leaf" "$blocker" >/dev/null
 
-	run "$CLERK" inbox ready "$parent"
-	[ "$status" -eq 2 ]
-	[[ "$output" == *"open children"* ]]
-
-	run "$CLERK" inbox ready "$leaf"
-	[ "$status" -eq 2 ]
-	[[ "$output" == *"open blockers"* ]]
-
-	bd close "$blocker" --reason done >/dev/null
 	run "$CLERK" inbox ready "$leaf"
 	[ "$status" -eq 0 ]
 	[ "$(bd show "$leaf" --readonly --json | jq -r '.[0].labels | index("stage:ready")')" != null ]
+
+	run "$CLERK" inbox ready "$parent"
+	[ "$status" -eq 0 ]
+	[ "$(bd show "$parent" --readonly --json | jq -r '.[0].labels | index("stage:ready")')" != null ]
+
+	run "$CLERK" inbox list
+	[ "$status" -eq 0 ]
+	! grep -F -q "  $parent  " <<<"$output"
+	! grep -F -q "  $leaf  " <<<"$output"
+
+	run "$CLERK" inbox frontier "$parent"
+	[ "$status" -eq 0 ]
+	[ "$(jq -r '.items[].id' <<<"$output")" = "$blocker" ]
 }

@@ -28,8 +28,11 @@ delivery-ready work, and the two tiers hand off to delivery differently):
 - **private** — beads *is* the backlog, so a refined keeper stays **open** and is marked
   **`stage:ready`** (`bd set-state <id> stage=ready` — beads' state-dimension convention, which adds a
   `stage:ready` label + an audit event). That marker is the in-beads line between raw capture and
-  delivery-ready — the equivalent of what public expresses by closing+promoting. The delivery track
-  consumes `bd ready` beads that are `stage:ready`; a claim moves it to `in_progress`, done closes it.
+  refinement-complete backlog work — the equivalent of what public expresses by closing+promoting.
+  Pickability is computed separately: delivery consumes open, unclaimed, `stage:ready` beads only
+  when they have no open blockers and no open direct children. Blocked-ready items and ready
+  parents with open children are backlog **Waiting** work, not raw inbox work and not claimable
+  delivery work; a claim moves a pickable unit to `in_progress`, and done closes it.
 
 ## Considered options
 
@@ -47,5 +50,6 @@ delivery-ready work, and the two tiers hand off to delivery differently):
 - The injected seeds, `bundles/discovery.md`, the `presort` agent, the `inject` envelopes, and ADR 0001's
   wording are updated; the `pocock/triage` skill and all `skills/pocock/**` files are untouched (they
   legitimately own the word).
-- Delivery's private contract now consumes a bead that is `bd ready` *and* `stage:ready` (raw captures
-  are not delivery units).
+- Delivery's private contract now consumes a bead that is pickable *and* `stage:ready` (raw captures
+  are not delivery units). `stage:ready` means refinement-complete; open blockers and open direct
+  children move that ready work to backlog Waiting instead of preventing promotion.

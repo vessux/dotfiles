@@ -91,12 +91,15 @@ verb grammar. Large changes require a focused grill before delivery resumes.
   port.
 - **Umbel bundles consume Clerk; they do not own it.** The bundle layer provides operating rules and
   hook wiring. Clerk owns workflow mechanism and repo-local state.
-- **Grammar is noun-scoped by collection (place)**: `inbox` (unrefined pool) and `backlog` (ready
-  pool). Object-type nouns break under promote=flow; ID-shape dispatch couples to backend token
-  formats — both rejected in the session-1 stress test (epic dotfiles-dft).
-- **Verb roster**: `capture "<title>" [--stdin|--impediment]`;
-  `inbox list|show|dups|ready|drop|pregrill`;
-  `backlog next|show|claim|release|return|submit|gate|finish`; `sync`; `doctor`; `glean`.
+- **Grammar is noun-scoped by collection (place)**: `inbox` (refinement views over non-ready work)
+  and `backlog` (refinement-complete ready work). Ready and pickable are intentionally split:
+  `inbox ready` records that refinement is complete, while backlog verbs compute whether the Work
+  graph makes that unit claimable/resolvable now. Object-type nouns break under promote=flow;
+  ID-shape dispatch couples to backend token formats — both rejected in the session-1 stress test
+  (epic dotfiles-dft).
+- **Verb roster**: `capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>]`;
+  `inbox list|show|dups|ready|drop|pregrill|children|frontier|blockers|blocked|parent|dep|claim|release|note|update|resolve`;
+  `backlog next|show|waiting|claim|release|resolve|return|proof|submit|gate|finish`; `sync`; `doctor`; `glean`.
 - **Opacity (hard ban, layered)**: skills, bundles, hooks, seeds, and injected instructions never
   name beads/`bd` — the backing store is the clerk's private business. Agent *runtime* discovery of
   `bd` is tolerated (reads harmless; writes self-punishing — they reintroduce solved bugs like the
@@ -192,7 +195,9 @@ verb grammar. Large changes require a focused grill before delivery resumes.
   wording-neutral tools (grill-with-docs, plannotator, tuidriver, glean mechanics) are shared.
   Cutover is per-repo re-pin; rollback is re-pinning the old bundle.
 - Pre-sort's successor is decision-free with one write verb (`inbox pregrill`, ADR 0016); the
-  inbox noun definition (open minus `stage:ready`) moves from skill prose into clerk code.
+  inbox noun definition (open minus `stage:ready`) moves from skill prose into clerk code. The Work
+  graph can span inbox and backlog: `capture --parent` may target a non-closed promoted parent, and
+  `backlog waiting` shows ready items held out of `backlog next` by open blockers or open children.
 - `nextdelivery` and its dead `umbel adopt` hint dissolve (`clerk backlog next` / `clerk doctor`);
   `land` and the dirty-shared-checkout hazard class dissolve with worktree-per-claim; the
   delivery-finish memory cluster (user-pushes-main, worktree-discard, skip-worktree, dirty-checkout)

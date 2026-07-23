@@ -7,7 +7,7 @@ inbox/backlog dispositions rather than GitHub labels.
 | ---------------------------------- | --------------- |
 | `needs-triage` | An item shown by `clerk inbox list`: raw captured work that has not yet been promoted. |
 | `needs-info` | Keep it in the inbox. Record the missing external fact in the item body, a pregrill note, or the refinement output; do not promote until the fact is available. |
-| `ready-for-agent` | `clerk inbox ready <id>` after refinement has named the work and explicit acceptance criteria. Delivery then discovers it with `clerk backlog next`. |
+| `ready-for-agent` | `clerk inbox ready <id>` after refinement has named the work and explicit acceptance criteria. Pickable work appears in `clerk backlog next`; blocked ready work appears in `clerk backlog waiting`. |
 | `ready-for-human` | Not a separate track in this repo. Keep it in the inbox when human judgment is still needed; use pregrill/refinement notes to state the decision. |
 | `wontfix` | `clerk inbox drop <id>` with the reason. |
 

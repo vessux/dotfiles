@@ -55,7 +55,7 @@ print_roster() {
 		'Known verbs:' \
 		'  capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>]' \
 		'  inbox list|show|dups|ready|drop|pregrill|children|frontier|blockers|blocked|parent|dep|claim|release|note|update|resolve' \
-		'  backlog next|show|claim|release|proof|submit|gate|finish|return' \
+		'  backlog next|show|waiting|claim|release|resolve|proof|submit|gate|finish|return' \
 		'  sync' \
 		'  doctor [--fix --backend bd|gh]' \
 		'  glean' \
@@ -239,8 +239,8 @@ explain_verb() {
 			;;
 		'backlog next')
 			printf '%s\n' \
-				'clerk backlog next — pick the next ready unit' \
-				'  runs: bd ready --readonly --label stage:ready --json     (backlog: bd)' \
+				'clerk backlog next — pick the next pickable ready unit' \
+				'  runs: bd list --status open --label stage:ready --no-assignee --readonly --json, then filters no open blockers/children     (backlog: bd)' \
 				'        gh issue list --label ready-for-agent              (backlog: gh)' \
 				"  see:  $ADR17"
 			;;
@@ -250,6 +250,13 @@ explain_verb() {
 				'  runs: bd show <id>          (backlog: bd)' \
 				'        gh issue view <id>    (backlog: gh)' \
 				"  see:  $ADR15"
+			;;
+		'backlog waiting')
+			printf '%s\n' \
+				'clerk backlog waiting — list refined-ready work that is waiting on graph state' \
+				'  runs: bd list --status open --label stage:ready --no-assignee --readonly --json, then reports open blocker/child counts     (backlog: bd)' \
+				'        gh issue list --label ready-for-agent              (backlog: gh; no graph waiting view yet)' \
+				"  see:  $ADR17"
 			;;
 		'backlog claim')
 			printf '%s\n' \
@@ -276,6 +283,13 @@ explain_verb() {
 				'        offline: local teardown only, remote delete deferred to sync; job-context refuses;' \
 				'        idempotent (exit 0) on a unit not claimed here' \
 				"  see:  $ADR15"
+			;;
+		'backlog resolve')
+			printf '%s\n' \
+				'clerk backlog resolve — close a pickable ready unit without delivery code' \
+				'  usage: clerk backlog resolve <id> [--returned keep|discard] [--file <path>|--stdin]' \
+				'  runs: refuses non-pickable/claimed units and criteria-less units; appends a non-empty resolution note; bd close --reason "resolved without delivery"     (backlog: bd)' \
+				"  see:  $ADR16"
 			;;
 		'backlog proof')
 			printf '%s\n' \
@@ -432,6 +446,23 @@ issue_json_is_active_inbox() { # stdin/object or $1 object: open/in_progress and
 	printf '%s' "$obj" | jq -e '(.status == "open" or .status == "in_progress") and (((.labels // []) | index("stage:ready")) == null)' >/dev/null 2>&1
 }
 
+issue_json_is_nonclosed_work() { # stdin/object or $1 object: any Work graph item that is not closed
+	local obj="${1:-}"
+	[ -n "$obj" ] || obj=$(cat)
+	printf '%s' "$obj" | jq -e '(.status // "") != "" and (.status != "closed")' >/dev/null 2>&1
+}
+
+planning_holder_refusal() { # $1=verb $2=root $3=json-object; allows unclaimed or claimed by current actor
+	local verb="$1" root="$2" obj="$3" id holder me
+	id=$(printf '%s' "$obj" | jq -r '.id // ""')
+	holder=$(printf '%s' "$obj" | jq -r '.assignee // ""')
+	[ -z "$holder" ] && return 0
+	me=$(claim_current_actor "$root")
+	[ "$holder" = "$me" ] && return 0
+	printf 'clerk: %s refused — %s is claimed by %s\n' "$verb" "$id" "$holder" >&2
+	exit 5
+}
+
 issue_parent_id() { # $1=id
 	bd_issue_json_or_usage 'clerk inbox graph' "$1" | jq -r '.parent // ""'
 }
@@ -442,10 +473,10 @@ issue_has_open_blockers() { # $1=id; status absent/non-closed is fail-closed
 	printf '%s' "$obj" | jq -e '(.dependencies // []) | any(.dependency_type == "blocks" and ((.status // "open") != "closed"))' >/dev/null
 }
 
-issue_has_open_children() { # $1=id
+issue_has_open_children() { # $1=id; missing/non-closed child status fails closed as open
 	local obj
 	obj=$(bd_issue_json_or_usage 'clerk inbox graph' "$1")
-	printf '%s' "$obj" | jq -e '(.dependents // []) | any(.dependency_type == "parent-child" and .status == "open")' >/dev/null
+	printf '%s' "$obj" | jq -e '(.dependents // []) | any(.dependency_type == "parent-child" and ((.status // "open") != "closed"))' >/dev/null
 }
 
 issue_blocker_ids() { # $1=id; prints direct blocker ids, one per line
@@ -547,12 +578,12 @@ cmd_capture() {
 				shift
 				;;
 			--parent)
-				[ $# -ge 2 ] || usage_error 'clerk capture: --parent needs an inbox id'
+				[ $# -ge 2 ] || usage_error 'clerk capture: --parent needs a Work graph id'
 				parent="$2"
 				shift
 				;;
 			--blocked-by)
-				[ $# -ge 2 ] || usage_error 'clerk capture: --blocked-by needs an inbox id'
+				[ $# -ge 2 ] || usage_error 'clerk capture: --blocked-by needs a Work graph sibling id'
 				blockers+=("$2")
 				shift
 				;;
@@ -579,15 +610,15 @@ cmd_capture() {
 			if [ -n "$parent" ]; then
 				local parent_json
 				parent_json=$(bd_issue_json_or_usage 'clerk capture' "$parent")
-				if ! issue_json_is_open_inbox "$parent_json"; then
-					usage_error "clerk capture: --parent $parent must name an open inbox item"
+				if ! issue_json_is_nonclosed_work "$parent_json"; then
+					usage_error "clerk capture: --parent $parent must name a non-closed Work graph item"
 				fi
 			fi
 			local blocker blocker_json blocker_parent
 			for blocker in "${blockers[@]+"${blockers[@]}"}"; do
 				blocker_json=$(bd_issue_json_or_usage 'clerk capture' "$blocker")
-				if issue_json_is_ready_promoted "$blocker_json"; then
-					usage_error "clerk capture: --blocked-by $blocker must name an inbox item, not a ready/promoted item"
+				if ! issue_json_is_nonclosed_work "$blocker_json"; then
+					usage_error "clerk capture: --blocked-by $blocker must name a non-closed Work graph item"
 				fi
 				if [ -n "$parent" ]; then
 					blocker_parent=$(printf '%s' "$blocker_json" | jq -r '.parent // ""')
@@ -895,15 +926,12 @@ cmd_inbox_ready() {
 				! printf '%s' "$json" | jq -e 'if type != "array" then false else (length > 0) end' >/dev/null 2>&1; then
 				usage_error "clerk inbox ready: $id not found — check the id ('clerk inbox list' shows open units)"
 			fi
-			local short
+			local obj short
+			obj=$(printf '%s' "$json" | jq -c '.[0]')
+			issue_json_is_active_inbox "$obj" || usage_error "clerk inbox ready: $id must be an open inbox item (not ready/promoted/closed)"
+			planning_holder_refusal 'inbox ready' "$root" "$obj"
 			short=$(returned_short_from_id "$id")
 			handle_returned_disposition 'inbox ready' "$root" "$short" "$returned_disposition"
-			if issue_has_open_blockers "$id"; then
-				usage_error "clerk inbox ready: $id has open blockers — clear or close blockers before promoting it"
-			fi
-			if issue_has_open_children "$id"; then
-				usage_error "clerk inbox ready: $id has open children — resolve, drop, or promote children before promoting the parent"
-			fi
 			# C-e also covers bd's first-class `acceptance_criteria` field (populated by
 			# `bd create --acceptance`/`--acceptance-file`), not just prose in description or
 			# design: that dedicated field IS the structural section by construction, so its
@@ -936,7 +964,7 @@ cmd_inbox_ready() {
 			if [ -z "$ac" ] && ! has_acceptance_criteria_section "$desc"$'\n'"$design"; then
 				usage_error "clerk inbox ready: $id has no 'Acceptance Criteria' section — rerun with --acceptance-file <path> (and optionally --design-file <path>) before promoting it"
 			fi
-			if ! bd update "$id" --add-label stage:ready >/dev/null; then
+			if ! bd update "$id" --status open --assignee "" --add-label stage:ready >/dev/null; then
 				backend_fail "inbox ready failed — bd update did not succeed for $id"
 			fi
 			# mutation self-verify (ADR 0015)
@@ -960,15 +988,12 @@ cmd_inbox_ready() {
 				! printf '%s' "$json" | jq -e 'if type != "array" then false else (length > 0) end' >/dev/null 2>&1; then
 				usage_error "clerk inbox ready: $id not found — check the id ('clerk inbox list' shows open units)"
 			fi
-			local short
+			local obj short
+			obj=$(printf '%s' "$json" | jq -c '.[0]')
+			issue_json_is_active_inbox "$obj" || usage_error "clerk inbox ready: $id must be an open inbox item (not ready/promoted/closed)"
+			planning_holder_refusal 'inbox ready' "$root" "$obj"
 			short=$(returned_short_from_id "$id")
 			handle_returned_disposition 'inbox ready' "$root" "$short" "$returned_disposition"
-			if issue_has_open_blockers "$id"; then
-				usage_error "clerk inbox ready: $id has open blockers — clear or close blockers before promoting it"
-			fi
-			if issue_has_open_children "$id"; then
-				usage_error "clerk inbox ready: $id has open children — resolve, drop, or promote children before promoting the parent"
-			fi
 			local url
 			if ! url=$(gh issue create --title "$title" --body-file "$body_file" --label ready-for-agent); then
 				backend_fail "inbox ready failed — gh issue create did not succeed"
@@ -1012,7 +1037,9 @@ cmd_inbox_drop() {
 	done
 	case "$backend" in
 		bd | gh)
-			local short
+			local obj short
+			obj=$(bd_issue_json_or_usage 'clerk inbox drop' "$id")
+			planning_holder_refusal 'inbox drop' "$root" "$obj"
 			short=$(returned_short_from_id "$id")
 			handle_returned_disposition 'inbox drop' "$root" "$short" "$returned_disposition"
 			if ! bd close "$id" --reason wontfix >/dev/null; then
@@ -1166,8 +1193,8 @@ cmd_inbox_frontier() {
 	done
 	local parent child_id child items_file
 	parent=$(bd_issue_json_or_usage 'clerk inbox frontier' "$id")
-	if ! issue_json_is_open_inbox "$parent"; then
-		usage_error "clerk inbox frontier: $id must be an open inbox parent"
+	if ! issue_json_is_nonclosed_work "$parent"; then
+		usage_error "clerk inbox frontier: $id must be a non-closed Work graph parent"
 	fi
 	items_file=$(mktemp)
 	while IFS= read -r child_id; do
@@ -1493,32 +1520,87 @@ cmd_inbox_resolve() {
 }
 
 # ------------------------------------------------------------------ backlog ----
-# unit dotfiles-dft.3: `backlog next` + `backlog show` — read-only windows onto the ready
-# pool, invoked with the backend's read-only mode so a harness allowlisting reads-only can
-# safely run either verb. Mirrors `inbox list`/`inbox show`'s shape (dft.2): backlog's ready
-# pool is `bd ready` (blocker-aware) narrowed to the `stage:ready` label — the ADR 0016
-# definition of ready — rather than `bd list --label stage:ready`, so a labeled-but-blocked
-# unit never surfaces as pickable.
+# unit dotfiles-dft.3 plus dotfiles-db4n: read-only windows onto refined-ready work.
+# `stage:ready` means refinement-complete; pickability is computed here as open + ready +
+# unclaimed + no open blockers + no open direct children. `backlog next` shows only pickable
+# items; `backlog waiting` shows ready items withheld by graph state.
 
-# clerk backlog next — the ready pool: bd's blocker-aware `ready` set narrowed to
-# stage:ready (ADR 0016); gh's ready-for-agent label is the near-passthrough analogue.
+backlog_pickable_filter_jq='
+	def edge_type: (.dependency_type // .type // "");
+	def open_blockers: [(.dependencies // [])[] | select(edge_type == "blocks" and ((.status // "open") != "closed"))];
+	def open_children: [(.dependents // [])[] | select(edge_type == "parent-child" and ((.status // "open") != "closed"))];
+	map(select(.status == "open"
+		and (((.labels // []) | index("stage:ready")) != null)
+		and ((.assignee // "") == "")
+		and ((open_blockers | length) == 0)
+		and ((open_children | length) == 0)))'
+
+backlog_waiting_filter_jq='
+	def edge_type: (.dependency_type // .type // "");
+	def open_blockers: [(.dependencies // [])[] | select(edge_type == "blocks" and ((.status // "open") != "closed"))];
+	def open_children: [(.dependents // [])[] | select(edge_type == "parent-child" and ((.status // "open") != "closed"))];
+	map(select(.status == "open"
+		and (((.labels // []) | index("stage:ready")) != null)
+		and ((.assignee // "") == "")
+		and (((open_blockers | length) + (open_children | length)) > 0))
+	| {id,title,blockers:(open_blockers | length),children:(open_children | length)})'
+
+backlog_bd_ready_unclaimed_details_json() { # echoes JSON array of bd show objects for open ready unassigned candidates
+	local list id obj tmp
+	if ! list=$(bd list --status open --label stage:ready --no-assignee --readonly --json); then
+		return 1
+	fi
+	tmp=$(mktemp)
+	while IFS= read -r id; do
+		[ -n "$id" ] || continue
+		obj=$(bd show "$id" --readonly --json 2>/dev/null | jq -c '.[0]' 2>/dev/null) || { rm -f "$tmp"; return 1; }
+		printf '%s\n' "$obj" >>"$tmp"
+	done < <(printf '%s' "$list" | jq -r '.[].id')
+	jq -s . "$tmp"
+	rm -f "$tmp"
+}
+
+backlog_bd_pickability_reason() { # $1=id; echoes reason text iff not pickable
+	local id="$1" obj status holder blockers children has_label reason=""
+	obj=$(bd_issue_json_or_usage 'clerk backlog pickability' "$id")
+	status=$(printf '%s' "$obj" | jq -r '.status // ""')
+	holder=$(printf '%s' "$obj" | jq -r '.assignee // ""')
+	has_label=$(printf '%s' "$obj" | jq -r '((.labels // []) | index("stage:ready")) != null')
+	blockers=$(printf '%s' "$obj" | jq '[ (.dependencies // [])[] | select(.dependency_type == "blocks" and ((.status // "open") != "closed")) ] | length')
+	children=$(printf '%s' "$obj" | jq '[ (.dependents // [])[] | select(.dependency_type == "parent-child" and ((.status // "open") != "closed")) ] | length')
+	[ "$status" = open ] || reason="${reason:+$reason, }status is $status"
+	[ "$has_label" = true ] || reason="${reason:+$reason, }not stage:ready"
+	[ -z "$holder" ] || reason="${reason:+$reason, }claimed by $holder"
+	[ "$blockers" -eq 0 ] || reason="${reason:+$reason, }$blockers open blocker(s)"
+	[ "$children" -eq 0 ] || reason="${reason:+$reason, }$children open child(ren)"
+	printf '%s' "$reason"
+}
+
+backlog_refuse_not_pickable() { # $1=verb $2=id $3=reason
+	local verb="$1" id="$2" reason="$3"
+	usage_error "clerk backlog $verb: $id is not pickable — $reason"
+}
+
+# clerk backlog next — the pickable ready pool: open + stage:ready + unclaimed + no open blockers
+# + no open direct children. gh's ready-for-agent label is the near-passthrough analogue.
 cmd_backlog_next() {
 	local backend="$1"
 	shift 2
 	case "$backend" in
 		bd)
-			local json
-			if ! json=$(bd ready --readonly --label stage:ready --json); then
-				backend_fail "backlog next failed — bd ready did not succeed"
+			local json pickable
+			if ! json=$(backlog_bd_ready_unclaimed_details_json); then
+				backend_fail "backlog next failed — bd list/show did not succeed"
 			fi
+			pickable=$(printf '%s' "$json" | jq "$backlog_pickable_filter_jq")
 			local count
-			count=$(printf '%s' "$json" | jq 'length')
+			count=$(printf '%s' "$pickable" | jq 'length')
 			printf 'Backlog (ready) — %s item(s):\n' "$count"
 			if [ "$count" -eq 0 ]; then
 				printf '  (empty)\n'
 				return 0
 			fi
-			printf '%s' "$json" | jq -r '.[] | "  \(.id)  \(.title)"'
+			printf '%s' "$pickable" | jq -r '.[] | "  \(.id)  \(.title)"'
 			;;
 		gh)
 			local json
@@ -1533,6 +1615,31 @@ cmd_backlog_next() {
 				return 0
 			fi
 			printf '%s' "$json" | jq -r '.[] | "  #\(.number)  \(.title)"'
+			;;
+	esac
+}
+
+# clerk backlog waiting — read-only view of refined-ready work waiting on graph state.
+cmd_backlog_waiting() {
+	local backend="$1"
+	shift 2
+	case "$backend" in
+		bd)
+			local json waiting count
+			if ! json=$(backlog_bd_ready_unclaimed_details_json); then
+				backend_fail "backlog waiting failed — bd list/show did not succeed"
+			fi
+			waiting=$(printf '%s' "$json" | jq "$backlog_waiting_filter_jq")
+			count=$(printf '%s' "$waiting" | jq 'length')
+			printf 'Backlog waiting — %s item(s):\n' "$count"
+			if [ "$count" -eq 0 ]; then
+				printf '  (empty)\n'
+				return 0
+			fi
+			printf '%s' "$waiting" | jq -r '.[] | "  \(.id)  blockers:\(.blockers) children:\(.children)  \(.title)"'
+			;;
+		gh)
+			printf 'Backlog waiting — 0 item(s):\n  (empty)\n'
 			;;
 	esac
 }
@@ -1622,7 +1729,7 @@ claim_resolve_id() {
 			CLAIM_DESC=$(printf '%s' "$json" | jq -r '.[0].description // ""')
 			CLAIM_DESIGN=$(printf '%s' "$json" | jq -r '.[0].design // ""')
 			CLAIM_AC=$(printf '%s' "$json" | jq -r '.[0].acceptance_criteria // ""')
-			CLAIM_HOLDER=$(printf '%s' "$json" | jq -r '.[0].assignee // .[0].owner // ""')
+			CLAIM_HOLDER=$(printf '%s' "$json" | jq -r '.[0].assignee // ""')
 			;;
 		gh)
 			local json
@@ -1682,7 +1789,7 @@ claim_record_bd() { # $1=root $2=full-id
 	local root="$1" full="$2"
 	bd update "$full" --claim >/dev/null 2>&1 || return 1
 	local check
-	check=$(bd show "$full" --readonly --json 2>/dev/null | jq -r '.[0].assignee // .[0].owner // ""')
+	check=$(bd show "$full" --readonly --json 2>/dev/null | jq -r '.[0].assignee // ""')
 	[ "$check" = "$(claim_current_actor "$root")" ]
 }
 
@@ -1794,6 +1901,14 @@ cmd_backlog_claim() {
 		printf '%s\n' "$wt"
 		return 0
 	fi
+	if [ -n "$holder" ]; then
+		claim_conflict "$short" "$holder" 'is already claimed'
+	fi
+	if [ "$backend" = bd ]; then
+		local not_pickable
+		not_pickable=$(backlog_bd_pickability_reason "$full")
+		[ -z "$not_pickable" ] || backlog_refuse_not_pickable claim "$full" "$not_pickable"
+	fi
 
 	# 4. SYNC-CHECK: `git fetch origin`'s failure (bounded by a short timeout, so an
 	# unreachable remote refuses promptly instead of hanging the claim) is the OFFLINE signal.
@@ -1896,6 +2011,65 @@ cmd_backlog_claim() {
 	printf '%sclerk:%s claimed %s — delivery/%s pushed, worktree ready\n' "$C_GRN" "$C_RST" "$full" "$short"
 	printf '%s\n' "$wt"
 	return 0
+}
+
+# clerk backlog resolve <id> [--returned keep|discard] [--file <path>|--stdin]
+cmd_backlog_resolve() {
+	local backend="$1" root="$2"
+	shift 2
+	local id="${1:-}"
+	[ -n "$id" ] || usage_error 'clerk backlog resolve: missing id — usage: clerk backlog resolve <id> [--returned keep|discard] [--file <path>|--stdin]'
+	shift
+	local returned_disposition="" input_args=()
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--returned)
+				[ $# -ge 2 ] || usage_error 'clerk backlog resolve: --returned needs keep or discard'
+				returned_disposition="$2"; shift
+				;;
+			--file | --stdin)
+				input_args+=("$1")
+				if [ "$1" = --file ]; then
+					[ $# -ge 2 ] || usage_error 'clerk backlog resolve: --file needs a path'
+					input_args+=("$2"); shift
+				fi
+				;;
+			*) usage_error "clerk backlog resolve: unknown argument '$1' — usage: clerk backlog resolve <id> [--returned keep|discard] [--file <path>|--stdin]" ;;
+		esac
+		shift
+	done
+	case "$returned_disposition" in "" | keep | discard) ;; *) usage_error 'clerk backlog resolve: --returned must be keep or discard' ;; esac
+
+	case "$backend" in
+		bd)
+			if ! claim_resolve_id "$backend" "$id"; then
+				usage_error "clerk backlog resolve: $id not found — check the id ('clerk backlog next' shows ready units)"
+			fi
+			local full="$CLAIM_FULL" short="$CLAIM_SHORT" not_pickable text ts status close_reason
+			if [ -z "$CLAIM_AC" ] && ! has_acceptance_criteria_section "$CLAIM_DESC"$'\n'"$CLAIM_DESIGN"; then
+				usage_error "clerk backlog resolve: $full has no 'Acceptance Criteria' section — it needs a grill pass before no-code resolution"
+			fi
+			not_pickable=$(backlog_bd_pickability_reason "$full")
+			if git -C "$root" show-ref --verify --quiet "refs/heads/delivery/$short" || git -C "$root" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"; then
+				not_pickable="${not_pickable:+$not_pickable, }claimed by delivery/$short"
+			fi
+			[ -z "$not_pickable" ] || backlog_refuse_not_pickable resolve "$full" "$not_pickable"
+			handle_returned_disposition 'backlog resolve' "$root" "$short" "$returned_disposition"
+			text=$(read_nonempty_text_arg 'clerk backlog resolve' "${input_args[@]+"${input_args[@]}"}")
+			local text_rc=$?
+			[ "$text_rc" -eq 0 ] || exit "$text_rc"
+			ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+			bd update "$full" --append-notes "clerk-backlog-resolution: $ts"$'\n'"$text" >/dev/null || backend_fail "backlog resolve failed — could not append resolution note for $full"
+			bd close "$full" --reason 'resolved without delivery' >/dev/null || backend_fail "backlog resolve failed — bd close did not succeed for $full"
+			status=$(bd_issue_json_or_usage 'clerk backlog resolve' "$full" | jq -r '.status // ""')
+			close_reason=$(bd_issue_json_or_usage 'clerk backlog resolve' "$full" | jq -r '.close_reason // ""')
+			[ "$status" = closed ] && [ "$close_reason" = 'resolved without delivery' ] || backend_fail "backlog resolve failed — $full was not confirmed closed as resolved without delivery"
+			printf '%sclerk:%s resolved %s without delivery\n' "$C_GRN" "$C_RST" "$full"
+			;;
+		gh)
+			not_implemented 'backlog resolve (gh)'
+			;;
+	esac
 }
 
 # unit dotfiles-dft.3 (this group): `backlog release` and `backlog return` — the two ways to
@@ -3532,7 +3706,7 @@ main() {
 			if [ "$noun" = inbox ]; then
 				roster="list show dups ready drop pregrill children frontier blockers blocked parent dep claim release note update resolve"
 			else
-				roster="next show claim release proof submit gate finish return"
+				roster="next show waiting claim release resolve proof submit gate finish return"
 			fi
 			# Exact-word match — a glob over " $roster " would misread one argument
 			# equal to two adjacent roster words (e.g. 'list show') as a known verb.
@@ -3668,12 +3842,20 @@ main() {
 			cmd_backlog_show "$backend" "$root" "$@"
 			exit "$?"
 			;;
+		"backlog waiting")
+			cmd_backlog_waiting "$backend" "$root" "$@"
+			exit "$?"
+			;;
 		"backlog claim")
 			cmd_backlog_claim "$backend" "$root" "$@"
 			exit "$?"
 			;;
 		"backlog release")
 			cmd_backlog_release "$backend" "$root" "$@"
+			exit "$?"
+			;;
+		"backlog resolve")
+			cmd_backlog_resolve "$backend" "$root" "$@"
 			exit "$?"
 			;;
 		"backlog return")

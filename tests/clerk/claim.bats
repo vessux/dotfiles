@@ -43,8 +43,11 @@ make_claim_repo() { # $1 = subdir name
 
 # A unit with a real Acceptance Criteria section (C4 must pass). Echoes the created id.
 mk_ac_unit() { # $1 = title
-	bd create "$1" --description '## Acceptance Criteria
-- does the thing' --silent
+	local id
+	id=$(bd create "$1" --description '## Acceptance Criteria
+- does the thing' --silent)
+	bd update "$id" --add-label stage:ready >/dev/null
+	printf '%s\n' "$id"
 }
 
 # Points `origin` at a path that will never resolve, so `git fetch origin` fails immediately
@@ -136,6 +139,23 @@ advance_main() { # $1=repo $2=file $3=content $4=subject
 	[ ! -d "$repo/.worktrees/$short" ]
 	! git -C "$repo" show-ref --verify --quiet "refs/heads/delivery/$short"
 	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = open ]
+}
+
+@test "claim (bd): ready item with open blockers is not pickable and refuses before branch side effects" {
+	repo=$(make_claim_repo claim_not_pickable_blocked)
+	cd "$repo"
+	id=$(mk_ac_unit "blocked claim unit")
+	blocker=$(bd create "open blocker" --silent)
+	short="${id#*-}"
+	bd dep add "$id" "$blocker" >/dev/null
+
+	run "$CLERK" backlog claim "$id"
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"not pickable"* ]]
+	[[ "$output" == *"open blocker"* ]]
+	[ ! -d "$repo/.worktrees/$short" ]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/delivery/$short"
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"
 }
 
 @test "claim (bd): criteria-less unit refuses, prescribes the grill, exit 2, no side effects" {
