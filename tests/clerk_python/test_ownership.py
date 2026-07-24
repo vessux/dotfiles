@@ -40,9 +40,18 @@ class OwnershipTests(unittest.TestCase):
             with self.subTest(argv=argv):
                 self.assertTrue(is_python_owned(argv))
 
-    def test_unported_workflow_verb_bodies_still_route_to_legacy_fallback(self):
+    def test_text_mutation_verbs_are_python_owned(self):
         for argv in (
             ["capture", "title"],
+            ["inbox", "pregrill", "dotfiles-123"],
+            ["inbox", "note", "dotfiles-123"],
+            ["inbox", "update", "dotfiles-123"],
+        ):
+            with self.subTest(argv=argv):
+                self.assertTrue(is_python_owned(argv))
+
+    def test_unported_workflow_verb_bodies_still_route_to_legacy_fallback(self):
+        for argv in (
             ["inbox", "ready", "dotfiles-123"],
             ["backlog", "claim", "dotfiles-123"],
             ["glean"],

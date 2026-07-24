@@ -1,21 +1,22 @@
 """Static migration ownership for public Clerk verb paths.
 
-This slice moves Clerk's command-boundary diagnostics and the read-only item
-query windows to Python while leaving mutating workflow verb bodies on the legacy
-shell fallback. Ownership is therefore split: Python owns global help/explain/
-version, manifest gating, doctor, and the explicit query table; active workflow
-mutations are exec'd into the fallback after the Python gate accepts them.
+This slice moves Clerk's command-boundary diagnostics, read-only item query
+windows, and Capture/text-based Inbox mutations to Python while leaving delivery
+and graph-heavy workflow verb bodies on the legacy shell fallback. Ownership is
+therefore split: Python owns global help/explain/version, manifest gating,
+doctor, and the explicit command tables; unported workflow mutations are exec'd
+into the fallback after the Python gate accepts them.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
-from .commands import QUERY_HANDLERS
+from .commands import MUTATION_HANDLERS, QUERY_HANDLERS
 from .roster import NOUN_VERBS, TOP_LEVEL_VERBS
 
 PYTHON_OWNED_DIRECT_PATHS: frozenset[tuple[str, ...]] = frozenset(
-    {("doctor",), ("--version",), ("-V",), ("--help",), ("-h",)} | set(QUERY_HANDLERS)
+    {("doctor",), ("--version",), ("-V",), ("--help",), ("-h",)} | set(QUERY_HANDLERS) | set(MUTATION_HANDLERS)
 )
 
 

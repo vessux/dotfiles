@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .output import Palette
 from .proc import CommandResult, CommandRunner
 
 _PREGRILL_RE = re.compile(r"clerk-pregrill: ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)")
@@ -64,6 +65,20 @@ def _bd_issue_json_or_usage(runner: CommandRunner, id_: str, verb: str, hint: st
     return obj
 
 
+def _bd_issue_json_or_backend(runner: CommandRunner, id_: str, message: str) -> dict[str, Any]:
+    result = runner.run(["bd", "show", id_, "--readonly", "--json"])
+    _emit_stderr(result)
+    if result.returncode != 0:
+        backend_fail(message)
+    try:
+        data = json.loads(result.stdout or "null")
+    except json.JSONDecodeError:
+        backend_fail(message)
+    if not isinstance(data, list) or not data or not isinstance(data[0], dict):
+        backend_fail(message)
+    return data[0]
+
+
 def _pregrill_epoch(value: str) -> int | None:
     try:
         dt = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
@@ -91,6 +106,113 @@ def _dump_json(value: Any, *, pretty: bool) -> str:
     if pretty:
         return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n"
+
+
+def _success(message: str, env: Mapping[str, str]) -> None:
+    palette = Palette.from_env(env)
+    print(f"{palette.green}clerk:{palette.reset} {message}")
+
+
+def _body_guard(updated_at: str, body: str) -> str:
+    # Match legacy command-substitution behavior: trailing newlines are stripped before
+    # hashing the guarded body, while embedded newlines remain significant.
+    guard_body = body.rstrip("\n")
+    return hashlib.sha256(updated_at.encode() + b"\0" + guard_body.encode()).hexdigest()
+
+
+def _read_stdin_trimmed() -> str:
+    return sys.stdin.read().rstrip("\n")
+
+
+def _read_file_trimmed(path: str, verb: str, *, body: bool = False) -> str:
+    file_path = Path(path)
+    if not file_path.is_file():
+        if body:
+            usage(f"{verb}: body file not found: {path}")
+        usage(f"{verb}: file not found: {path}")
+    return file_path.read_text().rstrip("\n")
+
+
+def _read_nonempty_text_arg(verb: str, argv: Sequence[str]) -> str:
+    input_source = "stdin"
+    file = ""
+    input_seen = False
+    args = list(argv)
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--file":
+            if i + 1 >= len(args):
+                usage(f"{verb}: --file needs a path")
+            if input_seen:
+                usage(f"{verb}: choose only one input source")
+            input_source = "file"
+            input_seen = True
+            file = args[i + 1]
+            i += 2
+        elif arg == "--stdin":
+            if input_seen:
+                usage(f"{verb}: choose only one input source")
+            input_source = "stdin"
+            input_seen = True
+            i += 1
+        else:
+            usage(f"{verb}: unknown argument '{arg}'")
+    text = _read_file_trimmed(file, verb) if input_source == "file" else _read_stdin_trimmed()
+    if not re.search(r"\S", text):
+        usage(f"{verb}: note text must be non-empty")
+    return text
+
+
+def _status_labels(obj: Mapping[str, Any]) -> dict[str, Any]:
+    return {"status": obj.get("status"), "labels": obj.get("labels")}
+
+
+def _bd_custom_types_csv(runner: CommandRunner) -> str:
+    result = runner.run(["bd", "config", "get", "types.custom"])
+    current = result.stdout.strip() if result.returncode == 0 else ""
+    if "(not set)" in current:
+        return ""
+    return current
+
+
+def _bd_ensure_impediment_type(runner: CommandRunner) -> None:
+    current = _bd_custom_types_csv(runner)
+    values = [value.strip() for value in current.split(",") if value.strip()]
+    if "impediment" in values:
+        return
+    next_value = "impediment" if not current else f"{current},impediment"
+    runner.run(["bd", "config", "set", "types.custom", next_value])
+
+
+def _clerk_type_valid(runner: CommandRunner, type_: str) -> bool:
+    if type_ in {"bug", "feature", "task", "epic", "chore", "decision"}:
+        return True
+    if type_ == "impediment":
+        return True
+    return type_ in [value.strip() for value in _bd_custom_types_csv(runner).split(",")]
+
+
+def _build_pregrill_note(ts: str, decisions: Sequence[str], premises: Sequence[str], criteria: Sequence[str]) -> str:
+    lines = [f"clerk-pregrill: {ts}", "Open decisions:"]
+    lines.extend([f"- {decision}" for decision in decisions] or ["- (none)"])
+    lines.append("Premises:")
+    if premises:
+        for premise in premises:
+            if "|" in premise:
+                text, verification = premise.split("|", 1)
+            else:
+                text, verification = premise, "not yet specified"
+            lines.append(f"- {text} (verify: {verification})")
+    else:
+        lines.append("- (none)")
+    lines.append("Draft acceptance criteria:")
+    lines.extend([f"- {criterion}" for criterion in criteria] or ["- (none)"])
+    return "\n".join(lines)
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _returned_short_from_id(id_: str) -> str:
@@ -197,7 +319,7 @@ def cmd_inbox_show(_backend: str, root: Path, argv: Sequence[str], runner: Comma
         # Legacy computes this through jq -r inside command substitution, so trailing
         # newlines are stripped for the guard even though the rendered body stays intact.
         guard_body = body.rstrip("\n")
-        guard = hashlib.sha256(updated.encode() + b"\0" + guard_body.encode()).hexdigest()
+        guard = _body_guard(updated, guard_body)
         rendered = {
             "id": obj.get("id"),
             "title": obj.get("title"),
@@ -444,6 +566,241 @@ def cmd_backlog_show(backend: str, root: Path, argv: Sequence[str], runner: Comm
     return 0
 
 
+def cmd_capture(backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    if not argv:
+        usage('clerk capture: missing title — usage: clerk capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>]')
+    title = argv[0]
+    use_stdin = False
+    use_impediment = False
+    issue_type = ""
+    parent = ""
+    blockers: list[str] = []
+    args = list(argv[1:])
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--stdin":
+            use_stdin = True
+            i += 1
+        elif arg == "--impediment":
+            use_impediment = True
+            i += 1
+        elif arg == "--type":
+            if i + 1 >= len(args):
+                usage("clerk capture: --type needs a value")
+            issue_type = args[i + 1]
+            i += 2
+        elif arg == "--parent":
+            if i + 1 >= len(args):
+                usage("clerk capture: --parent needs a Work graph id")
+            parent = args[i + 1]
+            i += 2
+        elif arg == "--blocked-by":
+            if i + 1 >= len(args):
+                usage("clerk capture: --blocked-by needs a Work graph sibling id")
+            blockers.append(args[i + 1])
+            i += 2
+        else:
+            usage(f'clerk capture: unknown argument \'{arg}\' — usage: clerk capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>]')
+
+    if use_impediment and issue_type:
+        usage("clerk capture: --impediment is compatibility sugar for --type impediment; do not combine them")
+    if use_impediment:
+        issue_type = "impediment"
+    if issue_type and not _clerk_type_valid(runner, issue_type):
+        usage(f"clerk capture: invalid --type '{issue_type}' — use a canonical core type or configure types.custom")
+    if blockers and not parent:
+        usage("clerk capture: --blocked-by requires --parent so the new dependency edge is sibling-only")
+
+    if backend not in {"bd", "gh"}:
+        backend_fail(f"capture failed — unsupported backend {backend}")
+    if issue_type == "impediment":
+        _bd_ensure_impediment_type(runner)
+    if parent:
+        parent_json = _bd_issue_json_or_usage(runner, parent, "clerk capture")
+        if not _is_nonclosed_work(parent_json):
+            usage(f"clerk capture: --parent {parent} must name a non-closed Work graph item")
+    for blocker in blockers:
+        blocker_json = _bd_issue_json_or_usage(runner, blocker, "clerk capture")
+        if not _is_nonclosed_work(blocker_json):
+            usage(f"clerk capture: --blocked-by {blocker} must name a non-closed Work graph item")
+        if parent and (blocker_json.get("parent") or "") != parent:
+            usage(f"clerk capture: --blocked-by {blocker} must be a sibling under {parent}")
+
+    bd_args = ["bd", "create", title, "--silent"]
+    if use_stdin:
+        bd_args.append("--stdin")
+    if issue_type:
+        bd_args.extend(["--type", issue_type])
+    if parent:
+        bd_args.extend(["--parent", parent])
+    for blocker in blockers:
+        bd_args.extend(["--deps", blocker])
+    result = runner.run(bd_args)
+    _emit_stderr(result)
+    if result.returncode != 0:
+        backend_fail(f'capture failed — bd create did not succeed for "{title}"')
+    id_ = result.stdout.strip()
+    seen = _bd_issue_json_or_backend(runner, id_, f"capture failed — {id_} was not confirmed after creation")
+    if seen.get("id") != id_:
+        backend_fail(f"capture failed — {id_} was not confirmed after creation")
+    suffix = " (type: impediment)" if issue_type == "impediment" else ""
+    _success(f"filed {id_}{suffix}", env)
+    return 0
+
+
+def cmd_inbox_pregrill(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    if not argv:
+        usage('clerk inbox pregrill: missing id — usage: clerk inbox pregrill <id> [--decision "<text>"]... [--premise "<text>|<verification>"]... [--criterion "<text>"]...')
+    id_ = argv[0]
+    decisions: list[str] = []
+    premises: list[str] = []
+    criteria: list[str] = []
+    args = list(argv[1:])
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--decision":
+            if i + 1 >= len(args):
+                usage("clerk inbox pregrill: --decision needs a value")
+            decisions.append(args[i + 1])
+            i += 2
+        elif arg == "--premise":
+            if i + 1 >= len(args):
+                usage("clerk inbox pregrill: --premise needs a value")
+            premises.append(args[i + 1])
+            i += 2
+        elif arg == "--criterion":
+            if i + 1 >= len(args):
+                usage("clerk inbox pregrill: --criterion needs a value")
+            criteria.append(args[i + 1])
+            i += 2
+        else:
+            usage(f"clerk inbox pregrill: unknown argument '{arg}'")
+    before = _bd_issue_json_or_usage(runner, id_, "clerk inbox pregrill")
+    status_labels_before = _status_labels(before)
+    ts = _utc_timestamp()
+    note = _build_pregrill_note(ts, decisions, premises, criteria)
+    result = runner.run(["bd", "update", id_, "--append-notes", note])
+    _emit_stderr(result)
+    if result.returncode != 0:
+        backend_fail(f"inbox pregrill failed — bd update --append-notes did not succeed for {id_}")
+    after = _bd_issue_json_or_backend(runner, id_, f"inbox pregrill failed — {id_} status/labels changed (not state-neutral)")
+    if status_labels_before != _status_labels(after):
+        backend_fail(f"inbox pregrill failed — {id_} status/labels changed (not state-neutral)")
+    _success(f"pregrilled {id_} (dated {ts})", env)
+    return 0
+
+
+def cmd_inbox_note(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    if not argv:
+        usage("clerk inbox note: missing id — usage: clerk inbox note <id> [--file <path>|--stdin]")
+    id_ = argv[0]
+    _bd_issue_json_or_usage(runner, id_, "clerk inbox note")
+    text = _read_nonempty_text_arg("clerk inbox note", argv[1:])
+    before = _bd_issue_json_or_usage(runner, id_, "clerk inbox note")
+    status_labels_before = _status_labels(before)
+    result = runner.run(["bd", "update", id_, "--append-notes", text])
+    _emit_stderr(result)
+    if result.returncode != 0:
+        backend_fail(f"inbox note failed — bd update --append-notes did not succeed for {id_}")
+    after = _bd_issue_json_or_backend(runner, id_, f"inbox note failed — {id_} state changed while appending note")
+    if status_labels_before != _status_labels(after):
+        backend_fail(f"inbox note failed — {id_} state changed while appending note")
+    _success(f"noted {id_}", env)
+    return 0
+
+
+def cmd_inbox_update(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    if not argv:
+        usage("clerk inbox update: missing id — usage: clerk inbox update <id> [--title <title>] [--type <type>] [--body-file <path>|--stdin --body-guard <guard>]")
+    id_ = argv[0]
+    title = ""
+    type_ = ""
+    body_file = ""
+    guard = ""
+    have_body = False
+    use_stdin = False
+    args = list(argv[1:])
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--title":
+            if i + 1 >= len(args):
+                usage("clerk inbox update: --title needs a value")
+            title = args[i + 1]
+            i += 2
+        elif arg == "--type":
+            if i + 1 >= len(args):
+                usage("clerk inbox update: --type needs a value")
+            type_ = args[i + 1]
+            i += 2
+        elif arg == "--body-file":
+            if i + 1 >= len(args):
+                usage("clerk inbox update: --body-file needs a path")
+            if have_body:
+                usage("clerk inbox update: choose only one of --stdin or --body-file")
+            body_file = args[i + 1]
+            have_body = True
+            i += 2
+        elif arg == "--stdin":
+            if have_body:
+                usage("clerk inbox update: choose only one of --stdin or --body-file")
+            use_stdin = True
+            have_body = True
+            i += 1
+        elif arg == "--body-guard":
+            if i + 1 >= len(args):
+                usage("clerk inbox update: --body-guard needs a value from clerk inbox show --json")
+            guard = args[i + 1]
+            i += 2
+        else:
+            usage(f"clerk inbox update: unknown argument '{arg}'")
+    if not title and not type_ and not have_body:
+        usage("clerk inbox update: nothing to update")
+    if type_ and not _clerk_type_valid(runner, type_):
+        usage(f"clerk inbox update: invalid --type '{type_}' — use a canonical core type or configure types.custom")
+    if type_ == "impediment":
+        _bd_ensure_impediment_type(runner)
+
+    obj = _bd_issue_json_or_usage(runner, id_, "clerk inbox update")
+    update_args = ["bd", "update", id_]
+    if title:
+        update_args.extend(["--title", title])
+    if type_:
+        update_args.extend(["--type", type_])
+    body = ""
+    if have_body:
+        if not guard:
+            usage("clerk inbox update: replacing the body requires --body-guard from clerk inbox show --json")
+        current_guard = _body_guard(str(obj.get("updated_at") or ""), str(obj.get("description") or ""))
+        if guard != current_guard:
+            usage("clerk inbox update: stale body guard — rerun clerk inbox show --json and retry")
+        body = _read_stdin_trimmed() if use_stdin else _read_file_trimmed(body_file, "clerk inbox update", body=True)
+        update_args.extend(["--description", body, "--allow-empty-description"])
+    result = runner.run(update_args)
+    _emit_stderr(result)
+    if result.returncode != 0:
+        backend_fail(f"inbox update failed — bd update did not succeed for {id_}")
+    after = _bd_issue_json_or_backend(runner, id_, f"inbox update failed — {id_} was not confirmed updated")
+    if title and after.get("title") != title:
+        backend_fail(f"inbox update failed — {id_} was not confirmed updated")
+    if type_ and after.get("issue_type") != type_:
+        backend_fail(f"inbox update failed — {id_} was not confirmed updated")
+    if have_body and str(after.get("description") or "").rstrip("\n") != body:
+        backend_fail(f"inbox update failed — {id_} was not confirmed updated")
+    _success(f"updated {id_}", env)
+    return 0
+
+
+MUTATION_HANDLERS = {
+    ("capture",): cmd_capture,
+    ("inbox", "pregrill"): cmd_inbox_pregrill,
+    ("inbox", "note"): cmd_inbox_note,
+    ("inbox", "update"): cmd_inbox_update,
+}
+
+
 QUERY_HANDLERS = {
     ("inbox", "list"): cmd_inbox_list,
     ("inbox", "show"): cmd_inbox_show,
@@ -459,6 +816,14 @@ QUERY_HANDLERS = {
 
 def run_query(path: tuple[str, ...], backend: str, root: Path, argv: Sequence[str], env: Mapping[str, str] = os.environ, runner: CommandRunner | None = None) -> int:
     handler = QUERY_HANDLERS[path]
+    try:
+        return handler(backend, root, argv, runner or CommandRunner(), env)
+    except ClerkExit as exc:
+        return exc.code
+
+
+def run_mutation(path: tuple[str, ...], backend: str, root: Path, argv: Sequence[str], env: Mapping[str, str] = os.environ, runner: CommandRunner | None = None) -> int:
+    handler = MUTATION_HANDLERS[path]
     try:
         return handler(backend, root, argv, runner or CommandRunner(), env)
     except ClerkExit as exc:
