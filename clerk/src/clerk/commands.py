@@ -377,6 +377,27 @@ def _open_children(obj: Mapping[str, Any]) -> list[Any]:
     return [edge for edge in obj.get("dependents") or [] if isinstance(edge, dict) and _edge_type(edge) == "parent-child" and (edge.get("status") or "open") != "closed"]
 
 
+def _is_ready_promoted(obj: Mapping[str, Any]) -> bool:
+    return "stage:ready" in (obj.get("labels") or []) or str(obj.get("close_reason") or "").startswith("promoted")
+
+
+def _is_active_inbox(obj: Mapping[str, Any]) -> bool:
+    return obj.get("status") in {"open", "in_progress"} and "stage:ready" not in (obj.get("labels") or [])
+
+
+def _edge_ids(obj: Mapping[str, Any], collection: str, edge_type: str) -> list[str]:
+    return [str(edge["id"]) for edge in obj.get(collection) or [] if isinstance(edge, dict) and _edge_type(edge) == edge_type and edge.get("id")]
+
+
+def _has_block_edge(obj: Mapping[str, Any], blocker: str) -> bool:
+    return blocker in _edge_ids(obj, "dependencies", "blocks")
+
+
+def _claim_conflict(message: str) -> None:
+    print(message, file=sys.stderr)
+    raise ClerkExit(5)
+
+
 def _graph_usage_text(kind: str) -> str:
     target = "parent" if kind in {"children", "frontier"} else "id"
     display = "<parent>" if target == "parent" else "<id>"
@@ -649,6 +670,264 @@ def cmd_capture(backend: str, _root: Path, argv: Sequence[str], runner: CommandR
     return 0
 
 
+def _issue_parent_id(runner: CommandRunner, id_: str) -> str:
+    obj = _bd_issue_json_or_usage(runner, id_, "clerk inbox graph")
+    return str(obj.get("parent") or "")
+
+
+def _parent_cycle_would_form(runner: CommandRunner, child: str, parent: str) -> bool:
+    seen: set[str] = set()
+    cur = parent
+    while cur:
+        if cur == child:
+            return True
+        if cur in seen:
+            return True
+        seen.add(cur)
+        cur = _issue_parent_id(runner, cur)
+    return False
+
+
+def _invalid_dep_edges_for_parent_move(runner: CommandRunner, child: str, new_parent: str, child_json: Mapping[str, Any]) -> list[tuple[str, str]]:
+    invalid: list[tuple[str, str]] = []
+    for blocker in _edge_ids(child_json, "dependencies", "blocks"):
+        other_parent = _issue_parent_id(runner, blocker)
+        if not new_parent or other_parent != new_parent:
+            invalid.append((child, blocker))
+    for dependent in _edge_ids(child_json, "dependents", "blocks"):
+        other_parent = _issue_parent_id(runner, dependent)
+        if not new_parent or other_parent != new_parent:
+            invalid.append((dependent, child))
+    return invalid
+
+
+def _dep_path_exists(runner: CommandRunner, start: str, target: str, seen: set[str] | None = None) -> bool:
+    seen = seen or set()
+    if start in seen:
+        return False
+    seen.add(start)
+    obj = _bd_issue_json_or_usage(runner, start, "clerk inbox graph")
+    for blocker in _edge_ids(obj, "dependencies", "blocks"):
+        if blocker == target or _dep_path_exists(runner, blocker, target, seen):
+            return True
+    return False
+
+
+def _claim_current_actor(runner: CommandRunner, root: Path, env: Mapping[str, str]) -> str:
+    if env.get("BEADS_ACTOR"):
+        return str(env["BEADS_ACTOR"])
+    result = _git(runner, root, ["config", "user.name"])
+    name = result.stdout.strip() if result.returncode == 0 else ""
+    return name or str(env.get("USER") or "")
+
+
+def cmd_inbox_parent(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    if not argv:
+        usage("clerk inbox parent: usage: clerk inbox parent set <child> <parent> | clerk inbox parent clear <child>")
+    action = argv[0]
+    drop = False
+    if action == "set":
+        if len(argv) < 3:
+            usage("clerk inbox parent set: usage: clerk inbox parent set <child> <parent> [--drop-invalid-deps]")
+        child, parent = argv[1], argv[2]
+        rest = list(argv[3:])
+    elif action == "clear":
+        if len(argv) < 2:
+            usage("clerk inbox parent clear: usage: clerk inbox parent clear <child> [--drop-invalid-deps]")
+        child, parent = argv[1], ""
+        rest = list(argv[2:])
+    else:
+        usage("clerk inbox parent: usage: clerk inbox parent set <child> <parent> | clerk inbox parent clear <child>")
+    for arg in rest:
+        if arg == "--drop-invalid-deps":
+            drop = True
+        else:
+            usage(f"clerk inbox parent {action}: unknown argument '{arg}'")
+
+    child_json = _bd_issue_json_or_usage(runner, child, f"clerk inbox parent {action}")
+    if not _is_open_inbox(child_json):
+        usage(f"clerk inbox parent {action}: {child} must be an open inbox item")
+    if parent:
+        parent_json = _bd_issue_json_or_usage(runner, parent, "clerk inbox parent set")
+        if not _is_open_inbox(parent_json):
+            usage(f"clerk inbox parent set: {parent} must be an open inbox parent")
+        if _parent_cycle_would_form(runner, child, parent):
+            usage(f"clerk inbox parent set: refusing parent cycle ({child} under {parent})")
+
+    invalid = _invalid_dep_edges_for_parent_move(runner, child, parent, child_json)
+    if invalid and not drop:
+        usage(f"clerk inbox parent {action}: move would leave non-sibling dependency edges — rerun with --drop-invalid-deps to remove them")
+    for dependent, blocker in invalid:
+        result = runner.run(["bd", "dep", "remove", dependent, blocker])
+        _emit_stderr(result)
+        if result.returncode != 0:
+            backend_fail(f"inbox parent {action} failed — could not drop invalid dependency {dependent} -> {blocker}")
+
+    result = runner.run(["bd", "update", child, "--parent", parent])
+    _emit_stderr(result)
+    if result.returncode != 0:
+        backend_fail(f"inbox parent {action} failed — bd update --parent did not succeed for {child}")
+    after_child = _bd_issue_json_or_backend(runner, child, f"inbox parent {action} failed — parent was not confirmed for {child}")
+    actual = str(after_child.get("parent") or "")
+    if actual != parent:
+        backend_fail(f"inbox parent {action} failed — parent was not confirmed for {child}")
+    for dependent, blocker in invalid:
+        dependent_json = after_child if dependent == child else _bd_issue_json_or_backend(
+            runner,
+            dependent,
+            f"inbox parent {action} failed — dropped invalid dependency was not confirmed for {dependent} -> {blocker}",
+        )
+        if _has_block_edge(dependent_json, blocker):
+            backend_fail(f"inbox parent {action} failed — dropped invalid dependency was not confirmed for {dependent} -> {blocker}")
+    _success(f"parent set {child} -> {parent}" if parent else f"parent cleared {child}", env)
+    return 0
+
+
+def cmd_inbox_dep(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    if not argv:
+        usage("clerk inbox dep: usage: clerk inbox dep add <child> <blocker> | clerk inbox dep remove <child> <blocker>")
+    action = argv[0]
+    if action not in {"add", "remove"} or len(argv) < 3:
+        usage(f"clerk inbox dep {action}: usage: clerk inbox dep {action} <child> <blocker>" if action in {"add", "remove"} else "clerk inbox dep: usage: clerk inbox dep add <child> <blocker> | clerk inbox dep remove <child> <blocker>")
+    child, blocker = argv[1], argv[2]
+    if len(argv) > 3:
+        usage(f"clerk inbox dep {action}: unknown argument '{argv[3]}'")
+    if child == blocker:
+        usage(f"clerk inbox dep {action}: an item cannot block itself")
+    child_json = _bd_issue_json_or_usage(runner, child, f"clerk inbox dep {action}")
+    blocker_json = _bd_issue_json_or_usage(runner, blocker, f"clerk inbox dep {action}")
+    if not _is_open_inbox(child_json):
+        usage(f"clerk inbox dep {action}: {child} must be an open inbox item")
+    if _is_ready_promoted(blocker_json):
+        usage(f"clerk inbox dep {action}: {blocker} must be an inbox item, not a ready/promoted item")
+    child_parent = str(child_json.get("parent") or "")
+    blocker_parent = str(blocker_json.get("parent") or "")
+    if not child_parent or child_parent != blocker_parent:
+        usage(f"clerk inbox dep {action}: dependency edges are sibling-only; {child} and {blocker} must share the same immediate parent")
+
+    if action == "add":
+        if _dep_path_exists(runner, blocker, child):
+            usage(f"clerk inbox dep add: refusing dependency cycle ({child} blocked by {blocker})")
+        result = runner.run(["bd", "dep", "add", child, blocker])
+        _emit_stderr(result)
+        if result.returncode != 0:
+            backend_fail(f"inbox dep add failed — bd dep add did not succeed for {child} <- {blocker}")
+        after = _bd_issue_json_or_backend(runner, child, f"inbox dep add failed — edge was not confirmed for {child} <- {blocker}")
+        if not _has_block_edge(after, blocker):
+            backend_fail(f"inbox dep add failed — edge was not confirmed for {child} <- {blocker}")
+        _success(f"dependency added {child} blocked-by {blocker}", env)
+    else:
+        result = runner.run(["bd", "dep", "remove", child, blocker])
+        _emit_stderr(result)
+        if result.returncode != 0:
+            backend_fail(f"inbox dep remove failed — bd dep remove did not succeed for {child} <- {blocker}")
+        after = _bd_issue_json_or_backend(runner, child, f"inbox dep remove failed — edge still exists for {child} <- {blocker}")
+        if _has_block_edge(after, blocker):
+            backend_fail(f"inbox dep remove failed — edge still exists for {child} <- {blocker}")
+        _success(f"dependency removed {child} blocked-by {blocker}", env)
+    return 0
+
+
+def cmd_inbox_claim(_backend: str, root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    if not argv:
+        usage("clerk inbox claim: missing id — usage: clerk inbox claim <id>")
+    id_ = argv[0]
+    if len(argv) > 1:
+        usage(f"clerk inbox claim: unknown argument '{argv[1]}' — usage: clerk inbox claim <id>")
+    obj = _bd_issue_json_or_usage(runner, id_, "clerk inbox claim")
+    if not _is_active_inbox(obj):
+        usage(f"clerk inbox claim: {id_} must be an open inbox item (not ready/promoted/closed)")
+    holder = str(obj.get("assignee") or "")
+    if holder:
+        me = _claim_current_actor(runner, root, env)
+        if holder == me:
+            _success(f"{id_} already claimed by you", env)
+            return 0
+        _claim_conflict(f"clerk: inbox claim refused — {id_} is already claimed by {holder}")
+    if not _is_open_inbox(obj):
+        usage(f"clerk inbox claim: {id_} must be an open inbox item (not already in progress)")
+    if _open_blockers(obj):
+        usage(f"clerk inbox claim: {id_} has open blockers — claim an unblocked frontier item")
+    if _open_children(obj):
+        usage(f"clerk inbox claim: {id_} has open children — claim a leaf item, not its parent")
+    me = _claim_current_actor(runner, root, env)
+    result = runner.run(["bd", "update", id_, "--claim"])
+    _emit_stderr(result)
+    if result.returncode != 0:
+        latest = _bd_issue_json_or_usage(runner, id_, "clerk inbox claim")
+        holder = str(latest.get("assignee") or "")
+        if holder and holder != me:
+            _claim_conflict(f"clerk: inbox claim refused — {id_} is already claimed by {holder}")
+        backend_fail(f"inbox claim failed — bd update --claim did not succeed for {id_}")
+    check = str(_bd_issue_json_or_backend(runner, id_, f"inbox claim failed — {id_} was not confirmed claimed by {me}").get("assignee") or "")
+    if check != me:
+        backend_fail(f"inbox claim failed — {id_} was not confirmed claimed by {me}")
+    _success(f"claimed {id_}", env)
+    return 0
+
+
+def cmd_inbox_release(_backend: str, root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    if not argv:
+        usage("clerk inbox release: missing id — usage: clerk inbox release <id>")
+    id_ = argv[0]
+    if len(argv) > 1:
+        usage(f"clerk inbox release: unknown argument '{argv[1]}' — usage: clerk inbox release <id>")
+    obj = _bd_issue_json_or_usage(runner, id_, "clerk inbox release")
+    me = _claim_current_actor(runner, root, env)
+    holder = str(obj.get("assignee") or "")
+    if not holder:
+        _success(f"{id_} is not claimed — nothing to release", env)
+        return 0
+    if holder != me:
+        _claim_conflict(f"clerk: inbox release refused — {id_} is claimed by {holder}")
+    result = runner.run(["bd", "update", id_, "--status", "open", "--assignee", ""])
+    _emit_stderr(result)
+    if result.returncode != 0:
+        backend_fail(f"inbox release failed — bd update --status open --assignee did not succeed for {id_}")
+    check = str(_bd_issue_json_or_backend(runner, id_, f"inbox release failed — {id_} was not confirmed unclaimed").get("assignee") or "")
+    if check:
+        backend_fail(f"inbox release failed — {id_} was not confirmed unclaimed")
+    _success(f"released {id_}", env)
+    return 0
+
+
+def cmd_inbox_resolve(_backend: str, root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    if not argv:
+        usage("clerk inbox resolve: missing id — usage: clerk inbox resolve <id> [--file <path>|--stdin]")
+    id_ = argv[0]
+    obj = _bd_issue_json_or_usage(runner, id_, "clerk inbox resolve")
+    if not _is_active_inbox(obj):
+        usage(f"clerk inbox resolve: {id_} must be an open inbox item (not ready/promoted/closed)")
+    holder = str(obj.get("assignee") or "")
+    if holder:
+        me = _claim_current_actor(runner, root, env)
+        if holder != me:
+            _claim_conflict(f"clerk: inbox resolve refused — {id_} is claimed by {holder}")
+    if _open_blockers(obj):
+        usage(f"clerk inbox resolve: {id_} has open blockers — resolve blockers first")
+    if _open_children(obj):
+        usage(f"clerk inbox resolve: {id_} has open children — resolve or reparent children first")
+    text = _read_nonempty_text_arg("clerk inbox resolve", argv[1:])
+    ts = _utc_timestamp()
+    note = f"clerk-resolution: {ts}\n{text}"
+    result = runner.run(["bd", "update", id_, "--append-notes", note])
+    _emit_stderr(result)
+    if result.returncode != 0:
+        backend_fail(f"inbox resolve failed — could not append resolution note for {id_}")
+    result = runner.run(["bd", "close", id_, "--reason", "resolved"])
+    _emit_stderr(result)
+    if result.returncode != 0:
+        backend_fail(f"inbox resolve failed — bd close did not succeed for {id_}")
+    after = _bd_issue_json_or_backend(runner, id_, f"inbox resolve failed — {id_} was not confirmed closed")
+    status = str(after.get("status") or "")
+    if status != "closed":
+        backend_fail(f"inbox resolve failed — {id_} was not confirmed closed")
+    if note not in str(after.get("notes") or ""):
+        backend_fail(f"inbox resolve failed — resolution note was not confirmed for {id_}")
+    _success(f"resolved {id_}", env)
+    return 0
+
+
 def cmd_inbox_pregrill(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
     if not argv:
         usage('clerk inbox pregrill: missing id — usage: clerk inbox pregrill <id> [--decision "<text>"]... [--premise "<text>|<verification>"]... [--criterion "<text>"]...')
@@ -796,8 +1075,13 @@ def cmd_inbox_update(_backend: str, _root: Path, argv: Sequence[str], runner: Co
 MUTATION_HANDLERS = {
     ("capture",): cmd_capture,
     ("inbox", "pregrill"): cmd_inbox_pregrill,
+    ("inbox", "parent"): cmd_inbox_parent,
+    ("inbox", "dep"): cmd_inbox_dep,
+    ("inbox", "claim"): cmd_inbox_claim,
+    ("inbox", "release"): cmd_inbox_release,
     ("inbox", "note"): cmd_inbox_note,
     ("inbox", "update"): cmd_inbox_update,
+    ("inbox", "resolve"): cmd_inbox_resolve,
 }
 
 
