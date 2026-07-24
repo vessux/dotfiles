@@ -89,6 +89,117 @@ class QueryCommandTests(unittest.TestCase):
         self.assertEqual(out, 'Duplicate candidates — 1 pair(s):\n  a "one"  ~  b "two"  (score: 0.75)\n')
         self.assertEqual(calls, [["bd", "find-duplicates", "--readonly", "--json"]])
 
+    def test_inbox_graph_children_blockers_and_blocked_normalize_json(self):
+        parent = [{
+            "id": "p",
+            "title": "Parent",
+            "status": "open",
+            "issue_type": "epic",
+            "dependents": [
+                {"dependency_type": "parent-child", "id": "a"},
+                {"dependency_type": "blocks", "id": "unrelated"},
+            ],
+        }]
+        child = [{
+            "id": "a",
+            "title": "A",
+            "status": "open",
+            "issue_type": "task",
+            "labels": ["x"],
+            "parent": "p",
+            "created_at": "c",
+            "updated_at": "u",
+        }]
+        code, out, err, calls = self.invoke(
+            ("inbox", "children"), "bd", ["p"], [lambda args: ok(args, json.dumps(parent)), lambda args: ok(args, json.dumps(child))]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertEqual(json.loads(out), {
+            "parent": {"id": "p", "title": "Parent", "status": "open", "type": "epic", "assignee": "", "labels": [], "parent": None, "created_at": None, "updated_at": None},
+            "items": [{"id": "a", "title": "A", "status": "open", "type": "task", "assignee": "", "labels": ["x"], "parent": "p", "created_at": "c", "updated_at": "u"}],
+        })
+        self.assertEqual(calls, [["bd", "show", "p", "--readonly", "--json"], ["bd", "show", "a", "--readonly", "--json"]])
+
+        blocker = [{"id": "blocker", "title": "Blocker", "status": "open", "issue_type": "task"}]
+        blocked = [{"id": "blocked", "title": "Blocked", "status": "open", "issue_type": "task", "dependencies": [{"dependency_type": "blocks", "id": "blocker"}]}]
+        code, out, _, calls = self.invoke(
+            ("inbox", "blockers"), "bd", ["blocked", "--pretty"], [lambda args: ok(args, json.dumps(blocked)), lambda args: ok(args, json.dumps(blocker))]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn('\n  "items"', out)
+        self.assertEqual(json.loads(out)["items"][0]["id"], "blocker")
+        self.assertEqual(calls, [["bd", "show", "blocked", "--readonly", "--json"], ["bd", "show", "blocker", "--readonly", "--json"]])
+
+        reverse = [{"id": "blocker", "title": "Blocker", "status": "open", "issue_type": "task", "dependents": [{"dependency_type": "blocks", "id": "blocked"}]}]
+        code, out, _, calls = self.invoke(
+            ("inbox", "blocked"), "bd", ["blocker"], [lambda args: ok(args, json.dumps(reverse)), lambda args: ok(args, json.dumps(blocked))]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["items"][0]["id"], "blocked")
+        self.assertEqual(calls, [["bd", "show", "blocker", "--readonly", "--json"], ["bd", "show", "blocked", "--readonly", "--json"]])
+
+    def test_inbox_frontier_filters_empty_blocked_claimed_ready_and_closed_graphs(self):
+        parent = [{"id": "p", "title": "Parent", "status": "open", "issue_type": "epic", "dependents": [
+            {"dependency_type": "parent-child", "id": "free"},
+            {"dependency_type": "parent-child", "id": "blocked"},
+            {"dependency_type": "parent-child", "id": "claimed"},
+            {"dependency_type": "parent-child", "id": "closed"},
+            {"dependency_type": "parent-child", "id": "ready"},
+            {"dependency_type": "parent-child", "id": "closed_blocker"},
+        ]}]
+        details = {
+            "free": [{"id": "free", "title": "Free", "status": "open", "issue_type": "task", "parent": "p"}],
+            "blocked": [{"id": "blocked", "title": "Blocked", "status": "open", "issue_type": "task", "dependencies": [{"dependency_type": "blocks", "id": "free", "status": "open"}]}],
+            "claimed": [{"id": "claimed", "title": "Claimed", "status": "open", "issue_type": "task", "assignee": "other"}],
+            "closed": [{"id": "closed", "title": "Closed", "status": "closed", "issue_type": "task"}],
+            "ready": [{"id": "ready", "title": "Ready", "status": "open", "issue_type": "task", "labels": ["stage:ready"]}],
+            "closed_blocker": [{"id": "closed_blocker", "title": "Closed blocker", "status": "open", "issue_type": "task", "dependencies": [{"dependency_type": "blocks", "id": "free", "status": "closed"}]}],
+        }
+
+        def response(args):
+            if args[2] == "p":
+                return ok(args, json.dumps(parent))
+            return ok(args, json.dumps(details[args[2]]))
+
+        code, out, _, calls = self.invoke(("inbox", "frontier"), "bd", ["p"], [response] * 7)
+        self.assertEqual(code, 0)
+        self.assertEqual([item["id"] for item in json.loads(out)["items"]], ["free", "closed_blocker"])
+        self.assertTrue(all(call[:3] == ["bd", "show", call[2]] and "--readonly" in call for call in calls))
+
+        empty_parent = [{"id": "empty", "title": "Empty", "status": "open", "issue_type": "epic", "dependents": []}]
+        code, out, _, calls = self.invoke(("inbox", "frontier"), "bd", ["empty"], [lambda args: ok(args, json.dumps(empty_parent))])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["items"], [])
+        self.assertEqual(calls, [["bd", "show", "empty", "--readonly", "--json"]])
+
+        closed_parent = [{"id": "p", "title": "Parent", "status": "closed", "issue_type": "epic"}]
+        code, _, err, _ = self.invoke(("inbox", "frontier"), "bd", ["p"], [lambda args: ok(args, json.dumps(closed_parent))])
+        self.assertEqual(code, 2)
+        self.assertIn("must be a non-closed Work graph parent", err)
+
+    def test_inbox_graph_usage_not_found_and_backend_failures(self):
+        code, _, err, calls = self.invoke(("inbox", "children"), "bd", [], [])
+        self.assertEqual(code, 2)
+        self.assertIn("missing parent id", err)
+        self.assertEqual(calls, [])
+
+        code, _, err, calls = self.invoke(("inbox", "frontier"), "bd", ["p", "--wat"], [])
+        self.assertEqual(code, 2)
+        self.assertIn("unknown argument '--wat'", err)
+        self.assertEqual(calls, [])
+
+        code, _, err, calls = self.invoke(("inbox", "blockers"), "bd", ["missing"], [lambda args: fail(args, "not found")])
+        self.assertEqual(code, 2)
+        self.assertIn("clerk inbox blockers: missing not found", err)
+        self.assertEqual(calls, [["bd", "show", "missing", "--readonly", "--json"]])
+
+        code, _, err, calls = self.invoke(("inbox", "blocked"), "bd", ["item"], [lambda args: ok(args, "not-json")])
+        self.assertEqual(code, 5)
+        self.assertIn("inbox blocked failed", err)
+        self.assertIn("run 'clerk doctor'", err)
+        self.assertEqual(calls, [["bd", "show", "item", "--readonly", "--json"]])
+
     def test_backlog_next_filters_ready_items_with_blockers_children_and_assignees(self):
         rows = [{"id": "pick"}, {"id": "blocked"}, {"id": "parent"}, {"id": "claimed"}]
         details = {
