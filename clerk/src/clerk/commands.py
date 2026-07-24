@@ -32,6 +32,19 @@ from .work_graph import (
 
 _PREGRILL_RE = re.compile(r"clerk-pregrill: ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)")
 
+# C-e (acceptance-criteria detection, `inbox ready`): presence of a structural section only;
+# never a quality judgment. A markdown heading (any '#' depth) or a bare
+# "Acceptance Criteria[:]" line counts; prose that merely mentions the phrase does not.
+_ACCEPTANCE_SECTION_RE = re.compile(
+    r"^#{1,6}\s*acceptance criteria|^acceptance criteria:?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def has_acceptance_criteria_section(combined: str) -> bool:
+    """Whether the combined description+design prose carries an Acceptance Criteria section."""
+    return _ACCEPTANCE_SECTION_RE.search(combined or "") is not None
+
 
 class ClerkExit(Exception):
     def __init__(self, code: int) -> None:
@@ -287,6 +300,79 @@ def returned_attempt_banner(runner: CommandRunner, root: Path, short: str, id_: 
         print(f"  fresh via: clerk backlog claim {id_} --fresh --returned keep|discard")
     else:
         print(f"  dispose via: clerk {dispose_hint} {id_} --returned keep|discard")
+
+
+def _planning_holder_refusal(verb: str, root: Path, obj: Mapping[str, Any], runner: CommandRunner, env: Mapping[str, str]) -> None:
+    # Allows unclaimed items or items claimed by the current actor; refuses (exit 5)
+    # anything held by a different actor. Matches legacy `planning_holder_refusal`.
+    holder = str(obj.get("assignee") or "")
+    if not holder:
+        return
+    me = _claim_current_actor(runner, root, env)
+    if holder == me:
+        return
+    print(f"clerk: {verb} refused — {obj.get('id')} is claimed by {holder}", file=sys.stderr)
+    raise ClerkExit(5)
+
+
+def _returned_branch_exists(runner: CommandRunner, root: Path, short: str) -> bool:
+    main_root = _primary_repo_root(runner, root)
+    if _show_ref(runner, main_root, f"refs/heads/returned/{short}"):
+        return True
+    return _show_ref(runner, main_root, f"refs/remotes/origin/returned/{short}")
+
+
+def _for_each_ref(runner: CommandRunner, main_root: Path, patterns: Sequence[str]) -> list[str]:
+    result = _git(runner, main_root, ["for-each-ref", "--format=%(refname:short)", *patterns])
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _dispose_returned(runner: CommandRunner, root: Path, short: str, env: Mapping[str, str]) -> bool:
+    # Delete the canonical `returned/<short>` ref plus any archived `returned/<short>-*`
+    # siblings from both the local and origin refs, mirroring legacy `dispose_returned`.
+    # Returns True when fully disposed; False when the remote delete was deferred to the
+    # next `clerk sync` because the repository was offline.
+    main_root = _primary_repo_root(runner, root)
+    local_refs = _for_each_ref(runner, main_root, [f"refs/heads/returned/{short}", f"refs/heads/returned/{short}-*"])
+    remote_refs_present = _for_each_ref(runner, main_root, [f"refs/remotes/origin/returned/{short}", f"refs/remotes/origin/returned/{short}-*"])
+    if not local_refs and not remote_refs_present:
+        return True
+    for ref in local_refs:
+        result = _git(runner, main_root, ["branch", "-D", ref])
+        if result.returncode != 0:
+            backend_fail(f"returned disposition failed — could not delete local {ref}")
+    fetch_env = {**env, "GIT_TERMINAL_PROMPT": "0"}
+    fetch_result = _git(runner, main_root, ["fetch", "origin"])
+    del fetch_env
+    if fetch_result.returncode != 0:
+        print(
+            f"clerk: OFFLINE - returned/{short} and archives deleted locally only; the remote branch delete is deferred to sync (clerk sync will finish it at the next reconnect).",
+            file=sys.stderr,
+        )
+        return False
+    remote_refs = _for_each_ref(runner, main_root, [f"refs/remotes/origin/returned/{short}", f"refs/remotes/origin/returned/{short}-*"])
+    for ref in remote_refs:
+        branch = ref.removeprefix("origin/")
+        result = _git(runner, main_root, ["push", "origin", "--delete", branch])
+        if result.returncode != 0:
+            backend_fail(f"returned disposition failed — could not delete origin {branch}")
+        _git(runner, main_root, ["update-ref", "-d", f"refs/remotes/origin/{branch}"])
+    return True
+
+
+def _handle_returned_disposition(verb: str, root: Path, short: str, disposition: str, runner: CommandRunner, env: Mapping[str, str]) -> None:
+    if not disposition:
+        if _returned_branch_exists(runner, root, short):
+            usage(f"clerk {verb}: returned/{short} exists — choose --returned keep or --returned discard")
+        return
+    if disposition == "keep":
+        return
+    if disposition == "discard":
+        _dispose_returned(runner, root, short, env)
+        return
+    usage(f"clerk {verb}: --returned must be keep or discard")
 
 
 def cmd_inbox_list(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
@@ -998,9 +1084,187 @@ def cmd_inbox_update(_backend: str, _root: Path, argv: Sequence[str], runner: Co
     return 0
 
 
+def cmd_inbox_ready(backend: str, root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    # The Inbox ready/drop bridge promotes a groomed capture from Refinement to delivery
+    # while preserving Acceptance-criteria and returned-attempt safety (ADR 0015/0016).
+    if not argv:
+        usage("clerk inbox ready: missing id — usage: clerk inbox ready <id> [--design-file <path>] [--acceptance-file <path>]")
+    id_ = argv[0]
+    title = ""
+    body_file = ""
+    design_file = ""
+    acceptance_file = ""
+    returned_disposition = ""
+    args = list(argv[1:])
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--title":
+            if i + 1 >= len(args):
+                usage("clerk inbox ready: --title needs a value")
+            title = args[i + 1]
+            i += 2
+        elif arg == "--body-file":
+            if i + 1 >= len(args):
+                usage("clerk inbox ready: --body-file needs a value")
+            body_file = args[i + 1]
+            i += 2
+        elif arg == "--design-file":
+            if i + 1 >= len(args):
+                usage("clerk inbox ready: --design-file needs a path")
+            design_file = args[i + 1]
+            i += 2
+        elif arg == "--acceptance-file":
+            if i + 1 >= len(args):
+                usage("clerk inbox ready: --acceptance-file needs a path")
+            acceptance_file = args[i + 1]
+            i += 2
+        elif arg == "--returned":
+            if i + 1 >= len(args):
+                usage("clerk inbox ready: --returned needs keep or discard")
+            returned_disposition = args[i + 1]
+            i += 2
+        else:
+            usage(f"clerk inbox ready: unknown argument '{arg}'")
+
+    short = _returned_short_from_id(id_)
+
+    if backend == "bd":
+        if title:
+            usage("clerk inbox ready: --title is only for gh-backed promotion; use --design-file/--acceptance-file for bd")
+        if body_file:
+            usage("clerk inbox ready: --body-file is only for gh-backed promotion; use --design-file/--acceptance-file for bd")
+        if design_file and not Path(design_file).is_file():
+            usage(f"clerk inbox ready: design file not found: {design_file}")
+        if acceptance_file and not Path(acceptance_file).is_file():
+            usage(f"clerk inbox ready: acceptance file not found: {acceptance_file}")
+
+        obj = _bd_issue_json_or_usage(runner, id_, "clerk inbox ready")
+        if not _is_active_inbox(obj):
+            usage(f"clerk inbox ready: {id_} must be an open inbox item (not ready/promoted/closed)")
+        if _open_blockers(obj):
+            usage(f"clerk inbox ready: {id_} has open blockers — resolve blockers before promoting it")
+        if _open_children(obj):
+            usage(f"clerk inbox ready: {id_} has open children — resolve or reparent children before promoting it")
+        _planning_holder_refusal("inbox ready", root, obj, runner, env)
+        _handle_returned_disposition("inbox ready", root, short, returned_disposition, runner, env)
+
+        if design_file or acceptance_file:
+            update_args = ["bd", "update", id_]
+            if design_file:
+                update_args.extend(["--design-file", design_file])
+            if acceptance_file:
+                update_args.extend(["--acceptance", _read_file_trimmed(acceptance_file, "clerk inbox ready", body=True)])
+            result = runner.run(update_args)
+            _emit_stderr(result)
+            if result.returncode != 0:
+                backend_fail(f"inbox ready failed — bd update did not succeed for {id_}")
+            refreshed = _bd_issue_json_or_backend(runner, id_, f"inbox ready failed — {id_} was not confirmed updated")
+            if design_file and str(refreshed.get("design") or "") != _read_file_trimmed(design_file, "clerk inbox ready"):
+                backend_fail(f"inbox ready failed — design was not confirmed after writing {design_file}")
+            if acceptance_file and str(refreshed.get("acceptance_criteria") or "") != _read_file_trimmed(acceptance_file, "clerk inbox ready"):
+                backend_fail(f"inbox ready failed — acceptance criteria were not confirmed after writing {acceptance_file}")
+            obj = refreshed
+
+        # C-e: bd's first-class `acceptance_criteria` field IS the structural section by
+        # construction, so its mere non-empty presence satisfies the gate without rescanning;
+        # otherwise description+design prose is scanned for a heading or bare line.
+        desc = str(obj.get("description") or "")
+        design = str(obj.get("design") or "")
+        ac = str(obj.get("acceptance_criteria") or "")
+        if not ac and not has_acceptance_criteria_section(f"{desc}\n{design}"):
+            usage(f"clerk inbox ready: {id_} has no 'Acceptance Criteria' section — rerun with --acceptance-file <path> (and optionally --design-file <path>) before promoting it")
+
+        result = runner.run(["bd", "update", id_, "--status", "open", "--assignee", "", "--add-label", "stage:ready"])
+        _emit_stderr(result)
+        if result.returncode != 0:
+            backend_fail(f"inbox ready failed — bd update did not succeed for {id_}")
+        after = _bd_issue_json_or_backend(runner, id_, f"inbox ready failed — {id_} was not confirmed stage:ready after promotion")
+        if "stage:ready" not in (after.get("labels") or []):
+            backend_fail(f"inbox ready failed — {id_} was not confirmed stage:ready after promotion")
+        _success(f"promoted {id_} to stage:ready", env)
+        return 0
+
+    # gh-backed promotion: create a ready GitHub issue, then close the bd capture as promoted.
+    if design_file:
+        usage("clerk inbox ready: --design-file is only for bd-backed promotion; use --title/--body-file for gh")
+    if acceptance_file:
+        usage("clerk inbox ready: --acceptance-file is only for bd-backed promotion; use --title/--body-file for gh")
+    if not title or not body_file:
+        usage('clerk inbox ready: gh backend needs both --title "<title>" and --body-file <file> — rerun as \'clerk inbox ready <id> --title "<title>" --body-file <file>\'')
+    if not Path(body_file).is_file():
+        usage(f"clerk inbox ready: body file not found: {body_file}")
+
+    obj = _bd_issue_json_or_usage(runner, id_, "clerk inbox ready")
+    if not _is_active_inbox(obj):
+        usage(f"clerk inbox ready: {id_} must be an open inbox item (not ready/promoted/closed)")
+    if _open_blockers(obj):
+        usage(f"clerk inbox ready: {id_} has open blockers — resolve blockers before promoting it")
+    if _open_children(obj):
+        usage(f"clerk inbox ready: {id_} has open children — resolve or reparent children before promoting it")
+    _planning_holder_refusal("inbox ready", root, obj, runner, env)
+    _handle_returned_disposition("inbox ready", root, short, returned_disposition, runner, env)
+
+    create_result = runner.run(["gh", "issue", "create", "--title", title, "--body-file", body_file, "--label", "ready-for-agent"])
+    _emit_stderr(create_result)
+    if create_result.returncode != 0:
+        backend_fail("inbox ready failed — gh issue create did not succeed")
+    url = create_result.stdout.strip()
+    num = url.rsplit("/", 1)[-1]
+    close_result = runner.run(["bd", "close", id_, "--reason", f"promoted to GitHub #{num}"])
+    _emit_stderr(close_result)
+    if close_result.returncode != 0:
+        backend_fail(f"inbox ready failed — bd close did not succeed for {id_}")
+    after = _bd_issue_json_or_backend(runner, id_, f"inbox ready failed — {id_} was not confirmed closed after promotion")
+    if str(after.get("status") or "") != "closed" or str(after.get("close_reason") or "") != f"promoted to GitHub #{num}":
+        backend_fail(f"inbox ready failed — {id_} was not confirmed closed after promotion")
+    _success(f"promoted {id_} to #{num} ({url})", env)
+    return 0
+
+
+def cmd_inbox_drop(backend: str, root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    # Drop closes an Inbox capture as wontfix for both bd and gh backends. For gh the bd
+    # capture is still the raw Inbox store; no GitHub issue exists yet, so gh adds no action.
+    if not argv:
+        usage("clerk inbox drop: missing id — usage: clerk inbox drop <id> [--returned keep|discard]")
+    id_ = argv[0]
+    returned_disposition = ""
+    args = list(argv[1:])
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--returned":
+            if i + 1 >= len(args):
+                usage("clerk inbox drop: --returned needs keep or discard")
+            returned_disposition = args[i + 1]
+            i += 2
+        else:
+            usage(f"clerk inbox drop: unknown argument '{arg}'")
+
+    if backend not in {"bd", "gh"}:
+        backend_fail(f"drop failed — unsupported backend {backend}")
+
+    short = _returned_short_from_id(id_)
+    obj = _bd_issue_json_or_usage(runner, id_, "clerk inbox drop")
+    _planning_holder_refusal("inbox drop", root, obj, runner, env)
+    _handle_returned_disposition("inbox drop", root, short, returned_disposition, runner, env)
+
+    result = runner.run(["bd", "close", id_, "--reason", "wontfix"])
+    _emit_stderr(result)
+    if result.returncode != 0:
+        backend_fail(f"inbox drop failed — bd close did not succeed for {id_}")
+    after = _bd_issue_json_or_backend(runner, id_, f"inbox drop failed — {id_} was not confirmed closed")
+    if str(after.get("status") or "") != "closed":
+        backend_fail(f"inbox drop failed — {id_} was not confirmed closed")
+    _success(f"dropped {id_} (wontfix)", env)
+    return 0
+
+
 MUTATION_HANDLERS = {
     ("capture",): cmd_capture,
     ("inbox", "pregrill"): cmd_inbox_pregrill,
+    ("inbox", "ready"): cmd_inbox_ready,
+    ("inbox", "drop"): cmd_inbox_drop,
     ("inbox", "parent"): cmd_inbox_parent,
     ("inbox", "dep"): cmd_inbox_dep,
     ("inbox", "claim"): cmd_inbox_claim,

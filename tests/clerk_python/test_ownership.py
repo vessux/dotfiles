@@ -51,13 +51,14 @@ class OwnershipTests(unittest.TestCase):
             ["inbox", "note", "dotfiles-123"],
             ["inbox", "update", "dotfiles-123"],
             ["inbox", "resolve", "dotfiles-123"],
+            ["inbox", "ready", "dotfiles-123"],
+            ["inbox", "drop", "dotfiles-123"],
         ):
             with self.subTest(argv=argv):
                 self.assertTrue(is_python_owned(argv))
 
     def test_unported_workflow_verb_bodies_still_route_to_legacy_fallback(self):
         for argv in (
-            ["inbox", "ready", "dotfiles-123"],
             ["backlog", "claim", "dotfiles-123"],
             ["glean"],
         ):
