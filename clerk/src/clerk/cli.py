@@ -5,18 +5,23 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from . import __version__
+from .commands import QUERY_HANDLERS, run_query
 from .doctor import repo_root, run_doctor
 from .legacy import run_legacy
 from .manifest import ManifestStatus, read_manifest
 from .roster import EXPLAIN_TEXT, NOUN_VERBS, ROSTER_LINES, TOP_LEVEL_VERBS, roster_text, verb_label
 
-# The Python core owns diagnostics, help/explain/version, manifest gating, and
-# doctor. Workflow verb bodies remain on the shell fallback for this slice.
+# The Python core owns diagnostics, help/explain/version, manifest gating,
+# doctor, and the read-only item query windows. Unported workflow verb bodies
+# remain on the shell fallback for this slice.
+PYTHON_QUERY_VERBS: frozenset[tuple[str, ...]] = frozenset(QUERY_HANDLERS)
+
 LEGACY_WORKFLOW_VERBS: frozenset[tuple[str, ...]] = frozenset(
-    {("capture",), ("sync",), ("glean",)}
-    | {(noun, verb) for noun, verbs in NOUN_VERBS.items() for verb in verbs}
+    ({("capture",), ("sync",), ("glean",)} | {(noun, verb) for noun, verbs in NOUN_VERBS.items() for verb in verbs})
+    - PYTHON_QUERY_VERBS
 )
 
 # Kept explicit for the legacy public contract: unknown verbs are exit 2 with
@@ -91,7 +96,7 @@ def _explain(path: tuple[str, ...]) -> int:
     return 0
 
 
-def _manifest_gate(path: tuple[str, ...]) -> int | None:
+def _manifest_context(path: tuple[str, ...]) -> tuple[Path, str] | int:
     # The delivery gate is intentionally backend-marker-free so CI can run it in
     # checkout states that precede Clerk cutover.
     if path == ("backlog", "gate"):
@@ -102,7 +107,7 @@ def _manifest_gate(path: tuple[str, ...]) -> int | None:
                 file=sys.stderr,
             )
             return 4
-        return None
+        return root, ""
 
     root = repo_root()
     if root is None:
@@ -115,12 +120,20 @@ def _manifest_gate(path: tuple[str, ...]) -> int | None:
     manifest_path = root / ".clerk"
     manifest = read_manifest(manifest_path)
     if manifest.status is ManifestStatus.OK:
-        return None
+        assert manifest.backend is not None
+        return root, manifest.backend
     if manifest.status is ManifestStatus.MISSING:
         print(f"clerk: missing .clerk marker at {manifest_path} — run 'clerk doctor' to provision it", file=sys.stderr)
         return 4
     print(f"clerk: invalid .clerk marker at {manifest_path} — run 'clerk doctor' to diagnose it", file=sys.stderr)
     return 4
+
+
+def _manifest_gate(path: tuple[str, ...]) -> int | None:
+    context = _manifest_context(path)
+    if isinstance(context, int):
+        return context
+    return None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -163,6 +176,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if path in PYTHON_STUB_VERBS:
         return _not_implemented(path)
+
+    if path in PYTHON_QUERY_VERBS:
+        context = _manifest_context(path)
+        if isinstance(context, int):
+            return context
+        root, backend = context
+        return run_query(path, backend, root, remaining)
 
     if path in LEGACY_WORKFLOW_VERBS:
         refused = _manifest_gate(path)
