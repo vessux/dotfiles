@@ -58,18 +58,38 @@ class CliBoundaryTests(unittest.TestCase):
         self.assertEqual(err, "")
         self.assertEqual(calls, [])
 
-    def test_known_workflow_verb_with_valid_manifest_routes_to_legacy(self):
+    def test_known_unported_workflow_verb_with_valid_manifest_routes_to_legacy(self):
         with tempfile.TemporaryDirectory() as td:
             subprocess.run(["git", "init", "-q", "-b", "main", td], check=True)
             Path(td, ".clerk").write_text("backlog: bd\n")
             cwd = os.getcwd()
             try:
                 os.chdir(td)
-                code, out, err, calls = self.invoke(["capture", "title"], legacy_code=0)
+                code, out, err, calls = self.invoke(["sync"], legacy_code=0)
             finally:
                 os.chdir(cwd)
         self.assertEqual((code, out, err), (0, "", ""))
-        self.assertEqual(calls, [["capture", "title"]])
+        self.assertEqual(calls, [["sync"]])
+
+    def test_python_mutation_verb_uses_manifest_context_without_legacy(self):
+        seen = []
+
+        def fake_mutation(path, backend, root, remaining):
+            seen.append((path, backend, root.name, remaining))
+            return 0
+
+        with tempfile.TemporaryDirectory() as td:
+            subprocess.run(["git", "init", "-q", "-b", "main", td], check=True)
+            Path(td, ".clerk").write_text("backlog: bd\n")
+            cwd = os.getcwd()
+            try:
+                os.chdir(td)
+                with mock.patch("clerk.cli.run_mutation", side_effect=fake_mutation):
+                    code, out, err, calls = self.invoke(["capture", "title"], legacy_code=77)
+            finally:
+                os.chdir(cwd)
+        self.assertEqual((code, out, err, calls), (0, "", "", []))
+        self.assertEqual(seen, [(("capture",), "bd", Path(td).name, ["title"])])
 
     def test_python_query_verb_uses_manifest_context_without_legacy(self):
         seen = []
