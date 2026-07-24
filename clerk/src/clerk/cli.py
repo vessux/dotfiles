@@ -16,7 +16,7 @@ from .roster import EXPLAIN_TEXT, NOUN_VERBS, ROSTER_LINES, TOP_LEVEL_VERBS, ros
 
 # The Python core owns diagnostics, help/explain/version, manifest gating,
 # doctor, read-only item query windows, Capture/text-based Inbox mutations,
-# and Planning graph mutations/claims.
+# Planning graph mutations/claims, and the Inbox ready/drop bridge.
 # Unported workflow verb bodies remain on the shell fallback for this slice.
 PYTHON_QUERY_VERBS: frozenset[tuple[str, ...]] = frozenset(QUERY_HANDLERS)
 PYTHON_MUTATION_VERBS: frozenset[tuple[str, ...]] = frozenset(MUTATION_HANDLERS)
