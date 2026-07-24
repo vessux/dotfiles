@@ -30,6 +30,10 @@ class OwnershipTests(unittest.TestCase):
             ["inbox", "list"],
             ["inbox", "show", "dotfiles-123"],
             ["inbox", "dups"],
+            ["inbox", "children", "dotfiles-parent"],
+            ["inbox", "frontier", "dotfiles-parent"],
+            ["inbox", "blockers", "dotfiles-child"],
+            ["inbox", "blocked", "dotfiles-blocker"],
             ["backlog", "next"],
             ["backlog", "show", "dotfiles-123"],
         ):

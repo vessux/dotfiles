@@ -255,6 +255,119 @@ def _open_children(obj: Mapping[str, Any]) -> list[Any]:
     return [edge for edge in obj.get("dependents") or [] if isinstance(edge, dict) and _edge_type(edge) == "parent-child" and (edge.get("status") or "open") != "closed"]
 
 
+def _graph_usage_text(kind: str) -> str:
+    target = "parent" if kind in {"children", "frontier"} else "id"
+    display = "<parent>" if target == "parent" else "<id>"
+    return f"clerk inbox {kind} {display} [--pretty]"
+
+
+def _parse_graph_query_args(kind: str, argv: Sequence[str]) -> tuple[str, bool]:
+    if not argv:
+        if kind in {"children", "frontier"}:
+            usage(f"clerk inbox {kind}: missing parent id — usage: {_graph_usage_text(kind)}")
+        usage(f"clerk inbox {kind}: missing id — usage: {_graph_usage_text(kind)}")
+    id_ = argv[0]
+    pretty = False
+    for arg in argv[1:]:
+        if arg == "--pretty":
+            pretty = True
+        else:
+            usage(f"clerk inbox {kind}: unknown argument '{arg}' — usage: {_graph_usage_text(kind)}")
+    return id_, pretty
+
+
+def _graph_item(obj: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "id": obj.get("id"),
+        "title": obj.get("title"),
+        "status": obj.get("status"),
+        "type": obj.get("issue_type"),
+        "assignee": obj.get("assignee") or "",
+        "labels": obj.get("labels") or [],
+        "parent": obj.get("parent") if obj.get("parent") is not None else None,
+        "created_at": obj.get("created_at"),
+        "updated_at": obj.get("updated_at"),
+    }
+
+
+def _graph_edge_ids(obj: Mapping[str, Any], collection: str, edge_type: str) -> list[str]:
+    ids: list[str] = []
+    for edge in obj.get(collection) or []:
+        if isinstance(edge, dict) and _edge_type(edge) == edge_type and edge.get("id"):
+            ids.append(str(edge["id"]))
+    return ids
+
+
+def _bd_graph_issue(runner: CommandRunner, id_: str, kind: str) -> dict[str, Any]:
+    return _bd_issue_json_or_usage(runner, id_, f"clerk inbox {kind}")
+
+
+def _bd_graph_items(runner: CommandRunner, ids: Sequence[str], kind: str) -> list[dict[str, Any]]:
+    return [_graph_item(_bd_graph_issue(runner, id_, kind)) for id_ in ids]
+
+
+def _is_open_inbox(obj: Mapping[str, Any]) -> bool:
+    return obj.get("status") == "open" and "stage:ready" not in (obj.get("labels") or [])
+
+
+def _is_nonclosed_work(obj: Mapping[str, Any]) -> bool:
+    return bool(obj.get("status")) and obj.get("status") != "closed"
+
+
+def _has_open_blocker_edge(obj: Mapping[str, Any]) -> bool:
+    return any(
+        isinstance(edge, dict) and _edge_type(edge) == "blocks" and (edge.get("status") or "open") != "closed"
+        for edge in obj.get("dependencies") or []
+    )
+
+
+def cmd_inbox_children(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, _env: Mapping[str, str]) -> int:
+    id_, pretty = _parse_graph_query_args("children", argv)
+    parent = _bd_graph_issue(runner, id_, "children")
+    child_ids = _graph_edge_ids(parent, "dependents", "parent-child")
+    rendered = {"parent": _graph_item(parent), "items": _bd_graph_items(runner, child_ids, "children")}
+    print(_dump_json(rendered, pretty=pretty), end="")
+    return 0
+
+
+def cmd_inbox_blockers(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, _env: Mapping[str, str]) -> int:
+    id_, pretty = _parse_graph_query_args("blockers", argv)
+    item = _bd_graph_issue(runner, id_, "blockers")
+    blocker_ids = _graph_edge_ids(item, "dependencies", "blocks")
+    rendered = {"item": _graph_item(item), "items": _bd_graph_items(runner, blocker_ids, "blockers")}
+    print(_dump_json(rendered, pretty=pretty), end="")
+    return 0
+
+
+def cmd_inbox_blocked(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, _env: Mapping[str, str]) -> int:
+    id_, pretty = _parse_graph_query_args("blocked", argv)
+    item = _bd_graph_issue(runner, id_, "blocked")
+    blocked_ids = _graph_edge_ids(item, "dependents", "blocks")
+    rendered = {"item": _graph_item(item), "items": _bd_graph_items(runner, blocked_ids, "blocked")}
+    print(_dump_json(rendered, pretty=pretty), end="")
+    return 0
+
+
+def cmd_inbox_frontier(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, _env: Mapping[str, str]) -> int:
+    id_, pretty = _parse_graph_query_args("frontier", argv)
+    parent = _bd_graph_issue(runner, id_, "frontier")
+    if not _is_nonclosed_work(parent):
+        usage(f"clerk inbox frontier: {id_} must be a non-closed Work graph parent")
+    items: list[dict[str, Any]] = []
+    for child_id in _graph_edge_ids(parent, "dependents", "parent-child"):
+        child = _bd_graph_issue(runner, child_id, "frontier")
+        if not _is_open_inbox(child):
+            continue
+        if (child.get("assignee") or "") != "":
+            continue
+        if _has_open_blocker_edge(child):
+            continue
+        items.append(_graph_item(child))
+    rendered = {"parent": _graph_item(parent), "items": items}
+    print(_dump_json(rendered, pretty=pretty), end="")
+    return 0
+
+
 def _ready_unclaimed_details(runner: CommandRunner) -> list[dict[str, Any]]:
     data = _json_from_result(
         runner.run(["bd", "list", "--status", "open", "--label", "stage:ready", "--no-assignee", "--readonly", "--json"]),
@@ -335,6 +448,10 @@ QUERY_HANDLERS = {
     ("inbox", "list"): cmd_inbox_list,
     ("inbox", "show"): cmd_inbox_show,
     ("inbox", "dups"): cmd_inbox_dups,
+    ("inbox", "children"): cmd_inbox_children,
+    ("inbox", "frontier"): cmd_inbox_frontier,
+    ("inbox", "blockers"): cmd_inbox_blockers,
+    ("inbox", "blocked"): cmd_inbox_blocked,
     ("backlog", "next"): cmd_backlog_next,
     ("backlog", "show"): cmd_backlog_show,
 }
