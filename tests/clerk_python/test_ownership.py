@@ -40,12 +40,17 @@ class OwnershipTests(unittest.TestCase):
             with self.subTest(argv=argv):
                 self.assertTrue(is_python_owned(argv))
 
-    def test_text_mutation_verbs_are_python_owned(self):
+    def test_text_and_graph_mutation_verbs_are_python_owned(self):
         for argv in (
             ["capture", "title"],
             ["inbox", "pregrill", "dotfiles-123"],
+            ["inbox", "parent", "set", "dotfiles-child", "dotfiles-parent"],
+            ["inbox", "dep", "add", "dotfiles-child", "dotfiles-blocker"],
+            ["inbox", "claim", "dotfiles-123"],
+            ["inbox", "release", "dotfiles-123"],
             ["inbox", "note", "dotfiles-123"],
             ["inbox", "update", "dotfiles-123"],
+            ["inbox", "resolve", "dotfiles-123"],
         ):
             with self.subTest(argv=argv):
                 self.assertTrue(is_python_owned(argv))
