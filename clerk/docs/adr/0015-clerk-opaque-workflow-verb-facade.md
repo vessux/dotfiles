@@ -92,6 +92,12 @@ verb grammar. Large changes require a focused grill before delivery resumes.
   intentionally portable in this dotfiles repo, but the CLI contract above is what survives the
   stdlib-only Python 3.11+ strangler port. The public command remains the launcher and contract
   boundary while unported verb paths fall back to the preserved Bash implementation.
+- **The Work graph adapter is the Python backend seam.** Command handlers ask it for Work graph and
+  Backlog operations rather than encoding backend edge shapes or pickability. The adapter owns the
+  ready/pickable/waiting split, including the rule that a ready parent with an open direct child is
+  not pickable. It computes the full bd-backed graph from an unlimited snapshot, avoiding serial
+  per-candidate detail calls. Remaining Python-port slices use this adapter for Work state,
+  graph mutations, and delivery lifecycle transitions instead of adding command-local bd logic.
 - **Umbel bundles consume Clerk; they do not own it.** The bundle layer provides operating rules and
   hook wiring. Clerk owns workflow mechanism and repo-local state.
 - **Grammar is noun-scoped by collection (place)**: `inbox` (refinement views over non-ready work)
@@ -210,6 +216,9 @@ verb grammar. Large changes require a focused grill before delivery resumes.
 
 ## History
 
+- 2026-07-25: Python backend clarification added for dotfiles-9urv.17. Work graph invariants and
+  substrate-specific graph operations live behind the Work graph adapter seam; remaining port
+  slices use that seam as their backend boundary.
 - 2026-07-23: Python-port clarification added for epic dotfiles-9urv. Clerk is being moved from
   Bash to stdlib-only Python 3.11+ behind the existing public command; the current Bash
   implementation remains only as a temporary legacy fallback during migration. Compatibility is

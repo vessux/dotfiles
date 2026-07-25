@@ -125,7 +125,7 @@ EXPLAIN_TEXT: dict[str, tuple[str, ...]] = {
     ),
     "backlog next": (
         "clerk backlog next — pick the next pickable ready unit",
-        "  runs: bd list --status open --label stage:ready --no-assignee --readonly --json, then filters no open blockers/children     (backlog: bd)",
+        "  runs: Work graph adapter loads bd list --all --readonly --json --limit 0 once, then selects unclaimed ready leaves without open blockers     (backlog: bd)",
         "        gh issue list --label ready-for-agent              (backlog: gh)",
         f"  see:  {ADR17}",
     ),
@@ -137,7 +137,7 @@ EXPLAIN_TEXT: dict[str, tuple[str, ...]] = {
     ),
     "backlog waiting": (
         "clerk backlog waiting — list refined-ready work that is waiting on graph state",
-        "  runs: bd list --status open --label stage:ready --no-assignee --readonly --json, then reports open blocker/child counts     (backlog: bd)",
+        "  runs: Work graph adapter loads the full bd graph once, then reports open blocker/child counts     (backlog: bd)",
         "        gh issue list --label ready-for-agent              (backlog: gh; no graph waiting view yet)",
         f"  see:  {ADR17}",
     ),
@@ -214,7 +214,7 @@ for graph_verb in ("inbox children", "inbox frontier", "inbox blockers", "inbox 
     EXPLAIN_TEXT[graph_verb] = (
         f"clerk {graph_verb} — query inbox graph relationships as Clerk-owned JSON",
         "  usage: clerk inbox children|frontier|blockers|blocked <id> [--pretty]",
-        "  runs: bd show <id> --readonly --json and normalizes parent-child / blocks edges",
+        "  runs: Work graph adapter uses bd list --all --readonly --json --limit 0 once and normalizes parent-child / blocks edges",
         f"  see:  {ADR15}",
     )
 

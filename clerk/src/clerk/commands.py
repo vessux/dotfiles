@@ -14,6 +14,21 @@ from typing import Any
 
 from .output import Palette
 from .proc import CommandResult, CommandRunner
+from .work_graph import (
+    BdWorkGraphAdapter,
+    Work,
+    WorkGraph,
+    WorkGraphBackendError,
+    has_blocker as _has_block_edge,
+    has_open_blockers,
+    has_open_children,
+    is_active_inbox as _is_active_inbox,
+    is_nonclosed_work as _is_nonclosed_work,
+    is_open_inbox as _is_open_inbox,
+    is_ready_promoted as _is_ready_promoted,
+    parent_id,
+    shares_parent,
+)
 
 _PREGRILL_RE = re.compile(r"clerk-pregrill: ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)")
 
@@ -365,34 +380,6 @@ def cmd_inbox_dups(_backend: str, _root: Path, _argv: Sequence[str], runner: Com
     return 0
 
 
-def _edge_type(edge: Mapping[str, Any]) -> str:
-    return str(edge.get("dependency_type") or edge.get("type") or "")
-
-
-def _open_blockers(obj: Mapping[str, Any]) -> list[Any]:
-    return [edge for edge in obj.get("dependencies") or [] if isinstance(edge, dict) and _edge_type(edge) == "blocks" and (edge.get("status") or "open") != "closed"]
-
-
-def _open_children(obj: Mapping[str, Any]) -> list[Any]:
-    return [edge for edge in obj.get("dependents") or [] if isinstance(edge, dict) and _edge_type(edge) == "parent-child" and (edge.get("status") or "open") != "closed"]
-
-
-def _is_ready_promoted(obj: Mapping[str, Any]) -> bool:
-    return "stage:ready" in (obj.get("labels") or []) or str(obj.get("close_reason") or "").startswith("promoted")
-
-
-def _is_active_inbox(obj: Mapping[str, Any]) -> bool:
-    return obj.get("status") in {"open", "in_progress"} and "stage:ready" not in (obj.get("labels") or [])
-
-
-def _edge_ids(obj: Mapping[str, Any], collection: str, edge_type: str) -> list[str]:
-    return [str(edge["id"]) for edge in obj.get(collection) or [] if isinstance(edge, dict) and _edge_type(edge) == edge_type and edge.get("id")]
-
-
-def _has_block_edge(obj: Mapping[str, Any], blocker: str) -> bool:
-    return blocker in _edge_ids(obj, "dependencies", "blocks")
-
-
 def _claim_conflict(message: str) -> None:
     print(message, file=sys.stderr)
     raise ClerkExit(5)
@@ -419,136 +406,87 @@ def _parse_graph_query_args(kind: str, argv: Sequence[str]) -> tuple[str, bool]:
     return id_, pretty
 
 
-def _graph_item(obj: Mapping[str, Any]) -> dict[str, Any]:
+def _graph_item(item: Work) -> dict[str, Any]:
+    obj = item.raw
     return {
-        "id": obj.get("id"),
-        "title": obj.get("title"),
-        "status": obj.get("status"),
+        "id": item.id,
+        "title": item.title,
+        "status": item.status,
         "type": obj.get("issue_type"),
-        "assignee": obj.get("assignee") or "",
-        "labels": obj.get("labels") or [],
-        "parent": obj.get("parent") if obj.get("parent") is not None else None,
+        "assignee": item.assignee,
+        "labels": list(item.labels),
+        "parent": item.parent or None,
         "created_at": obj.get("created_at"),
         "updated_at": obj.get("updated_at"),
     }
 
 
-def _graph_edge_ids(obj: Mapping[str, Any], collection: str, edge_type: str) -> list[str]:
-    ids: list[str] = []
-    for edge in obj.get(collection) or []:
-        if isinstance(edge, dict) and _edge_type(edge) == edge_type and edge.get("id"):
-            ids.append(str(edge["id"]))
-    return ids
+def _bd_graph(runner: CommandRunner, kind: str) -> WorkGraph:
+    try:
+        return BdWorkGraphAdapter(runner).load()
+    except WorkGraphBackendError as exc:
+        _emit_stderr(exc.result)
+        backend_fail(f"inbox {kind} failed — {exc}")
 
 
-def _bd_graph_issue(runner: CommandRunner, id_: str, kind: str) -> dict[str, Any]:
-    return _bd_issue_json_or_usage(runner, id_, f"clerk inbox {kind}")
-
-
-def _bd_graph_items(runner: CommandRunner, ids: Sequence[str], kind: str) -> list[dict[str, Any]]:
-    return [_graph_item(_bd_graph_issue(runner, id_, kind)) for id_ in ids]
-
-
-def _is_open_inbox(obj: Mapping[str, Any]) -> bool:
-    return obj.get("status") == "open" and "stage:ready" not in (obj.get("labels") or [])
-
-
-def _is_nonclosed_work(obj: Mapping[str, Any]) -> bool:
-    return bool(obj.get("status")) and obj.get("status") != "closed"
-
-
-def _has_open_blocker_edge(obj: Mapping[str, Any]) -> bool:
-    return any(
-        isinstance(edge, dict) and _edge_type(edge) == "blocks" and (edge.get("status") or "open") != "closed"
-        for edge in obj.get("dependencies") or []
-    )
+def _graph_work_or_usage(graph: WorkGraph, id_: str, kind: str) -> Work:
+    item = graph.get(id_)
+    if item is None:
+        usage(f"clerk inbox {kind}: {id_} not found — check the id ('clerk inbox list' shows open units)")
+    return item
 
 
 def cmd_inbox_children(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, _env: Mapping[str, str]) -> int:
     id_, pretty = _parse_graph_query_args("children", argv)
-    parent = _bd_graph_issue(runner, id_, "children")
-    child_ids = _graph_edge_ids(parent, "dependents", "parent-child")
-    rendered = {"parent": _graph_item(parent), "items": _bd_graph_items(runner, child_ids, "children")}
+    graph = _bd_graph(runner, "children")
+    parent = _graph_work_or_usage(graph, id_, "children")
+    rendered = {"parent": _graph_item(parent), "items": [_graph_item(item) for item in graph.children(parent)]}
     print(_dump_json(rendered, pretty=pretty), end="")
     return 0
 
 
 def cmd_inbox_blockers(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, _env: Mapping[str, str]) -> int:
     id_, pretty = _parse_graph_query_args("blockers", argv)
-    item = _bd_graph_issue(runner, id_, "blockers")
-    blocker_ids = _graph_edge_ids(item, "dependencies", "blocks")
-    rendered = {"item": _graph_item(item), "items": _bd_graph_items(runner, blocker_ids, "blockers")}
+    graph = _bd_graph(runner, "blockers")
+    item = _graph_work_or_usage(graph, id_, "blockers")
+    rendered = {"item": _graph_item(item), "items": [_graph_item(blocker) for blocker in graph.blockers(item)]}
     print(_dump_json(rendered, pretty=pretty), end="")
     return 0
 
 
 def cmd_inbox_blocked(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, _env: Mapping[str, str]) -> int:
     id_, pretty = _parse_graph_query_args("blocked", argv)
-    item = _bd_graph_issue(runner, id_, "blocked")
-    blocked_ids = _graph_edge_ids(item, "dependents", "blocks")
-    rendered = {"item": _graph_item(item), "items": _bd_graph_items(runner, blocked_ids, "blocked")}
+    graph = _bd_graph(runner, "blocked")
+    item = _graph_work_or_usage(graph, id_, "blocked")
+    rendered = {"item": _graph_item(item), "items": [_graph_item(blocked) for blocked in graph.blocked_by(item)]}
     print(_dump_json(rendered, pretty=pretty), end="")
     return 0
 
 
 def cmd_inbox_frontier(_backend: str, _root: Path, argv: Sequence[str], runner: CommandRunner, _env: Mapping[str, str]) -> int:
     id_, pretty = _parse_graph_query_args("frontier", argv)
-    parent = _bd_graph_issue(runner, id_, "frontier")
-    if not _is_nonclosed_work(parent):
+    graph = _bd_graph(runner, "frontier")
+    parent = _graph_work_or_usage(graph, id_, "frontier")
+    if parent.status == "closed":
         usage(f"clerk inbox frontier: {id_} must be a non-closed Work graph parent")
-    items: list[dict[str, Any]] = []
-    for child_id in _graph_edge_ids(parent, "dependents", "parent-child"):
-        child = _bd_graph_issue(runner, child_id, "frontier")
-        if not _is_open_inbox(child):
-            continue
-        if (child.get("assignee") or "") != "":
-            continue
-        if _has_open_blocker_edge(child):
-            continue
-        items.append(_graph_item(child))
-    rendered = {"parent": _graph_item(parent), "items": items}
+    rendered = {"parent": _graph_item(parent), "items": [_graph_item(item) for item in graph.frontier(parent)]}
     print(_dump_json(rendered, pretty=pretty), end="")
     return 0
 
 
-def _ready_unclaimed_details(runner: CommandRunner) -> list[dict[str, Any]]:
-    data = _json_from_result(
-        runner.run(["bd", "list", "--status", "open", "--label", "stage:ready", "--no-assignee", "--readonly", "--json"]),
-        "backlog next failed — bd list/show did not succeed",
-    )
-    if not isinstance(data, list):
-        backend_fail("backlog next failed — bd list did not return an issue list")
-    details: list[dict[str, Any]] = []
-    for row in data:
-        if not isinstance(row, dict) or not row.get("id"):
-            backend_fail("backlog next failed — bd list did not return issue ids")
-        result = runner.run(["bd", "show", str(row["id"]), "--readonly", "--json"])
-        data = _json_from_result(result, "backlog next failed — bd list/show did not succeed")
-        if not isinstance(data, list) or not data or not isinstance(data[0], dict):
-            backend_fail("backlog next failed — bd list/show did not succeed")
-        details.append(data[0])
-    return details
-
-
-def _is_pickable(obj: Mapping[str, Any]) -> bool:
-    return (
-        obj.get("status") == "open"
-        and "stage:ready" in (obj.get("labels") or [])
-        and (obj.get("assignee") or "") == ""
-        and not _open_blockers(obj)
-        and not _open_children(obj)
-    )
-
-
 def cmd_backlog_next(backend: str, _root: Path, _argv: Sequence[str], runner: CommandRunner, _env: Mapping[str, str]) -> int:
     if backend == "bd":
-        pickable = [obj for obj in _ready_unclaimed_details(runner) if _is_pickable(obj)]
+        try:
+            pickable = BdWorkGraphAdapter(runner).backlog().pickable
+        except WorkGraphBackendError as exc:
+            _emit_stderr(exc.result)
+            backend_fail(f"backlog next failed — {exc}")
         print(f"Backlog (ready) — {len(pickable)} item(s):")
         if not pickable:
             print("  (empty)")
             return 0
         for item in pickable:
-            print(f"  {item.get('id', '')}  {item.get('title', '')}")
+            print(f"  {item.id}  {item.title}")
         return 0
     data = _json_from_result(runner.run(["gh", "issue", "list", "--label", "ready-for-agent", "--json", "number,title"]), "backlog next failed — gh issue list did not succeed")
     if not isinstance(data, list):
@@ -645,19 +583,16 @@ def cmd_capture(backend: str, _root: Path, argv: Sequence[str], runner: CommandR
         blocker_json = _bd_issue_json_or_usage(runner, blocker, "clerk capture")
         if not _is_nonclosed_work(blocker_json):
             usage(f"clerk capture: --blocked-by {blocker} must name a non-closed Work graph item")
-        if parent and (blocker_json.get("parent") or "") != parent:
+        if parent and parent_id(blocker_json) != parent:
             usage(f"clerk capture: --blocked-by {blocker} must be a sibling under {parent}")
 
-    bd_args = ["bd", "create", title, "--silent"]
-    if use_stdin:
-        bd_args.append("--stdin")
-    if issue_type:
-        bd_args.extend(["--type", issue_type])
-    if parent:
-        bd_args.extend(["--parent", parent])
-    for blocker in blockers:
-        bd_args.extend(["--deps", blocker])
-    result = runner.run(bd_args)
+    result = BdWorkGraphAdapter(runner).create(
+        title,
+        use_stdin=use_stdin,
+        issue_type=issue_type,
+        parent=parent,
+        blockers=tuple(blockers),
+    )
     _emit_stderr(result)
     if result.returncode != 0:
         backend_fail(f'capture failed — bd create did not succeed for "{title}"')
@@ -668,49 +603,6 @@ def cmd_capture(backend: str, _root: Path, argv: Sequence[str], runner: CommandR
     suffix = " (type: impediment)" if issue_type == "impediment" else ""
     _success(f"filed {id_}{suffix}", env)
     return 0
-
-
-def _issue_parent_id(runner: CommandRunner, id_: str) -> str:
-    obj = _bd_issue_json_or_usage(runner, id_, "clerk inbox graph")
-    return str(obj.get("parent") or "")
-
-
-def _parent_cycle_would_form(runner: CommandRunner, child: str, parent: str) -> bool:
-    seen: set[str] = set()
-    cur = parent
-    while cur:
-        if cur == child:
-            return True
-        if cur in seen:
-            return True
-        seen.add(cur)
-        cur = _issue_parent_id(runner, cur)
-    return False
-
-
-def _invalid_dep_edges_for_parent_move(runner: CommandRunner, child: str, new_parent: str, child_json: Mapping[str, Any]) -> list[tuple[str, str]]:
-    invalid: list[tuple[str, str]] = []
-    for blocker in _edge_ids(child_json, "dependencies", "blocks"):
-        other_parent = _issue_parent_id(runner, blocker)
-        if not new_parent or other_parent != new_parent:
-            invalid.append((child, blocker))
-    for dependent in _edge_ids(child_json, "dependents", "blocks"):
-        other_parent = _issue_parent_id(runner, dependent)
-        if not new_parent or other_parent != new_parent:
-            invalid.append((dependent, child))
-    return invalid
-
-
-def _dep_path_exists(runner: CommandRunner, start: str, target: str, seen: set[str] | None = None) -> bool:
-    seen = seen or set()
-    if start in seen:
-        return False
-    seen.add(start)
-    obj = _bd_issue_json_or_usage(runner, start, "clerk inbox graph")
-    for blocker in _edge_ids(obj, "dependencies", "blocks"):
-        if blocker == target or _dep_path_exists(runner, blocker, target, seen):
-            return True
-    return False
 
 
 def _claim_current_actor(runner: CommandRunner, root: Path, env: Mapping[str, str]) -> str:
@@ -744,6 +636,7 @@ def cmd_inbox_parent(_backend: str, _root: Path, argv: Sequence[str], runner: Co
         else:
             usage(f"clerk inbox parent {action}: unknown argument '{arg}'")
 
+    adapter = BdWorkGraphAdapter(runner)
     child_json = _bd_issue_json_or_usage(runner, child, f"clerk inbox parent {action}")
     if not _is_open_inbox(child_json):
         usage(f"clerk inbox parent {action}: {child} must be an open inbox item")
@@ -751,24 +644,33 @@ def cmd_inbox_parent(_backend: str, _root: Path, argv: Sequence[str], runner: Co
         parent_json = _bd_issue_json_or_usage(runner, parent, "clerk inbox parent set")
         if not _is_open_inbox(parent_json):
             usage(f"clerk inbox parent set: {parent} must be an open inbox parent")
-        if _parent_cycle_would_form(runner, child, parent):
+        try:
+            cycle = adapter.parent_cycle_would_form(child, parent)
+        except WorkGraphBackendError as exc:
+            _emit_stderr(exc.result)
+            backend_fail(f"inbox parent set failed — {exc}")
+        if cycle:
             usage(f"clerk inbox parent set: refusing parent cycle ({child} under {parent})")
 
-    invalid = _invalid_dep_edges_for_parent_move(runner, child, parent, child_json)
+    try:
+        invalid = adapter.invalid_blockers_for_parent_move(child, parent, child_json)
+    except WorkGraphBackendError as exc:
+        _emit_stderr(exc.result)
+        backend_fail(f"inbox parent {action} failed — {exc}")
     if invalid and not drop:
         usage(f"clerk inbox parent {action}: move would leave non-sibling dependency edges — rerun with --drop-invalid-deps to remove them")
     for dependent, blocker in invalid:
-        result = runner.run(["bd", "dep", "remove", dependent, blocker])
+        result = adapter.remove_blocker(dependent, blocker)
         _emit_stderr(result)
         if result.returncode != 0:
             backend_fail(f"inbox parent {action} failed — could not drop invalid dependency {dependent} -> {blocker}")
 
-    result = runner.run(["bd", "update", child, "--parent", parent])
+    result = adapter.set_parent(child, parent)
     _emit_stderr(result)
     if result.returncode != 0:
         backend_fail(f"inbox parent {action} failed — bd update --parent did not succeed for {child}")
     after_child = _bd_issue_json_or_backend(runner, child, f"inbox parent {action} failed — parent was not confirmed for {child}")
-    actual = str(after_child.get("parent") or "")
+    actual = parent_id(after_child)
     if actual != parent:
         backend_fail(f"inbox parent {action} failed — parent was not confirmed for {child}")
     for dependent, blocker in invalid:
@@ -794,21 +696,25 @@ def cmd_inbox_dep(_backend: str, _root: Path, argv: Sequence[str], runner: Comma
         usage(f"clerk inbox dep {action}: unknown argument '{argv[3]}'")
     if child == blocker:
         usage(f"clerk inbox dep {action}: an item cannot block itself")
+    adapter = BdWorkGraphAdapter(runner)
     child_json = _bd_issue_json_or_usage(runner, child, f"clerk inbox dep {action}")
     blocker_json = _bd_issue_json_or_usage(runner, blocker, f"clerk inbox dep {action}")
     if not _is_open_inbox(child_json):
         usage(f"clerk inbox dep {action}: {child} must be an open inbox item")
     if _is_ready_promoted(blocker_json):
         usage(f"clerk inbox dep {action}: {blocker} must be an inbox item, not a ready/promoted item")
-    child_parent = str(child_json.get("parent") or "")
-    blocker_parent = str(blocker_json.get("parent") or "")
-    if not child_parent or child_parent != blocker_parent:
+    if not shares_parent(child_json, blocker_json):
         usage(f"clerk inbox dep {action}: dependency edges are sibling-only; {child} and {blocker} must share the same immediate parent")
 
     if action == "add":
-        if _dep_path_exists(runner, blocker, child):
+        try:
+            cycle = adapter.dependency_path_exists(blocker, child)
+        except WorkGraphBackendError as exc:
+            _emit_stderr(exc.result)
+            backend_fail(f"inbox dep add failed — {exc}")
+        if cycle:
             usage(f"clerk inbox dep add: refusing dependency cycle ({child} blocked by {blocker})")
-        result = runner.run(["bd", "dep", "add", child, blocker])
+        result = adapter.add_blocker(child, blocker)
         _emit_stderr(result)
         if result.returncode != 0:
             backend_fail(f"inbox dep add failed — bd dep add did not succeed for {child} <- {blocker}")
@@ -817,7 +723,7 @@ def cmd_inbox_dep(_backend: str, _root: Path, argv: Sequence[str], runner: Comma
             backend_fail(f"inbox dep add failed — edge was not confirmed for {child} <- {blocker}")
         _success(f"dependency added {child} blocked-by {blocker}", env)
     else:
-        result = runner.run(["bd", "dep", "remove", child, blocker])
+        result = adapter.remove_blocker(child, blocker)
         _emit_stderr(result)
         if result.returncode != 0:
             backend_fail(f"inbox dep remove failed — bd dep remove did not succeed for {child} <- {blocker}")
@@ -846,9 +752,9 @@ def cmd_inbox_claim(_backend: str, root: Path, argv: Sequence[str], runner: Comm
         _claim_conflict(f"clerk: inbox claim refused — {id_} is already claimed by {holder}")
     if not _is_open_inbox(obj):
         usage(f"clerk inbox claim: {id_} must be an open inbox item (not already in progress)")
-    if _open_blockers(obj):
+    if has_open_blockers(obj):
         usage(f"clerk inbox claim: {id_} has open blockers — claim an unblocked frontier item")
-    if _open_children(obj):
+    if has_open_children(obj):
         usage(f"clerk inbox claim: {id_} has open children — claim a leaf item, not its parent")
     me = _claim_current_actor(runner, root, env)
     result = runner.run(["bd", "update", id_, "--claim"])
@@ -903,9 +809,9 @@ def cmd_inbox_resolve(_backend: str, root: Path, argv: Sequence[str], runner: Co
         me = _claim_current_actor(runner, root, env)
         if holder != me:
             _claim_conflict(f"clerk: inbox resolve refused — {id_} is claimed by {holder}")
-    if _open_blockers(obj):
+    if has_open_blockers(obj):
         usage(f"clerk inbox resolve: {id_} has open blockers — resolve blockers first")
-    if _open_children(obj):
+    if has_open_children(obj):
         usage(f"clerk inbox resolve: {id_} has open children — resolve or reparent children first")
     text = _read_nonempty_text_arg("clerk inbox resolve", argv[1:])
     ts = _utc_timestamp()
