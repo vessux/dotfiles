@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
-ADR15 = "ADR 0015 — umbel/docs/adr/0015-clerk-opaque-workflow-verb-facade.md"
+ADR15 = "ADR 0015 — clerk/docs/adr/0015-clerk-opaque-workflow-verb-facade.md"
 ADR16 = "ADR 0016 — umbel/docs/adr/0016-delivery-gate-acceptance-proof-and-judgment-loops.md"
-ADR17 = "ADR 0017 — umbel/docs/adr/0017-tier-retired-backlog-location-and-merge-gate-axes.md"
+ADR17 = "ADR 0017 — clerk/docs/adr/0017-tier-retired-backlog-location-and-merge-gate-axes.md"
 
 TOP_LEVEL_VERBS = ("capture", "sync", "doctor", "glean")
 NOUN_VERBS: dict[str, tuple[str, ...]] = {

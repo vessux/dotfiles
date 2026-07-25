@@ -2,7 +2,7 @@
 status: accepted
 ---
 
-# Delivery-gate: server-side proof classes, acceptance criteria in the definition of ready, and the judgment-loop law
+# Delivery validation: acceptance criteria in ready and the judgment-loop law
 
 Merge is the gating point of delivery, but on a no-CI repo "green" is vacuous, and client-side
 discipline is the compliance-decay class dotfiles-b6r documents (the agent that skips the method
@@ -192,3 +192,15 @@ canonical work branch is the claim lock (ADR 0011), so recreating it outside `cl
 lock, and the rename destroys the evidence ref that the impediment capture cites. Reusing a
 returned attempt as a re-delivery base is therefore a claim-side option (`claim --from-returned`,
 dotfiles-uky), not a returned-branch rename.
+
+## Amendment (2026-07-24): Clerk Project-gate mechanism moved to its own context
+
+The Project-gate adapter/configuration and Gate-result contract is now owned by
+[Clerk ADR 0019](../../../clerk/docs/adr/0019-project-gate-adapter-contract.md). It supersedes the
+former Clerk-owned fixed C1–C4 delivery-gate policy and defines the portable boundary through which
+Clerk invokes project-selected validation.
+
+This Umbel ADR continues to own the discovery/delivery judgment-loop law and the rule that
+Acceptance criteria are authored in Refinement before an implementer exists. A Project gate may
+choose stronger independent criterion verification, but its tools, evidence, and proof policy are
+not Umbel workflow policy.

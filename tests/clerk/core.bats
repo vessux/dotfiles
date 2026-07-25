@@ -320,7 +320,7 @@ EOF
 	[ "${lines[1]}" = '  usage: clerk capture "<title>" [--stdin|--type <type>|--impediment|--parent <id>|--blocked-by <id>...]' ]
 	[ "${lines[2]}" = '  runs: bd create "<title>" [--stdin] [--type ...] [--parent ...] [--deps ...]           (backlog: bd|gh)' ]
 	[ "${lines[3]}" = '        (GitHub-backed repos use GitHub only after inbox ready promotion)' ]
-	[ "${lines[4]}" = '  see:  ADR 0015 — umbel/docs/adr/0015-clerk-opaque-workflow-verb-facade.md' ]
+	[ "${lines[4]}" = '  see:  ADR 0015 — clerk/docs/adr/0015-clerk-opaque-workflow-verb-facade.md' ]
 }
 
 @test "--explain backlog submit points at the delivery gate (ADR 0016)" {
@@ -334,7 +334,7 @@ EOF
 	run "$CLERK" --explain doctor
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"reads .clerk"* ]]
-	[[ "$output" == *"ADR 0017 — umbel/docs/adr/0017-tier-retired-backlog-location-and-merge-gate-axes.md"* ]]
+	[[ "$output" == *"ADR 0017 — clerk/docs/adr/0017-tier-retired-backlog-location-and-merge-gate-axes.md"* ]]
 }
 
 @test "trailing --explain (clerk <noun> <verb> --explain) equals the leading form" {
