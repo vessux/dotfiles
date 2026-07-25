@@ -93,29 +93,36 @@ repo_root() {
 
 # Parse the .clerk marker at $1. Echoes the backend (bd|gh) on success.
 # Returns 1 when the file is missing, 2 when present but invalid.
-# Format (ADR 0017 manifest v0): a single directive line `backlog: bd|gh`;
-# surrounding whitespace and `#` comments are tolerated.
+# Format (ADR 0017 manifest v1): one `backlog: bd|gh` directive and an optional
+# `project-gate: <repository-relative-config>` directive; surrounding whitespace
+# and `#` comments are tolerated. The Python Project-gate boundary validates paths.
 read_marker() {
-	local file="$1" line content=""
+	local file="$1" line backend="" project_gate="" value
 	[ -f "$file" ] || return 1
 	while IFS= read -r line || [ -n "$line" ]; do
 		line="${line%%#*}"                       # strip comments
 		line="${line#"${line%%[![:space:]]*}"}"  # ltrim
 		line="${line%"${line##*[![:space:]]}"}"  # rtrim
 		[ -n "$line" ] || continue
-		[ -z "$content" ] || return 2            # more than one directive line
-		content="$line"
+		case "$line" in
+			backlog:*)
+				[ -z "$backend" ] || return 2
+				value="${line#backlog:}"
+				value="${value#"${value%%[![:space:]]*}"}"
+				case "$value" in bd | gh) backend="$value" ;; *) return 2 ;; esac
+				;;
+			project-gate:*)
+				[ -z "$project_gate" ] || return 2
+				value="${line#project-gate:}"
+				value="${value#"${value%%[![:space:]]*}"}"
+				[ -n "$value" ] || return 2
+				project_gate="$value"
+				;;
+			*) return 2 ;;
+		esac
 	done <"$file"
-	case "$content" in
-		backlog:*) ;;
-		*) return 2 ;;
-	esac
-	content="${content#backlog:}"
-	content="${content#"${content%%[![:space:]]*}"}"
-	case "$content" in
-		bd | gh) printf '%s\n' "$content" ;;
-		*) return 2 ;;
-	esac
+	[ -n "$backend" ] || return 2
+	printf '%s\n' "$backend"
 }
 
 # Dispatch gate: every verb except doctor and --explain forms passes through here.
