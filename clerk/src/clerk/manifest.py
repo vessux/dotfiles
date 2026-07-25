@@ -19,6 +19,7 @@ class ManifestResult:
     status: ManifestStatus
     path: Path
     backend: str | None = None
+    project_gate: str | None = None
 
     @property
     def is_ok(self) -> bool:
@@ -30,36 +31,26 @@ def _directive(line: str) -> str:
     return line.strip()
 
 
-def read_manifest(path: Path) -> ManifestResult:
-    """Parse manifest v0 from *path*.
+def parse_manifest(text: str, path: Path) -> ManifestResult:
+    """Parse manifest content from *path* for both checkout and Git-tree reads."""
 
-    Valid v0 is exactly one non-comment directive: ``backlog: bd`` or
-    ``backlog: gh``. Surrounding whitespace and trailing comments are accepted.
-    Missing files are reported separately from present-but-invalid manifests;
-    multiple directive lines are ambiguous, which callers present with the same
-    public invalid-marker diagnostic used by the legacy shell contract.
-    """
+    directives = [directive for raw in text.splitlines() if (directive := _directive(raw))]
+    backlog = [line[len("backlog:") :].strip() for line in directives if line.startswith("backlog:")]
+    gates = [line[len("project-gate:") :].strip() for line in directives if line.startswith("project-gate:")]
+    if len(backlog) != 1 or len(gates) > 1 or len(directives) != len(backlog) + len(gates):
+        return ManifestResult(ManifestStatus.INVALID if not directives else ManifestStatus.AMBIGUOUS, path)
+    backend = backlog[0]
+    if backend not in {"bd", "gh"}:
+        return ManifestResult(ManifestStatus.INVALID, path)
+    return ManifestResult(ManifestStatus.OK, path, backend, gates[0] if gates else None)
+
+
+def read_manifest(path: Path) -> ManifestResult:
+    """Read and parse a v1 manifest from the working tree."""
 
     if not path.is_file():
         return ManifestResult(ManifestStatus.MISSING, path)
-
-    directives: list[str] = []
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            for raw in handle:
-                directive = _directive(raw)
-                if directive:
-                    directives.append(directive)
+        return parse_manifest(path.read_text(encoding="utf-8"), path)
     except OSError:
         return ManifestResult(ManifestStatus.INVALID, path)
-
-    if len(directives) != 1:
-        return ManifestResult(ManifestStatus.INVALID if not directives else ManifestStatus.AMBIGUOUS, path)
-
-    directive = directives[0]
-    if not directive.startswith("backlog:"):
-        return ManifestResult(ManifestStatus.INVALID, path)
-    backend = directive[len("backlog:") :].strip()
-    if backend not in {"bd", "gh"}:
-        return ManifestResult(ManifestStatus.INVALID, path)
-    return ManifestResult(ManifestStatus.OK, path, backend)

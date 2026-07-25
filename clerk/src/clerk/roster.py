@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
-ADR15 = "ADR 0015 — umbel/docs/adr/0015-clerk-opaque-workflow-verb-facade.md"
+ADR15 = "ADR 0015 — clerk/docs/adr/0015-clerk-opaque-workflow-verb-facade.md"
 ADR16 = "ADR 0016 — umbel/docs/adr/0016-delivery-gate-acceptance-proof-and-judgment-loops.md"
-ADR17 = "ADR 0017 — umbel/docs/adr/0017-tier-retired-backlog-location-and-merge-gate-axes.md"
+ADR17 = "ADR 0017 — clerk/docs/adr/0017-tier-retired-backlog-location-and-merge-gate-axes.md"
 
 TOP_LEVEL_VERBS = ("capture", "sync", "doctor", "glean")
 NOUN_VERBS: dict[str, tuple[str, ...]] = {
@@ -179,16 +179,16 @@ EXPLAIN_TEXT: dict[str, tuple[str, ...]] = {
         f"  see:  {ADR16}",
     ),
     "backlog submit": (
-        "clerk backlog submit — open the unit's PR (once per unit; iteration repeats finish)",
-        "  usage: clerk backlog submit <id> <proof.json|->   (legacy: --body-file <path>)",
-        "  runs: consumes proof JSON, renders the PR body with the unit criteria and Clerk-run checks, runs clerk backlog gate as a local preflight, pushes delivery/<id>, then gh pr create; never arms auto-merge",
-        f"  see:  {ADR16}",
+        "clerk backlog submit — invoke the configured Project gate for a delivery Work",
+        "  usage: clerk backlog submit <id>",
+        "  runs: reads project-gate config and adapter with git show from the trusted default branch, sends one structured run request, and relays its generic Gate result; a Clerk-owned pass uses git push and gh pr create for the assessed head",
+        "  see:  ADR 0019 — clerk/docs/adr/0019-project-gate-adapter-contract.md",
     ),
     "backlog gate": (
-        "clerk backlog gate — validate delivery proof classes C1-C4",
-        "  runs: C1 branch/link/current protocol checks; C2 PR-body verification schema check; C3 bats tests/clerk (parallel with --jobs when GNU parallel/rush is available) plus shellcheck bin/; C4 one evidence line per acceptance criterion",
-        "        local mode: --branch delivery/<id> --body-file <file>; CI mode: reads GITHUB_* and gh pr view",
-        f"  see:  {ADR16}",
+        "clerk backlog gate — reconcile one pending Project-gate run",
+        "  usage: clerk backlog gate <id>",
+        "  runs: reads the saved opaque run.id from git-managed Gate metadata and supplies it to the configured adapter status operation; refuses when no pending Gate run exists",
+        "  see:  ADR 0019 — clerk/docs/adr/0019-project-gate-adapter-contract.md",
     ),
     "backlog finish": (
         "clerk backlog finish — reconcile a submitted unit to done",

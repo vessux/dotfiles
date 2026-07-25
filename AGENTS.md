@@ -16,8 +16,8 @@ may describe lower-level storage details for maintenance.
 
 ## Domain docs
 
-Multi-context; `umbel/` is the first documented context (ADRs at `umbel/docs/adr/`). See
-`docs/agents/domain.md`.
+Multi-context; see `CONTEXT-MAP.md` for the documented Umbel and Clerk contexts and their ADRs.
+See `docs/agents/domain.md`.
 
 ## Agent skills
 
@@ -33,5 +33,5 @@ The canonical triage roles map to Clerk inbox/backlog dispositions, not tracker 
 
 ### Domain docs
 
-This is a multi-context repo: root ADRs live in `docs/adr/`, and Umbel context docs live under
-`umbel/`. See `docs/agents/domain.md`.
+This is a multi-context repo: see `CONTEXT-MAP.md` for context docs; root ADRs live in
+`docs/adr/`. See `docs/agents/domain.md`.

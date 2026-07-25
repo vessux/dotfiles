@@ -5,9 +5,15 @@ setup() {
 	REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
 }
 
-@test "repo commits the Clerk marker for this backlog" {
+@test "repo commits the Clerk marker and Project-gate configuration" {
 	cd "$REPO_ROOT"
-	[ "$(cat .clerk)" = "backlog: bd" ]
+	[ "$(cat .clerk)" = $'backlog: bd\nproject-gate: clerk/project-gate.json' ]
+}
+
+@test "GitHub validation invokes the project-owned adapter, not Clerk reconciliation" {
+	cd "$REPO_ROOT"
+	grep -q 'clerk/project-gate run' .github/workflows/delivery-gate.yml
+	! grep -q 'bin/clerk backlog gate' .github/workflows/delivery-gate.yml
 }
 
 @test "CLAUDE layer names Clerk, not storage backends" {

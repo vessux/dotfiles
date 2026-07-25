@@ -16,7 +16,9 @@ from .commands import MUTATION_HANDLERS, QUERY_HANDLERS
 from .roster import NOUN_VERBS, TOP_LEVEL_VERBS
 
 PYTHON_OWNED_DIRECT_PATHS: frozenset[tuple[str, ...]] = frozenset(
-    {("doctor",), ("--version",), ("-V",), ("--help",), ("-h",)} | set(QUERY_HANDLERS) | set(MUTATION_HANDLERS)
+    {("doctor",), ("--version",), ("-V",), ("--help",), ("-h",), ("backlog", "submit"), ("backlog", "gate")}
+    | set(QUERY_HANDLERS)
+    | set(MUTATION_HANDLERS)
 )
 
 

@@ -37,5 +37,13 @@ jobs:
           sudo install -m 0755 "$(go env GOPATH)/bin/bd" /usr/local/bin/bd
           bd --version | grep 'bd version 1.0.4'
 
-      - name: delivery-gate
-        run: bin/clerk backlog gate
+      - name: project-gate
+        run: |
+          head=$(git rev-parse HEAD)
+          request=$(jq -cn \
+            --arg branch "${GITHUB_HEAD_REF}" \
+            --arg commit "$head" \
+            --arg worktree "$GITHUB_WORKSPACE" \
+            '{work: {id: "pull-request", title: "Pull request validation", acceptance_criteria: "Project-gate CI validation"}, delivery: {branch: $branch, starting_commit: $commit, worktree: $worktree}, submission_owner: "clerk"}')
+          printf '%s\n' "$request" | clerk/project-gate run | tee result.json
+          jq -e --arg head "$head" '.status == "passed" and .assessed_commit == $head' result.json

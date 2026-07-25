@@ -1,16 +1,17 @@
 # Domain Docs
 
 How the engineering skills should consume this repo's domain documentation when exploring the
-codebase. This repo is **multi-context**: `umbel/` is the first documented context, with more
-contexts added only when they need their own vocabulary or decisions.
+codebase. This repo is **multi-context**: Umbel and Clerk are documented contexts; more are added
+only when they need their own vocabulary or decisions.
 
 ## Before exploring, read these
 
 - **`CONTEXT-MAP.md`** at the repo root, if it exists — it points at one `CONTEXT.md` per context.
   Read the `CONTEXT.md` for the context you're working in.
-- **`<context>/CONTEXT.md`** — currently `umbel/CONTEXT.md` for Umbel subsystem work.
-- **`<context>/docs/adr/`** — read ADRs that touch the area you're about to work in. For Umbel work
-  that's **`umbel/docs/adr/`**. System-wide decisions live at **`docs/adr/`**.
+- **`<context>/CONTEXT.md`** — read the context that owns the area: currently
+  `umbel/CONTEXT.md` or `clerk/CONTEXT.md`.
+- **`<context>/docs/adr/`** — read ADRs that touch the area: currently
+  `umbel/docs/adr/` or `clerk/docs/adr/`. System-wide decisions live at `docs/adr/`.
 
 If any of these files don't exist, proceed silently. The producer skills create them lazily when a
 term or decision is actually resolved.
@@ -21,14 +22,16 @@ term or decision is actually resolved.
 /
 ├── CONTEXT-MAP.md                ← lists contexts (lazily created)
 ├── docs/adr/                     ← system-wide decisions
-└── umbel/                        ← first documented context
-    ├── CONTEXT.md                ← Umbel glossary
-    └── docs/adr/                 ← Umbel decisions
-        └── NNNN-*.md             ← numbered ADRs; list the dir to read them
+├── umbel/                        ← discovery/delivery workflow context
+│   ├── CONTEXT.md
+│   └── docs/adr/
+├── clerk/                        ← workflow-verb facade context
+│   ├── CONTEXT.md
+│   └── docs/adr/
 ```
 
-Most non-`umbel/` dotfile areas (zsh, nvim, tmux, git, etc.) carry no domain language yet and need
-no `CONTEXT.md` until a real vocabulary or decision record emerges.
+Other dotfile areas (zsh, nvim, tmux, git, etc.) carry no domain language yet and need no
+`CONTEXT.md` until a real vocabulary or decision record emerges.
 
 ## Use the glossary's vocabulary
 
