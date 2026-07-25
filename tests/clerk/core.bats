@@ -238,6 +238,14 @@ EOF
 	[ "$output" = "clerk: invalid .clerk marker at $repo/.clerk — run 'clerk doctor' to diagnose it" ]
 }
 
+@test "legacy workflow fallback accepts the optional project-gate directive" {
+	repo=$(make_repo legacy_gate $'backlog: bd\nproject-gate: gate.json')
+	cd "$repo"
+	run env CLERK_FORCE_LEGACY=1 "$CLERK" backlog finish
+	[ "$status" -eq 2 ]
+	[[ "$output" != *"invalid .clerk marker"* ]]
+}
+
 @test "marker tolerates surrounding whitespace and # comments" {
 	repo=$(make_repo losemarker -)
 	printf '%s\n' \

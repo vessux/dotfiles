@@ -264,11 +264,25 @@ def _close_work(backend: str, runner: CommandRunner, id_: str) -> None:
         backend_fail("project gate failed — could not record project-gate delivery completion")
 
 
-def _handoff(backend: str, runner: CommandRunner, root: Path, branch: str, title: str, work_id: str, short: str) -> None:
+def _handoff(backend: str, runner: CommandRunner, root: Path, branch: str, title: str, work_id: str, short: str, summary: str) -> None:
     result = _git(runner, root, ["push", "-u", "origin", branch])
     if result.returncode != 0:
         backend_fail(f"submit failed — could not push {branch} to origin")
-    result = runner.run(["gh", "pr", "create", "--head", branch, "--base", "main", "--title", f"{title} ({work_id})"])
+    result = runner.run(
+        [
+            "gh",
+            "pr",
+            "create",
+            "--head",
+            branch,
+            "--base",
+            "main",
+            "--title",
+            f"{title} ({work_id})",
+            "--body",
+            f"## Project gate\n\n{summary}",
+        ]
+    )
     _emit_stderr(result)
     if result.returncode != 0:
         backend_fail("submit failed — gh pr create did not succeed")
@@ -288,7 +302,7 @@ def _finish_terminal(backend: str, runner: CommandRunner, root: Path, config: Ga
         head = _git(runner, root, ["rev-parse", "HEAD"])
         if head.returncode != 0 or head.stdout.strip() != result.assessed_commit:
             backend_fail("project gate failed — passed assessed_commit is not the current delivery worktree head")
-        _handoff(backend, runner, root, branch, title, work_id, short)
+        _handoff(backend, runner, root, branch, title, work_id, short, result.summary)
         _success(f"submitted {work_id} — project gate passed; PR created", env)
         return 0
     if not result.delivery_completed:

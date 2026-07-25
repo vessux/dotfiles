@@ -119,6 +119,7 @@ claimable_work() { # $1=repo
 	run "$CLERK" backlog submit "$id"
 	[ "$status" -eq 0 ]
 	grep -q 'pr create' "$BATS_TEST_TMPDIR/gh.calls"
+	grep -q -- '--body' "$BATS_TEST_TMPDIR/gh.calls"
 }
 
 @test "pending runs require an id and only reconciliation invokes status" {
