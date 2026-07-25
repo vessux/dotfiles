@@ -323,11 +323,11 @@ EOF
 	[ "${lines[4]}" = '  see:  ADR 0015 — clerk/docs/adr/0015-clerk-opaque-workflow-verb-facade.md' ]
 }
 
-@test "--explain backlog submit points at the delivery gate (ADR 0016)" {
+@test "--explain backlog submit describes the Project-gate boundary (ADR 0019)" {
 	run "$CLERK" --explain backlog submit
 	[ "$status" -eq 0 ]
-	[[ "$output" == *"gh pr create"* ]]
-	[[ "$output" == *"ADR 0016 — umbel/docs/adr/0016-delivery-gate-acceptance-proof-and-judgment-loops.md"* ]]
+	[[ "$output" == *"trusted default branch"* ]]
+	[[ "$output" == *"ADR 0019 — clerk/docs/adr/0019-project-gate-adapter-contract.md"* ]]
 }
 
 @test "--explain doctor points at the marker manifest (ADR 0017)" {

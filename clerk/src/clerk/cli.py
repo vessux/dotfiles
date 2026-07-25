@@ -8,10 +8,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from . import __version__
-from .commands import MUTATION_HANDLERS, QUERY_HANDLERS, run_mutation, run_query
+from .commands import ClerkExit, MUTATION_HANDLERS, QUERY_HANDLERS, run_mutation, run_query
 from .doctor import repo_root, run_doctor
 from .legacy import run_legacy
 from .manifest import ManifestStatus, read_manifest
+from .proc import CommandRunner
+from .project_gate import cmd_backlog_gate, cmd_backlog_submit
 from .roster import EXPLAIN_TEXT, NOUN_VERBS, ROSTER_LINES, TOP_LEVEL_VERBS, roster_text, verb_label
 
 # The Python core owns diagnostics, help/explain/version, manifest gating,
@@ -20,11 +22,13 @@ from .roster import EXPLAIN_TEXT, NOUN_VERBS, ROSTER_LINES, TOP_LEVEL_VERBS, ros
 # Unported workflow verb bodies remain on the shell fallback for this slice.
 PYTHON_QUERY_VERBS: frozenset[tuple[str, ...]] = frozenset(QUERY_HANDLERS)
 PYTHON_MUTATION_VERBS: frozenset[tuple[str, ...]] = frozenset(MUTATION_HANDLERS)
+PYTHON_PROJECT_GATE_VERBS: frozenset[tuple[str, ...]] = frozenset({("backlog", "submit"), ("backlog", "gate")})
 
 LEGACY_WORKFLOW_VERBS: frozenset[tuple[str, ...]] = frozenset(
     ({("capture",), ("sync",), ("glean",)} | {(noun, verb) for noun, verbs in NOUN_VERBS.items() for verb in verbs})
     - PYTHON_QUERY_VERBS
     - PYTHON_MUTATION_VERBS
+    - PYTHON_PROJECT_GATE_VERBS
 )
 
 # Kept explicit for the legacy public contract: unknown verbs are exit 2 with
@@ -193,6 +197,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             return context
         root, backend = context
         return run_mutation(path, backend, root, remaining)
+
+    if path in PYTHON_PROJECT_GATE_VERBS:
+        context = _manifest_context(path)
+        if isinstance(context, int):
+            return context
+        root, backend = context
+        try:
+            handler = cmd_backlog_submit if path == ("backlog", "submit") else cmd_backlog_gate
+            return handler(backend, root, remaining, CommandRunner(), os.environ)
+        except ClerkExit as exc:
+            return exc.code
 
     if path in LEGACY_WORKFLOW_VERBS:
         refused = _manifest_gate(path)

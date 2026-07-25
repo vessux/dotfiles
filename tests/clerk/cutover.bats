@@ -5,9 +5,9 @@ setup() {
 	REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
 }
 
-@test "repo commits the Clerk marker for this backlog" {
+@test "repo commits the Clerk marker and Project-gate configuration" {
 	cd "$REPO_ROOT"
-	[ "$(cat .clerk)" = "backlog: bd" ]
+	[ "$(cat .clerk)" = $'backlog: bd\nproject-gate: clerk/project-gate.json' ]
 }
 
 @test "CLAUDE layer names Clerk, not storage backends" {

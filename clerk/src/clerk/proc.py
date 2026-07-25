@@ -25,12 +25,14 @@ class CommandRunner:
         *,
         cwd: str | Path | None = None,
         env: Mapping[str, str] | None = None,
+        input: str | None = None,
     ) -> CommandResult:
         try:
             proc = subprocess.run(
                 list(args),
                 cwd=str(cwd) if cwd is not None else None,
                 env=dict(env) if env is not None else None,
+                input=input,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
