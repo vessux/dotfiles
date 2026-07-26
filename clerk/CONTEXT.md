@@ -31,6 +31,12 @@ Clerk's delivery collection: refinement-complete Work. A Backlog item may be wai
 pickable when graph state has open children or blockers.
 _Avoid_: queue
 
+**Work graph adapter**:
+The backend binding behind Clerk's verb facade. It translates backend records and edges into Work,
+owns ready/pickable/waiting and parent/child invariants, and exposes graph operations to command
+handlers without leaking backend command shapes.
+_Avoid_: tracker helper, command-handler graph logic
+
 **Claim**:
 The atomic acquisition of one pickable Work item for delivery. A Claim creates the canonical delivery
 branch/worktree and is distinct from a planning claim or an assignee.
