@@ -35,6 +35,14 @@ _BD_SHIM_COORD_ARG="__bd_shim_coordinator_loop"
 _BD_SHIM_SRC="${BASH_SOURCE[0]}"
 _BD_SHIM_SELF=""
 
+# Resolved .beads directory and the two metadata.json fields we care about.
+# Deliberately NOT named BEADS_DIR: that is bd's own env var, and assigning to it
+# here would clobber a caller's export. Initialised so `set -u` is safe when this
+# file is sourced (the test harness) without _bd_shim_main running.
+_BD_BEADS_DIR=""
+_BD_META_MODE=""
+_BD_META_DB=""
+
 _now() { date +%s; }
 
 # Absolute, symlink-resolved path of $1 without GNU `realpath`/`readlink -f` (macOS ships
@@ -95,15 +103,55 @@ _is_mutating() {
 	esac
 }
 
+# Nearest .beads directory, walking up from $PWD. Honours an inherited BEADS_DIR (bd's own
+# override). Pure bash — no subprocess — because this runs on every invocation including the
+# read fast-path, which is otherwise a straight exec.
+_locate_beads() {
+	if [ -n "${BEADS_DIR:-}" ]; then _BD_BEADS_DIR="$BEADS_DIR"; return 0; fi
+	local d="$PWD"
+	while : ; do
+		if [ -d "$d/.beads" ]; then _BD_BEADS_DIR="$d/.beads"; return 0; fi
+		if [ "$d" = "/" ] || [ -z "$d" ]; then break; fi
+		d=${d%/*}; [ -n "$d" ] || d="/"
+	done
+	_BD_BEADS_DIR=""
+	return 1
+}
+
+# Pull dolt_mode / dolt_database out of metadata.json without forking: `$(<file)` is a bash
+# builtin redirection and the rest is parameter expansion (bash 3.2 safe — no jq, no grep).
+_read_beads_meta() {
+	_BD_META_MODE=""; _BD_META_DB=""
+	[ -n "$_BD_BEADS_DIR" ] && [ -r "$_BD_BEADS_DIR/metadata.json" ] || return 1
+	local raw t
+	raw=$(<"$_BD_BEADS_DIR/metadata.json")
+	case "$raw" in *'"dolt_mode"'*)
+		t=${raw#*\"dolt_mode\"}; t=${t#*:}; t=${t#*\"}; _BD_META_MODE=${t%%\"*} ;;
+	esac
+	case "$raw" in *'"dolt_database"'*)
+		t=${raw#*\"dolt_database\"}; t=${t#*:}; t=${t#*\"}; _BD_META_DB=${t%%\"*} ;;
+	esac
+	return 0
+}
+
 # Populate the coordinator's environment. State (lock/dirty/ts/log) is machine-local under
 # $XDG_STATE_HOME and keyed per beads database — a global PATH shim must not let one repo's
-# coordinator (holding the single-instance lock) swallow another repo's pending push. Key by
-# the git toplevel (where the db lives) with a $PWD fallback; cksum keeps it POSIX.
+# coordinator (holding the single-instance lock) swallow another repo's pending push.
+#
+# Keyed on the DATABASE, not the git worktree: on the shared Dolt server several worktrees of
+# one repo resolve to a single database, and they must share one coordinator or two of them can
+# commit/push concurrently. An embedded database lives inside the checkout, so there the .beads
+# directory is the identity. cksum keeps the hashing POSIX.
 _setup_state() {
-	local root key
-	root=$(git rev-parse --show-toplevel 2>/dev/null) || root=""
-	[ -n "$root" ] || root="$PWD"
-	key=$(printf '%s' "$root" | cksum | cut -d' ' -f1)
+	local ident key
+	if [ "$_BD_META_MODE" = "server" ] && [ -n "$_BD_META_DB" ]; then
+		ident="server:$_BD_META_DB"
+	elif [ -n "$_BD_BEADS_DIR" ]; then
+		ident="embedded:$_BD_BEADS_DIR"
+	else
+		ident="cwd:$PWD"
+	fi
+	key=$(printf '%s' "$ident" | cksum | cut -d' ' -f1)
 	STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/bd-shim/$key"
 	mkdir -p "$STATE_DIR" 2>/dev/null || true
 	QUIET="${BD_SHIM_QUIET:-2}"
@@ -200,6 +248,39 @@ _bd_shim_main() {
 			*) sub="$a"; break ;;
 		esac
 	done
+
+	_locate_beads || true
+	_read_beads_meta || true
+
+	# Fresh-clone guard. config.yaml is tracked; metadata.json is NOT (it records dolt_mode,
+	# which differs per host — embedded on the Mac, server on the devbox). A checkout with the
+	# former and not the latter is therefore a clone that was never bootstrapped, and bd's
+	# behaviour there is to warn and fall back to the default database "beads" — i.e. report an
+	# empty backlog and carry on. For an agent-facing tracker a silent "0 issues" is the worst
+	# possible failure, so turn it into a loud one. Setup/diagnostic verbs are exempt, above all
+	# `bootstrap`, which is the fix.
+	if [ -n "$_BD_BEADS_DIR" ] && [ -z "$_BD_META_MODE" ] && [ -r "$_BD_BEADS_DIR/config.yaml" ]; then
+		case "$sub" in
+			bootstrap|init|migrate|upgrade|doctor|where|help|version|completion|setup|hooks|config|"") ;;
+			*)
+				printf 'bd-shim: %s has config.yaml but no metadata.json — this clone has never been bootstrapped.\n' "$_BD_BEADS_DIR" >&2
+				printf 'bd-shim: refusing "bd %s", which would silently use the default database and report an empty backlog.\n' "$sub" >&2
+				printf 'bd-shim: run `bd bootstrap` (or `bd bootstrap --dry-run` to see the plan first).\n' >&2
+				exit 69
+				;;
+		esac
+	fi
+
+	# Shared-server selection, PER PROJECT. bd only treats dolt_mode=server as the *shared*
+	# server when BEADS_DOLT_SHARED_SERVER is set; without it the same metadata resolves to
+	# "per-project" mode on port 0 and bd will spawn a stray server of its own. Exporting it
+	# globally (e.g. from /etc/zsh/zshenv) is not an option: bd then auto-rewrites ANY embedded
+	# project's metadata.json to dolt_mode=server ("Auto-repaired: dolt_mode updated to
+	# server"), breaking every project not yet migrated. Deriving it from this project's own
+	# metadata keeps migrations one-at-a-time and leaves embedded repos untouched.
+	if [ "$_BD_META_MODE" = "server" ] && [ -z "${BEADS_DOLT_SHARED_SERVER:-}" ]; then
+		export BEADS_DOLT_SHARED_SERVER=1
+	fi
 
 	# Reads / sync-plumbing / setup: exec the real bd — zero post-overhead and a perfect
 	# passthrough of stdin/stdout/stderr/tty (matters for create-form and edit-in-$EDITOR).

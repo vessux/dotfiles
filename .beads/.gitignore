@@ -66,5 +66,17 @@ db.sqlite
 bd.db
 # NOTE: Do NOT add negation patterns here.
 # They would override fork protection in .git/info/exclude.
-# Config files (metadata.json, config.yaml) are tracked by git by default
-# since no pattern above ignores them.
+# config.yaml is tracked by git (shared, host-independent settings).
+# metadata.json is deliberately NOT tracked — see below.
+
+# metadata.json is host-local state, not shared config. It records dolt_mode,
+# which legitimately differs per machine: embedded on the Mac, server on devbox
+# (against the shared dolt sql-server). Tracking it makes the two hosts fight
+# over one file on every teleport git sync — and bd rewrites it unprompted
+# ("Auto-repaired: dolt_mode updated to ..."), so the conflict is unavoidable.
+#
+# A fresh clone therefore has no metadata.json and must be bootstrapped, which
+# is already what teleport's beads_fetch does for a new host. bin/bd refuses to
+# run against an un-bootstrapped clone rather than let bd fall back to the
+# default database and report an empty backlog.
+metadata.json
