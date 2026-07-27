@@ -134,6 +134,55 @@ _read_beads_meta() {
 	return 0
 }
 
+# Is THIS HOST provisioned to run the shared beads Dolt server? Tested by the presence of
+# ~/.beads/shared-server/beads-server.yaml — the config file homelab's `roles/beads_dolt`
+# ansible role writes (never bd itself; see homelab BEADS.md "Where each piece lives"). Three
+# candidates were considered:
+#   - a live probe (connect to 127.0.0.1:3308, or `systemctl --user is-active
+#     beads-dolt.service`): rejected outright — both fork a subprocess/socket, which this file's
+#     portability bar forbids outside the already-subprocess-heavy mutating path, and this check
+#     runs on `bootstrap`, which isn't that path.
+#   - `~/.beads/shared-server/` (the parent dir) or its `dolt/` data dir: both are weaker
+#     signals than the config file — the data dir in particular is where EVERY database's Dolt
+#     files live (`<data_dir>/<db>`, see BEADS.md landmine #8), so it would keep reporting "yes"
+#     forever after a decommission, long after the directory stopped meaning "there is a server
+#     here". The config file is the one artifact the role's own install step (not steady-state
+#     operation) is responsible for, making it the closer match for "is this host SET UP to run
+#     the server" rather than "is data present" or "was the server ever started".
+# A false positive (file present, server actually down or never started) is still safe: the
+# caller below only ever turns it into env vars for `bd bootstrap`, and bootstrap against a dead
+# server fails LOUD ("connection refused" against a real host:port) instead of today's silent
+# wrong-database success — strictly better, which is the whole reason this guard exists.
+_bd_shim_is_shared_server_host() {
+	[ -r "$HOME/.beads/shared-server/beads-server.yaml" ]
+}
+
+# Pull the flat `dolt.database: "<name>"` key out of config.yaml — NOT nested under a `dolt:`
+# mapping; verified against the three tracked config.yaml files this shim actually serves
+# (dotfiles/tuidriver/umbel), which all write it as a bare top-level key, double-quoted, alone
+# on its line. A `while read` loop over shell input redirection is a bash builtin (like
+# _read_beads_meta's `$(<file)`, no grep/sed/cat) — this path isn't the hot path (it only runs
+# for `bd bootstrap` on a fresh, not-yet-bootstrapped clone), but there's no reason to reach for
+# a subprocess when a builtin does the job just as simply. Sets _BD_CFG_DB="" and returns 1 if
+# the key is missing or the file can't be read; the caller turns that into an explicit error
+# ("add the key") rather than falling back to any guessed name.
+_read_config_database() {
+	_BD_CFG_DB=""
+	[ -n "$_BD_BEADS_DIR" ] && [ -r "$_BD_BEADS_DIR/config.yaml" ] || return 1
+	local line
+	while IFS= read -r line || [ -n "$line" ]; do
+		case "$line" in
+			'dolt.database:'*)
+				line=${line#dolt.database:}
+				while [ "${line# }" != "$line" ]; do line=${line# }; done
+				line=${line#\"}; line=${line%\"}
+				_BD_CFG_DB="$line"
+				;;
+		esac
+	done < "$_BD_BEADS_DIR/config.yaml"
+	[ -n "$_BD_CFG_DB" ]
+}
+
 # Populate the coordinator's environment. State (lock/dirty/ts/log) is machine-local under
 # $XDG_STATE_HOME and keyed per beads database — a global PATH shim must not let one repo's
 # coordinator (holding the single-instance lock) swallow another repo's pending push.
@@ -269,6 +318,51 @@ _bd_shim_main() {
 				exit 69
 				;;
 		esac
+
+		# The guard above just exempted `bootstrap` — but on a shared-server host its own
+		# advice is wrong. `bd bootstrap` has no --database flag (verified from its help); the
+		# only way to name the target database is BEADS_DOLT_SHARED_SERVER=1 *and*
+		# BEADS_DOLT_SERVER_DATABASE=<name> TOGETHER — bd 1.0.4 fails every partial combination
+		# SILENTLY (neither -> embedded engine, database "beads"; shared-server var alone ->
+		# shared engine, database still "beads"; database var alone -> embedded engine, a
+		# throwaway local .beads/embeddeddolt/<name> nobody wants). See homelab BEADS.md
+		# landmine #10. And bootstrap does not read THIS project's own tracked config.yaml
+		# `dolt.database` to fill that gap (landmine #11) — despite config.yaml's own comment
+		# insisting it does — because there is no metadata.json yet to establish the workspace
+		# that reading would require. So: on a shared-server host, derive the name ourselves and
+		# hand bootstrap both variables it needs, scoped to this one exec (never exported past
+		# it, and this is a one-shot `exec` invocation with no parent shell to leak into anyway).
+		#
+		# Restricted to `bootstrap` alone, not the whole exemption list above:
+		#   - it is the one verb landmine #10 is actually about, and the one this guard's exit-69
+		#     message sends the user to run;
+		#   - `init` looks similar but is a different code path for a BRAND-NEW project (flags,
+		#     not env — see BEADS.md "Adding a new project"), and on this guard's own
+		#     precondition (an EXISTING project's fresh clone) it fails on an already-existing
+		#     database regardless (landmine #14) — these env vars would not rescue it;
+		#   - `doctor`/`migrate`/`upgrade`/etc. are not documented anywhere as needing
+		#     BEADS_DOLT_SERVER_DATABASE, and exporting BEADS_DOLT_SHARED_SERVER ambiently for a
+		#     verb whose behaviour on a workspace-less checkout has never been verified is
+		#     exactly the kind of guess this repo's landmines exist to warn against (landmine #1:
+		#     the same var can auto-rewrite an unrelated embedded project's metadata.json to
+		#     server mode).
+		#
+		# A caller who has already set EITHER var is left alone (both checked with -z below) —
+		# same precedent as the shared-server-selection block just past this one: an explicit
+		# override is deliberate, not a gap to paper over.
+		if [ "$sub" = "bootstrap" ] && [ -z "${BEADS_DOLT_SHARED_SERVER:-}" ] \
+			&& [ -z "${BEADS_DOLT_SERVER_DATABASE:-}" ] && _bd_shim_is_shared_server_host
+		then
+			if _read_config_database; then
+				export BEADS_DOLT_SHARED_SERVER=1
+				export BEADS_DOLT_SERVER_DATABASE="$_BD_CFG_DB"
+			else
+				printf 'bd-shim: %s/config.yaml has no dolt.database key.\n' "$_BD_BEADS_DIR" >&2
+				printf 'bd-shim: this host runs the shared beads server, so bootstrap needs a database name from config.yaml — add a flat key, e.g. dolt.database: "%s", then re-run.\n' \
+					"$(basename "$(dirname "$_BD_BEADS_DIR")")" >&2
+				exit 69
+			fi
+		fi
 	fi
 
 	# Shared-server selection, PER PROJECT. bd only treats dolt_mode=server as the *shared*
