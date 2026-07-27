@@ -32,6 +32,13 @@ uv = "latest"
 # mise's uvx path — it parses off the package name. Use the `extras` option instead.
 "pipx:markitdown" = { version = "latest", extras = "pdf,docx,pptx,xlsx" }
 actionlint = "latest"
+# python — pinned because without it the mise shim shadows every `python3` with
+# macOS's system 3.9.6. Clerk is what made this visible: its launcher gates on
+# >=3.11 and was exiting 4 on every invocation, so `clerk` did nothing on the Mac
+# while still *looking* healthy — an abort that returns in ~100ms reads like a
+# fast success, and it silently poisoned a performance comparison against devbox
+# for two rounds. 3.13 over 3.14: it's already installed on both boxes.
+python = "3.13"
 
 # bun — JS runtime/bundler. Managed here so it's available cross-box (also wanted
 # for building plannotator from source on the devbox, and for openlock later).
