@@ -586,7 +586,8 @@ def cmd_capture(backend: str, _root: Path, argv: Sequence[str], runner: CommandR
         if parent and parent_id(blocker_json) != parent:
             usage(f"clerk capture: --blocked-by {blocker} must be a sibling under {parent}")
 
-    result = BdWorkGraphAdapter(runner).create(
+    graph = BdWorkGraphAdapter(runner)
+    result = graph.create(
         title,
         use_stdin=use_stdin,
         issue_type=issue_type,
@@ -600,6 +601,14 @@ def cmd_capture(backend: str, _root: Path, argv: Sequence[str], runner: CommandR
     seen = _bd_issue_json_or_backend(runner, id_, f"capture failed — {id_} was not confirmed after creation")
     if seen.get("id") != id_:
         backend_fail(f"capture failed — {id_} was not confirmed after creation")
+    if _is_ready_promoted(seen):
+        result = graph.remove_ready_label(id_)
+        _emit_stderr(result)
+        if result.returncode != 0:
+            backend_fail(f"capture failed — {id_} could not be restored to the Inbox")
+        seen = _bd_issue_json_or_backend(runner, id_, f"capture failed — {id_} was not confirmed after restoring it to the Inbox")
+        if seen.get("id") != id_ or _is_ready_promoted(seen):
+            backend_fail(f"capture failed — {id_} remained ready after creation")
     suffix = " (type: impediment)" if issue_type == "impediment" else ""
     _success(f"filed {id_}{suffix}", env)
     return 0
