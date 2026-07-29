@@ -425,8 +425,8 @@ JSON
 	run "$CLERK" backlog next
 	[ "$status" -eq 0 ]
 	[ "$output" = "Backlog (ready) — 2 item(s):
-  #57  ready GitHub delivery
-  #47  another ready GitHub delivery" ]
+  #57  ready  ready GitHub delivery
+  #47  ready  another ready GitHub delivery" ]
 	[[ "$output" != *"bd-only raw capture"* ]]
 	grep -F -q -- 'issue\x1flist\x1f--label\x1fready-for-agent' "$FAKE_GH_LOG"
 }

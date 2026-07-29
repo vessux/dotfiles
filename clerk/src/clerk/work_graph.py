@@ -7,6 +7,7 @@ edge representations, and full-set query details stay inside the adapter.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -87,6 +88,15 @@ def has_open_edges(value: dict[str, Any], collection: str, kind: str) -> bool:
 
 def is_ready_promoted(value: dict[str, Any]) -> bool:
     return "stage:ready" in (value.get("labels") or []) or str(value.get("close_reason") or "").startswith("promoted")
+
+
+_ACCEPTANCE_HEADING = re.compile(r"^#{1,6}\s*acceptance criteria|^acceptance criteria:?\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def has_acceptance_criteria(value: dict[str, Any]) -> bool:
+    if str(value.get("acceptance_criteria") or "").strip():
+        return True
+    return bool(_ACCEPTANCE_HEADING.search(f"{value.get('description') or ''}\n{value.get('design') or ''}"))
 
 
 def is_active_inbox(value: dict[str, Any]) -> bool:
@@ -203,6 +213,8 @@ class WorkGraph:
         pickable: list[Work] = []
         waiting: list[WaitingWork] = []
         for item in unclaimed:
+            if not has_acceptance_criteria(item.raw):
+                continue
             blockers = self.open_blockers(item)
             children = self.open_children(item)
             if blockers or children:

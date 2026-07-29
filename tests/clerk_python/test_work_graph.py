@@ -18,18 +18,19 @@ class FakeRunner:
 class BdWorkGraphAdapterTests(unittest.TestCase):
     def test_backlog_distinguishes_ready_pickable_and_waiting_in_one_snapshot(self):
         payload = [
-            {"id": "pick", "title": "Pick", "status": "open", "labels": ["stage:ready"]},
+            {"id": "pick", "title": "Pick", "status": "open", "labels": ["stage:ready"], "acceptance_criteria": "- pick"},
             {
                 "id": "blocked",
                 "title": "Blocked",
                 "status": "open",
                 "labels": ["stage:ready"],
+                "acceptance_criteria": "- blocked",
                 "dependencies": [{"type": "blocks", "depends_on_id": "blocker"}],
             },
             {"id": "blocker", "title": "Blocker", "status": "open"},
-            {"id": "parent", "title": "Parent", "status": "open", "labels": ["stage:ready"]},
+            {"id": "parent", "title": "Parent", "status": "open", "labels": ["stage:ready"], "acceptance_criteria": "- parent"},
             {"id": "child", "title": "Child", "status": "open", "parent": "parent"},
-            {"id": "claimed", "title": "Claimed", "status": "open", "labels": ["stage:ready"], "assignee": "agent"},
+            {"id": "claimed", "title": "Claimed", "status": "open", "labels": ["stage:ready"], "acceptance_criteria": "- claimed", "assignee": "agent"},
             {"id": "inbox", "title": "Inbox", "status": "open"},
         ]
         runner = FakeRunner(payload)
@@ -78,6 +79,7 @@ class BdWorkGraphAdapterTests(unittest.TestCase):
                 "title": "Parent",
                 "status": "open",
                 "labels": ["stage:ready"],
+                "acceptance_criteria": "- parent",
                 "dependencies": [{"type": "blocks", "depends_on_id": "blocker"}],
             },
             {"id": "blocker", "title": "Blocker", "status": "closed"},
@@ -88,6 +90,16 @@ class BdWorkGraphAdapterTests(unittest.TestCase):
 
         self.assertEqual([item.id for item in backlog.pickable], ["parent"])
         self.assertEqual(backlog.waiting, ())
+
+    def test_backlog_excludes_ready_labels_without_acceptance_criteria(self):
+        payload = [
+            {"id": "missing", "title": "Missing", "status": "open", "labels": ["stage:ready"]},
+            {"id": "valid", "title": "Valid", "status": "open", "labels": ["stage:ready"], "acceptance_criteria": "- valid"},
+        ]
+
+        backlog = BdWorkGraphAdapter(FakeRunner(payload)).backlog()
+
+        self.assertEqual([item.id for item in backlog.pickable], ["valid"])
 
 
 if __name__ == "__main__":

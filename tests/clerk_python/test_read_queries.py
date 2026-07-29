@@ -200,25 +200,27 @@ class QueryCommandTests(unittest.TestCase):
 
     def test_backlog_next_filters_ready_items_without_serial_show_fanout(self):
         rows = [
-            {"id": "pick", "title": "Pick", "status": "open", "labels": ["stage:ready"]},
+            {"id": "pick", "title": "Pick", "status": "open", "labels": ["stage:ready"], "acceptance_criteria": "- pick"},
             {
                 "id": "blocked",
                 "title": "Blocked",
                 "status": "open",
                 "labels": ["stage:ready"],
+                "acceptance_criteria": "- blocked",
                 "dependencies": [{"type": "blocks", "depends_on_id": "blocker"}],
             },
             {"id": "blocker", "title": "Blocker", "status": "open"},
-            {"id": "parent", "title": "Parent", "status": "open", "labels": ["stage:ready"]},
+            {"id": "parent", "title": "Parent", "status": "open", "labels": ["stage:ready"], "acceptance_criteria": "- parent"},
             {"id": "child", "title": "Child", "status": "open", "parent": "parent"},
-            {"id": "claimed", "title": "Claimed", "status": "open", "labels": ["stage:ready"], "assignee": "me"},
+            {"id": "claimed", "title": "Claimed", "status": "open", "labels": ["stage:ready"], "acceptance_criteria": "- claimed", "assignee": "me"},
+            {"id": "missing", "title": "Missing", "status": "open", "labels": ["stage:ready"]},
         ]
 
         code, out, _, calls = self.invoke(
             ("backlog", "next"), "bd", [], [lambda args: ok(args, json.dumps(rows))]
         )
         self.assertEqual(code, 0)
-        self.assertEqual(out, "Backlog (ready) — 1 item(s):\n  pick  Pick\n")
+        self.assertEqual(out, "Backlog (ready) — 1 item(s):\n  pick  ready  Pick\n")
         self.assertEqual(calls, [["bd", "list", "--all", "--readonly", "--json", "--limit", "0"]])
 
     def test_backlog_next_gh_lists_ready_for_agent_issues(self):
@@ -227,7 +229,7 @@ class QueryCommandTests(unittest.TestCase):
             ("backlog", "next"), "gh", [], [lambda args: ok(args, json.dumps(payload))]
         )
         self.assertEqual(code, 0)
-        self.assertEqual(out, "Backlog (ready) — 1 item(s):\n  #9  do the thing\n")
+        self.assertEqual(out, "Backlog (ready) — 1 item(s):\n  #9  ready  do the thing\n")
         self.assertEqual(calls, [["gh", "issue", "list", "--label", "ready-for-agent", "--json", "number,title"]])
 
     def test_show_not_found_is_usage_error(self):

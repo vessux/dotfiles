@@ -127,7 +127,7 @@ mk_ac_unit() { # $1 = title
 
 # -------------------------------------------------------------- backlog next -
 
-@test "backlog next (bd): includes a stage:ready+unblocked bead, excludes a non-ready open bead and a closed one; bd invoked with --readonly" {
+@test "backlog next (bd): includes ready Work and excludes non-ready, closed, and missing-criteria Work; bd invoked with --readonly" {
 	repo=$(make_bd_repo next1)
 	tracedbin="$BATS_TEST_TMPDIR/next1-tracedbin"
 	make_traced_bd "$tracedbin"
@@ -137,6 +137,8 @@ mk_ac_unit() { # $1 = title
 	cd "$repo"
 	ready_id=$(mk_ac_unit "ready and unblocked")
 	bd update "$ready_id" --add-label stage:ready >/dev/null
+	missing_id=$(bd create "ready label but no criteria" --silent)
+	bd update "$missing_id" --add-label stage:ready >/dev/null
 	notready_id=$(bd create "still in the inbox" --silent)
 	closed_id=$(bd create "long done" --silent)
 	bd close "$closed_id" --reason wontfix >/dev/null
@@ -144,10 +146,29 @@ mk_ac_unit() { # $1 = title
 	run "$CLERK" backlog next
 	[ "$status" -eq 0 ]
 	[[ "$output" == "Backlog (ready) — 1 item(s):
-  $ready_id  ready and unblocked" ]]
+  $ready_id  ready  ready and unblocked" ]]
+	[[ "$output" != *"$missing_id"* ]]
 	[[ "$output" != *"$notready_id"* ]]
 	[[ "$output" != *"$closed_id"* ]]
 	grep -q -- '--readonly' "$BD_TRACE_LOG"
+}
+
+@test "backlog next (bd): marks an otherwise-pickable returned attempt without changing the pool" {
+	repo=$(make_bd_repo next_returned)
+	add_origin "$repo"
+	cd "$repo"
+	normal=$(mk_ac_unit "normal Work")
+	returned=$(mk_ac_unit "returned Work")
+	bd update "$normal" --add-label stage:ready >/dev/null
+	bd update "$returned" --add-label stage:ready >/dev/null
+	short="${returned#*-}"
+	mk_returned_attempt "$repo" "$short" "returned backlog work"
+
+	run "$CLERK" backlog next
+	[ "$status" -eq 0 ]
+	[[ "$output" == "Backlog (ready) — 2 item(s):"$'\n'* ]]
+	[[ "$output" == *"  $normal  ready  normal Work"* ]]
+	[[ "$output" == *"  $returned  returned  returned Work"* ]]
 }
 
 @test "backlog next and waiting split pickable ready work from blocked-ready graph work" {
@@ -155,18 +176,21 @@ mk_ac_unit() { # $1 = title
 	cd "$repo"
 	pickable=$(mk_ac_unit "pickable")
 	blocked=$(mk_ac_unit "blocked ready")
+	claimed=$(mk_ac_unit "claimed ready")
 	blocker=$(bd create "blocker" --silent)
 	parent=$(bd create "ready parent" --acceptance "parent ac" --silent)
 	child=$(bd create "open child" --parent "$parent" --silent)
 	bd update "$pickable" --add-label stage:ready >/dev/null
 	bd update "$blocked" --add-label stage:ready >/dev/null
 	bd update "$parent" --add-label stage:ready >/dev/null
+	bd update "$claimed" --add-label stage:ready --claim >/dev/null
 	bd dep add "$blocked" "$blocker" >/dev/null
 
 	run "$CLERK" backlog next
 	[ "$status" -eq 0 ]
-	[[ "$output" == *"$pickable  pickable"* ]]
+	[[ "$output" == *"$pickable  ready  pickable"* ]]
 	! grep -F -q "  $blocked  " <<<"$output"
+	! grep -F -q "  $claimed  " <<<"$output"
 	! grep -F -q "  $parent  " <<<"$output"
 
 	run "$CLERK" backlog waiting
@@ -199,7 +223,7 @@ mk_ac_unit() { # $1 = title
 	run "$CLERK" backlog next
 	[ "$status" -eq 0 ]
 	[ "$output" = "Backlog (ready) — 1 item(s):
-  #9  do the thing" ]
+  #9  ready  do the thing" ]
 	grep -F -q -- 'issue\x1flist\x1f--label\x1fready-for-agent' "$FAKE_GH_LOG"
 }
 
