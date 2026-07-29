@@ -1,0 +1,12 @@
+*
+!.gitignore
+!index.ts
+!src/
+!src/**
+!test/
+!test/**
+!config/
+!config/**
+!README.md
+!LICENSE
+!package.json

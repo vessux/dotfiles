@@ -2,7 +2,9 @@
   "defaultProjectTrust": "ask",
   "enableAnalytics": false,
   "enableInstallTelemetry": false,
-  "extensions": [],
+  "extensions": [
+    "+extensions/pi-click-scroll/index.ts"
+  ],
   "npmCommand": [
     "mise",
     "exec",
