@@ -253,10 +253,20 @@ def _show_ref(runner: CommandRunner, root: Path, ref: str) -> bool:
     return _git(runner, root, ["show-ref", "--verify", "--quiet", ref]).returncode == 0
 
 
+def _returned_attempt_refs(runner: CommandRunner, root: Path, id_: str) -> tuple[bool, bool]:
+    if not (root / ".git").exists():
+        return False, False
+    main_root = _primary_repo_root(runner, root)
+    short = _returned_short_from_id(id_)
+    return (
+        _show_ref(runner, main_root, f"refs/heads/returned/{short}"),
+        _show_ref(runner, main_root, f"refs/remotes/origin/returned/{short}"),
+    )
+
+
 def returned_attempt_banner(runner: CommandRunner, root: Path, short: str, id_: str, dispose_hint: str) -> None:
     main_root = _primary_repo_root(runner, root)
-    local_present = _show_ref(runner, main_root, f"refs/heads/returned/{short}")
-    remote_present = _show_ref(runner, main_root, f"refs/remotes/origin/returned/{short}")
+    local_present, remote_present = _returned_attempt_refs(runner, root, id_)
     if not local_present and not remote_present:
         return
     if local_present and remote_present:
@@ -474,7 +484,7 @@ def cmd_inbox_frontier(_backend: str, _root: Path, argv: Sequence[str], runner: 
     return 0
 
 
-def cmd_backlog_next(backend: str, _root: Path, _argv: Sequence[str], runner: CommandRunner, _env: Mapping[str, str]) -> int:
+def cmd_backlog_next(backend: str, root: Path, _argv: Sequence[str], runner: CommandRunner, _env: Mapping[str, str]) -> int:
     if backend == "bd":
         try:
             pickable = BdWorkGraphAdapter(runner).backlog().pickable
@@ -486,7 +496,8 @@ def cmd_backlog_next(backend: str, _root: Path, _argv: Sequence[str], runner: Co
             print("  (empty)")
             return 0
         for item in pickable:
-            print(f"  {item.id}  {item.title}")
+            marker = "returned" if any(_returned_attempt_refs(runner, root, item.id)) else "ready"
+            print(f"  {item.id}  {marker}  {item.title}")
         return 0
     data = _json_from_result(runner.run(["gh", "issue", "list", "--label", "ready-for-agent", "--json", "number,title"]), "backlog next failed — gh issue list did not succeed")
     if not isinstance(data, list):
@@ -498,7 +509,7 @@ def cmd_backlog_next(backend: str, _root: Path, _argv: Sequence[str], runner: Co
     for item in data:
         if not isinstance(item, dict):
             backend_fail("backlog next failed — gh issue list did not return issue objects")
-        print(f"  #{item.get('number')}  {item.get('title', '')}")
+        print(f"  #{item.get('number')}  ready  {item.get('title', '')}")
     return 0
 
 
