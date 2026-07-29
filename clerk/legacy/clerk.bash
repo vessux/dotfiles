@@ -643,9 +643,18 @@ cmd_capture() {
 			fi
 			# mutation self-verify (ADR 0015): confirm the id landed before declaring success
 			local seen
-			seen=$(bd show "$id" --readonly --json 2>/dev/null | jq -r '.[0].id // empty')
-			if [ "$seen" != "$id" ]; then
+			seen=$(bd show "$id" --readonly --json 2>/dev/null | jq -c '.[0] // empty')
+			if [ "$(jq -r '.id // empty' <<<"$seen")" != "$id" ]; then
 				backend_fail "capture failed — $id was not confirmed after creation"
+			fi
+			if [ "$(jq -r '(.labels // []) | index("stage:ready") != null' <<<"$seen")" = true ]; then
+				if ! bd update "$id" --remove-label stage:ready >/dev/null; then
+					backend_fail "capture failed — $id could not be restored to the Inbox"
+				fi
+				seen=$(bd show "$id" --readonly --json 2>/dev/null | jq -c '.[0] // empty')
+				if [ "$(jq -r '.id // empty' <<<"$seen")" != "$id" ] || [ "$(jq -r '(.labels // []) | index("stage:ready") != null' <<<"$seen")" = true ]; then
+					backend_fail "capture failed — $id remained ready after creation"
+				fi
 			fi
 			if [ "$issue_type" = impediment ]; then
 				printf '%sclerk:%s filed %s (type: impediment)\n' "$C_GRN" "$C_RST" "$id"

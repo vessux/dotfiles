@@ -289,6 +289,9 @@ class BdWorkGraphAdapter:
             args.extend(["--deps", blocker])
         return self._runner.run(args)
 
+    def remove_ready_label(self, id_: str) -> CommandResult:
+        return self._runner.run(["bd", "update", id_, "--remove-label", "stage:ready"])
+
     def set_parent(self, child: str, parent: str) -> CommandResult:
         return self._runner.run(["bd", "update", child, "--parent", parent])
 

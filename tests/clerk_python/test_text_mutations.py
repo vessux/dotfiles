@@ -71,6 +71,27 @@ class TextMutationTests(unittest.TestCase):
             ["bd", "show", "dotfiles-new", "--readonly", "--json"],
         ])
 
+    def test_capture_removes_a_ready_label_inherited_from_its_parent_before_success(self):
+        parent = [{"id": "p", "status": "open", "labels": ["stage:ready"]}]
+        inherited_ready = [{"id": "dotfiles-new", "status": "open", "parent": "p", "labels": ["stage:ready"]}]
+        inbox_child = [{"id": "dotfiles-new", "status": "open", "parent": "p", "labels": []}]
+        code, out, err, calls = self.invoke(
+            ("capture",),
+            ["title", "--parent", "p"],
+            [
+                lambda args: ok(args, json.dumps(parent)),
+                lambda args: ok(args, "dotfiles-new\n"),
+                lambda args: ok(args, json.dumps(inherited_ready)),
+                lambda args: ok(args),
+                lambda args: ok(args, json.dumps(inbox_child)),
+            ],
+        )
+        self.assertEqual((code, out, err), (0, "clerk: filed dotfiles-new\n", ""))
+        self.assertEqual(calls[-2:], [
+            ["bd", "update", "dotfiles-new", "--remove-label", "stage:ready"],
+            ["bd", "show", "dotfiles-new", "--readonly", "--json"],
+        ])
+
     def test_capture_failed_self_verification_is_backend_failure_without_success_output(self):
         code, out, err, calls = self.invoke(
             ("capture",),

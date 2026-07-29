@@ -33,6 +33,7 @@ make_bd_repo() {
 	[ "$(jq -r '.[0].issue_type' <<<"$json")" = decision ]
 	[ "$(jq -r '.[0].parent' <<<"$json")" = "$parent" ]
 	jq -e --arg blocker "$blocker" '.[0].dependencies | any(.dependency_type == "blocks" and .id == $blocker)' <<<"$json" >/dev/null
+	[ "$(jq -r '.[0].labels | index("stage:ready")' <<<"$json")" = null ]
 
 	run "$CLERK" capture "bad" --impediment --type task
 	[ "$status" -eq 2 ]
@@ -53,20 +54,66 @@ make_bd_repo() {
 	[ "$(bd show "$custom" --readonly --json | jq -r '.[0].issue_type')" = research ]
 }
 
-@test "capture can add children under a ready parent and depend on a ready sibling" {
-	repo=$(make_bd_repo capture_ready_parent)
-	cd "$repo"
-	parent=$(bd create "ready parent" --acceptance "parent ac" --silent)
-	ready_sibling=$(bd create "ready sibling" --parent "$parent" --acceptance "sibling ac" --silent)
-	"$CLERK" inbox ready "$parent" >/dev/null
-	"$CLERK" inbox ready "$ready_sibling" >/dev/null
+@test "capture keeps a child of ready Work in the Inbox in both command paths" {
+	for force_legacy in 0 1; do
+		repo=$(make_bd_repo "capture_ready_parent_$force_legacy")
+		cd "$repo"
+		parent=$(bd create "ready parent" --acceptance "parent ac" --silent)
+		"$CLERK" inbox ready "$parent" >/dev/null
 
-	run "$CLERK" capture "new blocked child" --parent "$parent" --blocked-by "$ready_sibling"
-	[ "$status" -eq 0 ]
-	child="${output#clerk: filed }"
-	json=$(bd show "$child" --readonly --json)
-	[ "$(jq -r '.[0].parent' <<<"$json")" = "$parent" ]
-	jq -e --arg blocker "$ready_sibling" '.[0].dependencies | any(.dependency_type == "blocks" and .id == $blocker)' <<<"$json" >/dev/null
+		if [ "$force_legacy" -eq 1 ]; then
+			run env CLERK_FORCE_LEGACY=1 "$CLERK" capture "new child" --parent "$parent"
+		else
+			run "$CLERK" capture "new child" --parent "$parent"
+		fi
+		[ "$status" -eq 0 ]
+		child="${output#clerk: filed }"
+		json=$(bd show "$child" --readonly --json)
+		[ "$(jq -r '.[0].parent' <<<"$json")" = "$parent" ]
+		[ "$(jq -r '.[0].labels | index("stage:ready")' <<<"$json")" = null ]
+
+		if [ "$force_legacy" -eq 1 ]; then
+			run env CLERK_FORCE_LEGACY=1 "$CLERK" backlog next
+		else
+			run "$CLERK" backlog next
+		fi
+		[ "$status" -eq 0 ]
+		[[ "$output" != *"$child"* ]]
+
+		printf 'child design\n' >"$repo/design"
+		printf '%s\n' '- child acceptance' >"$repo/acceptance"
+		if [ "$force_legacy" -eq 1 ]; then
+			run env CLERK_FORCE_LEGACY=1 "$CLERK" inbox ready "$child" --design-file "$repo/design" --acceptance-file "$repo/acceptance"
+		else
+			run "$CLERK" inbox ready "$child" --design-file "$repo/design" --acceptance-file "$repo/acceptance"
+		fi
+		[ "$status" -eq 0 ]
+		json=$(bd show "$child" --readonly --json)
+		[ "$(jq -r '.[0].labels | index("stage:ready")' <<<"$json")" != null ]
+	done
+}
+
+@test "capture preserves ready-parent sibling blockers in both command paths" {
+	for force_legacy in 0 1; do
+		repo=$(make_bd_repo "capture_ready_parent_blocked_$force_legacy")
+		cd "$repo"
+		parent=$(bd create "ready parent" --acceptance "parent ac" --silent)
+		ready_sibling=$(bd create "ready sibling" --parent "$parent" --acceptance "sibling ac" --silent)
+		"$CLERK" inbox ready "$parent" >/dev/null
+		"$CLERK" inbox ready "$ready_sibling" >/dev/null
+
+		if [ "$force_legacy" -eq 1 ]; then
+			run env CLERK_FORCE_LEGACY=1 "$CLERK" capture "new blocked child" --parent "$parent" --blocked-by "$ready_sibling"
+		else
+			run "$CLERK" capture "new blocked child" --parent "$parent" --blocked-by "$ready_sibling"
+		fi
+		[ "$status" -eq 0 ]
+		child="${output#clerk: filed }"
+		json=$(bd show "$child" --readonly --json)
+		[ "$(jq -r '.[0].parent' <<<"$json")" = "$parent" ]
+		jq -e --arg blocker "$ready_sibling" '.[0].dependencies | any(.dependency_type == "blocks" and .id == $blocker)' <<<"$json" >/dev/null
+		[ "$(jq -r '.[0].labels | index("stage:ready")' <<<"$json")" = null ]
+	done
 }
 
 @test "children/frontier/blockers/blocked return normalized JSON and frontier only open unblocked unclaimed direct children" {
