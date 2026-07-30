@@ -3102,7 +3102,7 @@ finish_reconcile_unit() { # $1=backend $2=root $3=id-or-empty $4=watch(0|1) $5=s
 	fi
 	pending=$(finish_check_pending "$pr_json")
 	if [ -n "$pending" ]; then
-		printf "clerk: PR #%s for %s has pending checks — rerun 'clerk backlog finish' when green (or use --watch)\n" "$pr_number" "$full"
+		printf "clerk: PR #%s for %s has pending checks — run 'clerk backlog finish %s --watch' to wait\n" "$pr_number" "$full" "$full"
 		while IFS= read -r line || [ -n "$line" ]; do
 			[ -n "$line" ] || continue
 			printf '  %s\n' "$line"
