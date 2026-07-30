@@ -71,6 +71,7 @@ if [ "$1 $2" = "pr list" ]; then
 	case "$mode" in
 		none) json='[]' ;;
 		review) json='[{"number":7,"url":"https://example/pr/7","state":"OPEN","mergedAt":"","reviewDecision":"REVIEW_REQUIRED","statusCheckRollup":[{"name":"delivery-gate","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefName":"delivery/x","isDraft":false,"updatedAt":"2026-07-10T00:00:00Z"}]' ;;
+		pending) json='[{"number":6,"url":"https://example/pr/6","state":"OPEN","mergedAt":"","reviewDecision":"APPROVED","statusCheckRollup":[{"name":"delivery-gate","status":"IN_PROGRESS","conclusion":""}],"headRefName":"delivery/x","isDraft":false,"updatedAt":"2026-07-10T00:00:00Z"}]' ;;
 		fail) json='[{"number":8,"url":"https://example/pr/8","state":"OPEN","mergedAt":"","reviewDecision":"APPROVED","statusCheckRollup":[{"name":"delivery-gate","status":"COMPLETED","conclusion":"FAILURE"},{"name":"unit-tests","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefName":"delivery/x","isDraft":false,"updatedAt":"2026-07-10T00:00:00Z"}]' ;;
 		merged) json='[{"number":9,"url":"https://example/pr/9","state":"MERGED","mergedAt":"2026-07-10T00:00:00Z","reviewDecision":"APPROVED","statusCheckRollup":[{"name":"delivery-gate","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefName":"delivery/x","isDraft":false,"updatedAt":"2026-07-10T00:00:00Z"}]' ;;
 		multi) json='[{"number":5,"url":"https://example/pr/5","state":"CLOSED","mergedAt":"","reviewDecision":"","statusCheckRollup":[],"headRefName":"delivery/x","isDraft":false,"updatedAt":"2026-07-09T00:00:00Z"},{"number":12,"url":"https://example/pr/12","state":"OPEN","mergedAt":"","reviewDecision":"REVIEW_REQUIRED","statusCheckRollup":[{"name":"delivery-gate","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefName":"delivery/x","isDraft":false,"updatedAt":"2026-07-10T00:00:00Z"}]' ;;
@@ -123,6 +124,19 @@ SH
 	[ "$status" -eq 0 ]
 	[ "$output" = "clerk: PR #7 for $id is awaiting review — finish will complete after review" ]
 	! grep -q 'pr merge' "$BATS_TEST_TMPDIR/gh.calls"
+}
+
+@test "finish: pending checks prescribe --watch and exit successfully" {
+	repo=$(make_finish_repo finish_pending)
+	cd "$repo"
+	id=$(mk_claimed_unit)
+	short="${id#*-}"
+	git checkout -q "delivery/$short"
+	install_gh_pr_stub pending
+	run "$CLERK" backlog finish
+	[ "$status" -eq 0 ]
+	[ "${lines[0]}" = "clerk: PR #6 for $id has pending checks — run 'clerk backlog finish $id --watch' to wait" ]
+	[ "${lines[1]}" = "  delivery-gate" ]
 }
 
 @test "finish: failing checks output each named failure" {
