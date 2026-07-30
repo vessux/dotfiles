@@ -1792,6 +1792,19 @@ claim_ensure_worktree() { # $1=root $2=short
 # CLAIM CONFLICT (exit 5): unit occupied, or the push-CAS race was lost. Its own prescriptive
 # text (never backend_fail's "run clerk doctor" — the backend is not broken, someone else just
 # got there first).
+# Provision a worktree's host-local Beads state before exposing it to the caller. The
+# tracked config identifies the project; metadata.json is deliberately host-local.
+claim_provision_and_verify_beads() { # $1=root $2=worktree $3=full-id
+	local wt="$2" full="$3" source="$1/.beads/metadata.json"
+	if [ -f "$wt/.beads/config.yaml" ] && [ ! -f "$wt/.beads/metadata.json" ]; then
+		[ -r "$source" ] || return 1
+		cp "$source" "$wt/.beads/metadata.json" || return 1
+		[ -f "$wt/.beads/metadata.json" ] || return 1
+	fi
+	(cd "$wt" && bd show "$full" --readonly --json | jq -e --arg id "$full" \
+		'type == "array" and .[0].id == $id' >/dev/null 2>&1)
+}
+
 claim_conflict() { # $1=short $2=holder $3=reason-phrase, e.g. "is already claimed"/"was just claimed"
 	local short="$1" holder="${2:-someone else}" reason="$3"
 	printf 'clerk: backlog claim refused — delivery/%s %s by %s\n' "$short" "$reason" "$holder" >&2
@@ -1913,6 +1926,9 @@ cmd_backlog_claim() {
 		if ! wt=$(claim_ensure_worktree "$root" "$short"); then
 			backend_fail "claim failed — could not provision the worktree at $root/.worktrees/$short for delivery/$short"
 		fi
+		if [ "$backend" = bd ] && ! claim_provision_and_verify_beads "$root" "$wt" "$full"; then
+			backend_fail "claim failed — could not provision or verify the worktree at $wt"
+		fi
 		printf '%sclerk:%s %s already claimed by you — worktree ready\n' "$C_GRN" "$C_RST" "$full"
 		printf '%s\n' "$wt"
 		return 0
@@ -1968,6 +1984,9 @@ cmd_backlog_claim() {
 		if ! wt=$(claim_ensure_worktree "$root" "$short"); then
 			backend_fail "claim failed — could not provision the worktree at $root/.worktrees/$short for delivery/$short"
 		fi
+		if [ "$backend" = bd ] && ! claim_provision_and_verify_beads "$root" "$wt" "$full"; then
+			backend_fail "claim failed — could not provision or verify the worktree at $wt"
+		fi
 		if [ "$from_returned" -eq 1 ]; then
 			claim_replay_returned "$root" "$wt" "$short" "$base_sha" || return $?
 		elif [ "$fresh" -eq 1 ] && [ "$returned_disposition" = discard ]; then
@@ -2016,6 +2035,9 @@ cmd_backlog_claim() {
 	local wt
 	if ! wt=$(claim_ensure_worktree "$root" "$short"); then
 		backend_fail "claim failed — could not provision the worktree at $root/.worktrees/$short for delivery/$short"
+	fi
+	if [ "$backend" = bd ] && ! claim_provision_and_verify_beads "$root" "$wt" "$full"; then
+		backend_fail "claim failed — could not provision or verify the worktree at $wt"
 	fi
 	if [ "$from_returned" -eq 1 ]; then
 		claim_replay_returned "$root" "$wt" "$short" "$base_sha" || return $?

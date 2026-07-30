@@ -50,6 +50,13 @@ mk_ac_unit() { # $1 = title
 	printf '%s\n' "$id"
 }
 
+track_beads_config() { # $1 = repo
+	local repo="$1"
+	git -C "$repo" rm --cached -q --ignore-unmatch .beads/metadata.json
+	git -C "$repo" commit -q -m 'track beads config'
+	git -C "$repo" push -q origin main
+}
+
 # Points `origin` at a path that will never resolve, so `git fetch origin` fails immediately
 # (no network hang) — the OFFLINE signal.
 break_origin() { # $1 = repo
@@ -91,6 +98,54 @@ advance_main() { # $1=repo $2=file $3=content $4=subject
 	git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"
 	[ "$(bd show "$id" --readonly --json | jq -r '.[0].assignee')" = clerk ]
 	[ "$(bd show "$id" --readonly --json | jq -r '.[0].status')" = in_progress ]
+}
+
+@test "claim (bd): bootstraps worktree-local Beads metadata before reporting ready" {
+	repo=$(make_claim_repo claim_bootstrap)
+	track_beads_config "$repo"
+	cd "$repo"
+	id=$(mk_ac_unit "bootstrapped unit")
+	short="${id#*-}"
+
+	run "$CLERK" backlog claim "$id"
+	[ "$status" -eq 0 ]
+	wt="${lines[-1]}"
+	[ "$wt" = "$repo/.worktrees/$short" ]
+	[ -f "$wt/.beads/metadata.json" ]
+	cmp "$repo/.beads/metadata.json" "$wt/.beads/metadata.json"
+	run git -C "$wt" ls-files --error-unmatch .beads/metadata.json
+	[ "$status" -ne 0 ]
+	run bash -c 'cd "$1" && "$2" backlog show "$3"' -- "$wt" "$CLERK" "$id"
+	[ "$status" -eq 0 ]
+}
+
+@test "claim (bd): a failed worktree Beads bootstrap fails without reporting ready" {
+	repo=$(make_claim_repo claim_bootstrap_failure)
+	track_beads_config "$repo"
+	cd "$repo"
+	id=$(mk_ac_unit "bootstrap failure unit")
+	short="${id#*-}"
+	fake="$BATS_TEST_TMPDIR/fake-bin"
+	mkdir -p "$fake"
+	cat >"$fake/bd" <<'EOF'
+#!/bin/sh
+if [ "$1" = bootstrap ]; then
+	/bin/cp "$BEADS_TEST_METADATA" .beads/metadata.json
+	exit 0
+fi
+exec /usr/local/bin/bd "$@"
+EOF
+	cat >"$fake/cp" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+	chmod +x "$fake/bd" "$fake/cp"
+
+	run env PATH="$fake:$PATH" BEADS_TEST_METADATA="$repo/.beads/metadata.json" "$CLERK" backlog claim "$id"
+	[ "$status" -eq 5 ]
+	[[ "$output" == *"could not provision or verify the worktree"* ]]
+	[[ "$output" != *"worktree ready"* ]]
+	[ ! -f "$repo/.worktrees/$short/.beads/metadata.json" ]
 }
 
 @test "claim (bd): OCCUPIED — exit 5, names the holder, no orphan worktree, no bd mutation on our side" {
