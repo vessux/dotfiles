@@ -18,10 +18,15 @@ class FakeRunner:
         self.responses = list(responses or [])
         self.git_responses = list(git_responses or [])
         self.calls = []
+        self.envs = []
 
     def run(self, args, *, cwd=None, env=None):
         self.calls.append(list(args))
+        self.envs.append(dict(env) if env is not None else None)
         if args and args[0] == "git":
+            # Worktree-root discovery is not behavior under test here; use the supplied root.
+            if "rev-parse" in args:
+                return fail(args)
             # Default git answer mirrors a plain temp sandbox: refs absent, config unset.
             # Tests that need a present ref or a known actor supply explicit git_responses.
             if not self.git_responses:
@@ -86,7 +91,7 @@ class AcceptanceSectionTests(unittest.TestCase):
 
 
 class ReadyDropTests(unittest.TestCase):
-    def invoke(self, path, argv, responses, *, stdin="", env=None, git_responses=None, root_is_temp=True):
+    def invoke(self, path, argv, responses, *, stdin="", env=None, git_responses=None, files=None, root_is_temp=True):
         runner = FakeRunner(responses, git_responses=git_responses)
         out = io.StringIO()
         err = io.StringIO()
@@ -94,8 +99,11 @@ class ReadyDropTests(unittest.TestCase):
             contextlib.redirect_stdout(out), \
             contextlib.redirect_stderr(err), \
             mock.patch.object(sys, "stdin", io.StringIO(stdin)):
+            paths = {name: Path(td) / name for name in files or {}}
+            for name, text in (files or {}).items():
+                paths[name].write_text(text)
             root = Path(td) if root_is_temp else Path("/repo")
-            code = run_mutation(path, "bd", root, argv, env or {}, runner)
+            code = run_mutation(path, "bd", root, [str(paths.get(arg, arg)) for arg in argv], env or {}, runner)
         return code, out.getvalue(), err.getvalue(), runner.calls
 
     # --- ready: bd promotion ---
@@ -154,28 +162,42 @@ class ReadyDropTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("no 'Acceptance Criteria' section", err)
 
-    def test_ready_bd_refuses_open_blockers(self):
-        blocked = issue(id="cap1", dependencies=[{"dependency_type": "blocks", "id": "blk1", "status": "open"}])
-        code, out, err, calls = self.invoke(
+    def test_ready_bd_refuses_blank_first_class_criteria(self):
+        code, out, err, _ = self.invoke(
             ("inbox", "ready"),
             ["cap1"],
-            [lambda args: ok(args, blocked)],
+            [lambda args: ok(args, issue(id="cap1", acceptance_criteria=" \n"))],
         )
         self.assertEqual(code, 2)
-        self.assertEqual(out, "")
-        self.assertIn("open blockers", err)
-        self.assertEqual(calls, [["bd", "show", "cap1", "--readonly", "--json"]])
+        self.assertIn("no 'Acceptance Criteria' section", err)
 
-    def test_ready_bd_refuses_open_children(self):
-        parentish = issue(id="cap1", dependents=[{"dependency_type": "parent-child", "id": "kid1", "status": "open"}])
+    def test_ready_bd_promotes_despite_open_blockers(self):
+        blocked = issue(id="cap1", acceptance_criteria="x", dependencies=[{"dependency_type": "blocks", "id": "blk1", "status": "open"}])
         code, out, err, calls = self.invoke(
             ("inbox", "ready"),
             ["cap1"],
-            [lambda args: ok(args, parentish)],
+            [lambda args: ok(args, blocked),
+             lambda args: ok(args),
+             lambda args: ok(args, issue(id="cap1", acceptance_criteria="x", dependencies=[{"dependency_type": "blocks", "id": "blk1", "status": "open"}], labels=["stage:ready"]))],
         )
-        self.assertEqual(code, 2)
-        self.assertIn("open children", err)
-        self.assertEqual(calls, [["bd", "show", "cap1", "--readonly", "--json"]])
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "clerk: promoted cap1 to stage:ready\n")
+        self.assertEqual(err, "")
+        self.assertIn(["bd", "update", "cap1", "--status", "open", "--assignee", "", "--add-label", "stage:ready"], calls)
+
+    def test_ready_bd_promotes_parent_with_open_children(self):
+        parentish = issue(id="cap1", acceptance_criteria="x", dependents=[{"dependency_type": "parent-child", "id": "kid1", "status": "open"}])
+        code, out, err, calls = self.invoke(
+            ("inbox", "ready"),
+            ["cap1"],
+            [lambda args: ok(args, parentish),
+             lambda args: ok(args),
+             lambda args: ok(args, issue(id="cap1", acceptance_criteria="x", dependents=[{"dependency_type": "parent-child", "id": "kid1", "status": "open"}], labels=["stage:ready"]))],
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "clerk: promoted cap1 to stage:ready\n")
+        self.assertEqual(err, "")
+        self.assertIn(["bd", "update", "cap1", "--status", "open", "--assignee", "", "--add-label", "stage:ready"], calls)
 
     def test_ready_bd_refuses_already_ready_promoted_item(self):
         code, out, err, _ = self.invoke(
@@ -239,6 +261,7 @@ class ReadyDropTests(unittest.TestCase):
              lambda args: ok(args, updated_after_write),  # re-show to verify write
              lambda args: ok(args),  # bd update --status open --assignee "" --add-label
              lambda args: ok(args, issue(id="cap1", labels=["stage:ready"]))],  # verify promotion
+            files={"DESIGN": design_text, "ACCEPT": acceptance_text},
         )
         self.assertEqual(code, 0)
         self.assertEqual(out, "clerk: promoted cap1 to stage:ready\n")
@@ -261,6 +284,7 @@ class ReadyDropTests(unittest.TestCase):
              lambda args: ok(args),  # bd update --design-file
              lambda args: ok(args, issue(id="cap1", design="Design without an exam")),  # re-show
              ],
+            files={"DESIGN": "Design without an exam\n"},
         )
         self.assertEqual(code, 2)
         self.assertIn("--acceptance-file", err)
@@ -286,6 +310,7 @@ class ReadyDropTests(unittest.TestCase):
             ["cap1", "--design-file", "DESIGN", "--acceptance-file", "ACCEPT"],
             [lambda args: ok(args, issue(id="cap1")),
              lambda args: fail(args)],  # bd update write fails
+            files={"DESIGN": "design", "ACCEPT": "acceptance"},
         )
         self.assertEqual(code, 5)
         self.assertIn("bd update did not succeed", err)
@@ -297,6 +322,7 @@ class ReadyDropTests(unittest.TestCase):
             [lambda args: ok(args, issue(id="cap1")),
              lambda args: ok(args),  # bd update --design-file
              lambda args: ok(args, issue(id="cap1", design="WRONG"))],  # design mismatch on re-show
+            files={"DESIGN": "design"},
         )
         self.assertEqual(code, 5)
         self.assertIn("design was not confirmed", err)
@@ -307,7 +333,8 @@ class ReadyDropTests(unittest.TestCase):
             ["cap1", "--design-file", "DESIGN", "--acceptance-file", "ACCEPT"],
             [lambda args: ok(args, issue(id="cap1")),
              lambda args: ok(args),
-             lambda args: ok(args, issue(id="cap1", acceptance_criteria="WRONG"))],
+             lambda args: ok(args, issue(id="cap1", design="design", acceptance_criteria="WRONG"))],
+            files={"DESIGN": "design", "ACCEPT": "acceptance"},
         )
         self.assertEqual(code, 5)
         self.assertIn("acceptance criteria were not confirmed", err)
@@ -330,9 +357,9 @@ class ReadyDropTests(unittest.TestCase):
             ("inbox", "ready"),
             ["cap1"],
             [lambda args: ok(args, issue(id="cap1", assignee="Planner", acceptance_criteria="x")),
-             lambda args: ok(args, "Planner\n"),  # git config user.name
              lambda args: ok(args),  # bd update add-label
              lambda args: ok(args, issue(id="cap1", labels=["stage:ready"]))],
+            git_responses=[lambda args: ok(args, "Planner\n")],
         )
         self.assertEqual(code, 0)
         self.assertEqual(out, "clerk: promoted cap1 to stage:ready\n")
@@ -362,11 +389,13 @@ class ReadyDropTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td, \
             contextlib.redirect_stdout(out), \
             contextlib.redirect_stderr(err):
-            code = run_mutation(("inbox", "ready"), "gh", Path(td), ["cap1", "--title", "promoted title", "--body-file", "BODY"],
+            body = Path(td) / "BODY"
+            body.write_text("groomed body")
+            code = run_mutation(("inbox", "ready"), "gh", Path(td), ["cap1", "--title", "promoted title", "--body-file", str(body)],
                                 {}, runner)
         self.assertEqual(code, 0)
         self.assertEqual(out.getvalue(), "clerk: promoted cap1 to #42 (https://github.com/acme/repo/issues/42)\n")
-        self.assertIn(["gh", "issue", "create", "--title", "promoted title", "--body-file", "BODY", "--label", "ready-for-agent"], runner.calls)
+        self.assertIn(["gh", "issue", "create", "--title", "promoted title", "--body-file", str(body), "--label", "ready-for-agent"], runner.calls)
         self.assertIn(["bd", "close", "cap1", "--reason", "promoted to GitHub #42"], runner.calls)
 
     def test_ready_gh_rejects_bd_only_flags(self):
@@ -375,7 +404,7 @@ class ReadyDropTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td, contextlib.redirect_stderr(err):
             code = run_mutation(("inbox", "ready"), "gh", Path(td), ["cap1", "--design-file", "x", "--title", "t", "--body-file", "b"], {}, runner)
         self.assertEqual(code, 2)
-        self.assertIn("is only for gh-backed", err.getvalue())
+        self.assertIn("is only for bd-backed", err.getvalue())
 
     # --- returned disposition ---
 
@@ -400,6 +429,7 @@ class ReadyDropTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td, \
             contextlib.redirect_stdout(out), \
             contextlib.redirect_stderr(err):
+            (Path(td) / ".git").mkdir()
             code = run_mutation(("inbox", "ready"), "bd", Path(td), ["cap1-wxyz"], {}, runner)
         self.assertEqual(code, 2)
         self.assertIn("--returned keep", err.getvalue())
@@ -497,9 +527,8 @@ class ReadyDropTests(unittest.TestCase):
                 lambda args: ok(args, issue(id="cap1-wxyz", labels=["stage:ready"])),
             ],
             git_responses=[
-                lambda args: ok(args, "present\n"),  # show-ref local present
-                lambda args: ok(args, "present\n"),  # show-ref remote present
                 lambda args: ok(args, "refs/heads/returned/wxyz\n"),  # for-each-ref local
+                lambda args: ok(args, ""),  # for-each-ref remote
                 lambda args: ok(args, "", ""),  # branch -D
                 lambda args: fail(args),  # fetch origin -> offline
             ],
@@ -513,6 +542,8 @@ class ReadyDropTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("OFFLINE", err.getvalue())
         self.assertIn("deferred to sync", err.getvalue())
+        fetch = next(i for i, call in enumerate(runner.calls) if call[-2:] == ["fetch", "origin"])
+        self.assertEqual(runner.envs[fetch]["GIT_TERMINAL_PROMPT"], "0")
 
     def test_ready_returned_discard_removes_archived_refs(self):
         runner = FakeRunner(
@@ -609,6 +640,7 @@ class ReadyDropTests(unittest.TestCase):
         )
         err = io.StringIO()
         with tempfile.TemporaryDirectory() as td, contextlib.redirect_stderr(err):
+            (Path(td) / ".git").mkdir()
             code = run_mutation(("inbox", "drop"), "bd", Path(td), ["cap1-wxyz"], {}, runner)
         self.assertEqual(code, 2)
         self.assertIn("--returned keep", err.getvalue())
@@ -657,10 +689,10 @@ class ReadyDropTests(unittest.TestCase):
         runner = FakeRunner(
             responses=[
                 lambda args: ok(args, issue(id="cap1", assignee="Planner")),
-                lambda args: ok(args, "Planner\n"),
                 lambda args: ok(args),
                 lambda args: ok(args, issue(id="cap1", status="closed", close_reason="wontfix")),
             ],
+            git_responses=[lambda args: ok(args, "Planner\n")],
         )
         with tempfile.TemporaryDirectory() as td:
             code = run_mutation(("inbox", "drop"), "bd", Path(td), ["cap1"], {}, runner)

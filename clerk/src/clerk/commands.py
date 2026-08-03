@@ -316,6 +316,8 @@ def _planning_holder_refusal(verb: str, root: Path, obj: Mapping[str, Any], runn
 
 
 def _returned_branch_exists(runner: CommandRunner, root: Path, short: str) -> bool:
+    if not (root / ".git").exists():
+        return False
     main_root = _primary_repo_root(runner, root)
     if _show_ref(runner, main_root, f"refs/heads/returned/{short}"):
         return True
@@ -344,7 +346,7 @@ def _dispose_returned(runner: CommandRunner, root: Path, short: str, env: Mappin
         if result.returncode != 0:
             backend_fail(f"returned disposition failed — could not delete local {ref}")
     fetch_env = {**env, "GIT_TERMINAL_PROMPT": "0"}
-    fetch_result = _git(runner, main_root, ["fetch", "origin"])
+    fetch_result = runner.run(["git", "-C", str(main_root), "fetch", "origin"], env=fetch_env)
     del fetch_env
     if fetch_result.returncode != 0:
         print(
@@ -1142,10 +1144,6 @@ def cmd_inbox_ready(backend: str, root: Path, argv: Sequence[str], runner: Comma
         obj = _bd_issue_json_or_usage(runner, id_, "clerk inbox ready")
         if not _is_active_inbox(obj):
             usage(f"clerk inbox ready: {id_} must be an open inbox item (not ready/promoted/closed)")
-        if _open_blockers(obj):
-            usage(f"clerk inbox ready: {id_} has open blockers — resolve blockers before promoting it")
-        if _open_children(obj):
-            usage(f"clerk inbox ready: {id_} has open children — resolve or reparent children before promoting it")
         _planning_holder_refusal("inbox ready", root, obj, runner, env)
         _handle_returned_disposition("inbox ready", root, short, returned_disposition, runner, env)
 
@@ -1160,9 +1158,9 @@ def cmd_inbox_ready(backend: str, root: Path, argv: Sequence[str], runner: Comma
             if result.returncode != 0:
                 backend_fail(f"inbox ready failed — bd update did not succeed for {id_}")
             refreshed = _bd_issue_json_or_backend(runner, id_, f"inbox ready failed — {id_} was not confirmed updated")
-            if design_file and str(refreshed.get("design") or "") != _read_file_trimmed(design_file, "clerk inbox ready"):
+            if design_file and str(refreshed.get("design") or "").rstrip("\n") != _read_file_trimmed(design_file, "clerk inbox ready"):
                 backend_fail(f"inbox ready failed — design was not confirmed after writing {design_file}")
-            if acceptance_file and str(refreshed.get("acceptance_criteria") or "") != _read_file_trimmed(acceptance_file, "clerk inbox ready"):
+            if acceptance_file and str(refreshed.get("acceptance_criteria") or "").rstrip("\n") != _read_file_trimmed(acceptance_file, "clerk inbox ready"):
                 backend_fail(f"inbox ready failed — acceptance criteria were not confirmed after writing {acceptance_file}")
             obj = refreshed
 
@@ -1172,7 +1170,7 @@ def cmd_inbox_ready(backend: str, root: Path, argv: Sequence[str], runner: Comma
         desc = str(obj.get("description") or "")
         design = str(obj.get("design") or "")
         ac = str(obj.get("acceptance_criteria") or "")
-        if not ac and not has_acceptance_criteria_section(f"{desc}\n{design}"):
+        if not ac.strip() and not has_acceptance_criteria_section(f"{desc}\n{design}"):
             usage(f"clerk inbox ready: {id_} has no 'Acceptance Criteria' section — rerun with --acceptance-file <path> (and optionally --design-file <path>) before promoting it")
 
         result = runner.run(["bd", "update", id_, "--status", "open", "--assignee", "", "--add-label", "stage:ready"])
@@ -1198,10 +1196,6 @@ def cmd_inbox_ready(backend: str, root: Path, argv: Sequence[str], runner: Comma
     obj = _bd_issue_json_or_usage(runner, id_, "clerk inbox ready")
     if not _is_active_inbox(obj):
         usage(f"clerk inbox ready: {id_} must be an open inbox item (not ready/promoted/closed)")
-    if _open_blockers(obj):
-        usage(f"clerk inbox ready: {id_} has open blockers — resolve blockers before promoting it")
-    if _open_children(obj):
-        usage(f"clerk inbox ready: {id_} has open children — resolve or reparent children before promoting it")
     _planning_holder_refusal("inbox ready", root, obj, runner, env)
     _handle_returned_disposition("inbox ready", root, short, returned_disposition, runner, env)
 
