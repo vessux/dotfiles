@@ -266,8 +266,8 @@ class BdWorkGraphAdapter:
     def backlog(self) -> Backlog:
         return self.load().backlog()
 
-    def _inspect(self, id_: str) -> dict[str, Any]:
-        result = self._runner.run(["bd", "show", id_, "--readonly", "--json"])
+    def _inspect(self, id_: str, *, cwd: str | None = None) -> dict[str, Any]:
+        result = self._runner.run(["bd", "show", id_, "--readonly", "--json"], cwd=cwd)
         if result.returncode != 0:
             raise WorkGraphBackendError(f"bd show did not succeed for {id_}", result)
         try:
@@ -286,6 +286,9 @@ class BdWorkGraphAdapter:
 
     def inspect(self, id_: str) -> dict[str, Any]:
         return self._inspect(id_)
+
+    def inspect_at(self, id_: str, cwd: str) -> dict[str, Any]:
+        return self._inspect(id_, cwd=cwd)
 
     def parent_cycle_would_form(self, child: str, parent: str) -> bool:
         seen: set[str] = set()
@@ -342,3 +345,15 @@ class BdWorkGraphAdapter:
 
     def remove_blocker(self, child: str, blocker: str) -> CommandResult:
         return self._runner.run(["bd", "dep", "remove", child, blocker])
+
+    def claim(self, id_: str) -> CommandResult:
+        return self._runner.run(["bd", "update", id_, "--claim"])
+
+    def release(self, id_: str) -> CommandResult:
+        return self._runner.run(["bd", "update", id_, "--status", "open", "--assignee", ""])
+
+    def return_to_inbox(self, id_: str) -> CommandResult:
+        return self._runner.run(["bd", "update", id_, "--status", "open", "--remove-label", "stage:ready", "--assignee", ""])
+
+    def create_impediment(self, title: str, body: str) -> CommandResult:
+        return self._runner.run(["bd", "create", title, "--description", body, "--type", "impediment", "--silent"])

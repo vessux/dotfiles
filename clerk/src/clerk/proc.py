@@ -26,6 +26,7 @@ class CommandRunner:
         cwd: str | Path | None = None,
         env: Mapping[str, str] | None = None,
         input: str | None = None,
+        timeout: float | None = None,
     ) -> CommandResult:
         try:
             proc = subprocess.run(
@@ -37,7 +38,10 @@ class CommandRunner:
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
+                timeout=timeout,
             )
         except FileNotFoundError as exc:
             return CommandResult(tuple(args), 127, "", str(exc))
+        except subprocess.TimeoutExpired as exc:
+            return CommandResult(tuple(args), 124, exc.stdout or "", exc.stderr or "")
         return CommandResult(tuple(args), proc.returncode, proc.stdout, proc.stderr)

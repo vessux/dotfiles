@@ -126,22 +126,19 @@ advance_main() { # $1=repo $2=file $3=content $4=subject
 	id=$(mk_ac_unit "bootstrap failure unit")
 	short="${id#*-}"
 	fake="$BATS_TEST_TMPDIR/fake-bin"
+	real_python=$(command -v python3)
 	mkdir -p "$fake"
-	cat >"$fake/bd" <<'EOF'
-#!/bin/sh
-if [ "$1" = bootstrap ]; then
-	/bin/cp "$BEADS_TEST_METADATA" .beads/metadata.json
-	exit 0
+	cat >"$fake/python" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = - ]; then
+	exec "$real_python" "\$@"
 fi
-exec /usr/local/bin/bd "$@"
+shift 2
+exec "$real_python" -c 'import shutil, sys; shutil.copyfile = lambda *_: (_ for _ in ()).throw(OSError()); from clerk.cli import main; raise SystemExit(main(sys.argv[1:]))' "\$@"
 EOF
-	cat >"$fake/cp" <<'EOF'
-#!/bin/sh
-exit 1
-EOF
-	chmod +x "$fake/bd" "$fake/cp"
+	chmod +x "$fake/python"
 
-	run env PATH="$fake:$PATH" BEADS_TEST_METADATA="$repo/.beads/metadata.json" "$CLERK" backlog claim "$id"
+	run env CLERK_PYTHON="$fake/python" "$CLERK" backlog claim "$id"
 	[ "$status" -eq 5 ]
 	[[ "$output" == *"could not provision or verify the worktree"* ]]
 	[[ "$output" != *"worktree ready"* ]]

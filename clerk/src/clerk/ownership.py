@@ -2,11 +2,11 @@
 
 This slice moves Clerk's command-boundary diagnostics, read-only item query
 windows, Capture/text-based Inbox mutations, Planning graph mutations/claims,
-and the Inbox ready/drop bridge to Python while leaving delivery workflow verb
-bodies on the legacy shell fallback. Ownership is therefore split: Python owns
-global help/explain/version, manifest gating, doctor, and the explicit command
-tables; unported workflow mutations are exec'd into the fallback after the
-Python gate accepts them.
+the Inbox ready/drop bridge, and the Backlog Claim lifecycle to Python while
+leaving later delivery workflow verb bodies on the legacy shell fallback.
+Ownership is therefore split: Python owns global help/explain/version, manifest
+gating, doctor, and the explicit command tables; unported workflow mutations
+are exec'd into the fallback after the Python gate accepts them.
 """
 
 from __future__ import annotations
