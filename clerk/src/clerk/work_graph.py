@@ -148,6 +148,29 @@ class WorkGraph:
             raise KeyError(id_)
         return item
 
+    def resolve(self, id_: str) -> Work | None:
+        item = self.get(id_)
+        if item is not None:
+            return item
+        matches = [candidate for candidate in self.items if candidate.id.split("-", 1)[-1] == id_]
+        return matches[0] if len(matches) == 1 else None
+
+    def pickability_reasons(self, item: Work) -> tuple[str, ...]:
+        reasons: list[str] = []
+        if item.status != "open":
+            reasons.append(f"status is {item.status}")
+        if "stage:ready" not in item.labels:
+            reasons.append("not stage:ready")
+        if item.assignee:
+            reasons.append(f"claimed by {item.assignee}")
+        blockers = self.open_blockers(item)
+        children = self.open_children(item)
+        if blockers:
+            reasons.append(f"{len(blockers)} open blocker(s)")
+        if children:
+            reasons.append(f"{len(children)} open child(ren)")
+        return tuple(reasons)
+
     def children(self, item: Work) -> tuple[Work, ...]:
         children: list[Work] = []
         seen: set[str] = set()
@@ -213,13 +236,11 @@ class WorkGraph:
         pickable: list[Work] = []
         waiting: list[WaitingWork] = []
         for item in unclaimed:
-            if not has_acceptance_criteria(item.raw):
-                continue
             blockers = self.open_blockers(item)
             children = self.open_children(item)
             if blockers or children:
                 waiting.append(WaitingWork(item, len(blockers), len(children)))
-            else:
+            elif has_acceptance_criteria(item.raw):
                 pickable.append(item)
         return Backlog(ready, tuple(pickable), tuple(waiting))
 
@@ -256,6 +277,15 @@ class BdWorkGraphAdapter:
         if not isinstance(data, list) or not data or not isinstance(data[0], dict):
             raise WorkGraphBackendError(f"bd show did not return a Work item for {id_}", result)
         return data[0]
+
+    def append_notes(self, id_: str, note: str) -> CommandResult:
+        return self._runner.run(["bd", "update", id_, "--append-notes", note])
+
+    def close(self, id_: str, reason: str) -> CommandResult:
+        return self._runner.run(["bd", "close", id_, "--reason", reason])
+
+    def inspect(self, id_: str) -> dict[str, Any]:
+        return self._inspect(id_)
 
     def parent_cycle_would_form(self, child: str, parent: str) -> bool:
         seen: set[str] = set()

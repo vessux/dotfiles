@@ -223,6 +223,31 @@ class QueryCommandTests(unittest.TestCase):
         self.assertEqual(out, "Backlog (ready) — 1 item(s):\n  pick  ready  Pick\n")
         self.assertEqual(calls, [["bd", "list", "--all", "--readonly", "--json", "--limit", "0"]])
 
+    def test_backlog_waiting_lists_only_ready_work_held_by_blockers_or_children(self):
+        rows = [
+            {"id": "pick", "title": "Pick", "status": "open", "labels": ["stage:ready"], "acceptance_criteria": "- pick"},
+            {"id": "blocked", "title": "Blocked", "status": "open", "labels": ["stage:ready"], "acceptance_criteria": "- blocked", "dependencies": [{"type": "blocks", "depends_on_id": "blocker"}]},
+            {"id": "blocker", "title": "Blocker", "status": "open"},
+            {"id": "parent", "title": "Parent", "status": "open", "labels": ["stage:ready"], "acceptance_criteria": "- parent"},
+            {"id": "child", "title": "Child", "status": "open", "parent": "parent"},
+            {"id": "claimed", "title": "Claimed", "status": "open", "labels": ["stage:ready"], "acceptance_criteria": "- claimed", "assignee": "me"},
+        ]
+
+        code, out, err, calls = self.invoke(
+            ("backlog", "waiting"), "bd", [], [lambda args: ok(args, json.dumps(rows))]
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "Backlog waiting — 2 item(s):\n  blocked  blockers:1 children:0  Blocked\n  parent  blockers:0 children:1  Parent\n")
+        self.assertEqual(err, "")
+        self.assertEqual(calls, [["bd", "list", "--all", "--readonly", "--json", "--limit", "0"]])
+
+        code, out, err, calls = self.invoke(
+            ("backlog", "waiting"), "bd", [], [lambda args: ok(args, "[]")]
+        )
+        self.assertEqual((code, out, err), (0, "Backlog waiting — 0 item(s):\n  (empty)\n", ""))
+        self.assertEqual(calls, [["bd", "list", "--all", "--readonly", "--json", "--limit", "0"]])
+
     def test_backlog_next_gh_lists_ready_for_agent_issues(self):
         payload = [{"number": 9, "title": "do the thing"}]
         code, out, _, calls = self.invoke(

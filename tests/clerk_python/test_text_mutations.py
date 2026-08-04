@@ -124,6 +124,30 @@ class TextMutationTests(unittest.TestCase):
             ["bd", "create", "harness friction", "--silent", "--type", "impediment"],
         ])
 
+    def test_backlog_resolve_closes_pickable_ready_work_and_self_verifies_note(self):
+        ready = [{"id": "item", "title": "No code", "status": "open", "labels": ["stage:ready"], "acceptance_criteria": "- satisfied"}]
+        closed = [{"id": "item", "status": "closed", "close_reason": "resolved without delivery", "notes": "missing resolution note"}]
+        code, out, err, calls = self.invoke(
+            ("backlog", "resolve"),
+            ["item", "--stdin"],
+            [
+                lambda args: ok(args, json.dumps(ready)),
+                lambda args: ok(args),
+                lambda args: ok(args),
+                lambda args: ok(args, json.dumps(closed)),
+            ],
+            stdin="verified externally\n",
+        )
+
+        self.assertEqual(code, 5)
+        self.assertEqual(out, "")
+        self.assertIn("backlog resolve failed — resolution note was not confirmed for item", err)
+        self.assertEqual(calls[0], ["bd", "list", "--all", "--readonly", "--json", "--limit", "0"])
+        self.assertEqual(calls[1][:4], ["bd", "update", "item", "--append-notes"])
+        self.assertRegex(calls[1][4], r"^clerk-backlog-resolution: 20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\nverified externally$")
+        self.assertEqual(calls[2], ["bd", "close", "item", "--reason", "resolved without delivery"])
+        self.assertEqual(calls[3], ["bd", "show", "item", "--readonly", "--json"])
+
     def test_inbox_pregrill_appends_structured_note_and_verifies_state_neutrality(self):
         before = [{"id": "item", "status": "open", "labels": ["some-label"]}]
         after = [{"id": "item", "status": "open", "labels": ["some-label"]}]
