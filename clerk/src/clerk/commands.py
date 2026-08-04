@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
@@ -1354,6 +1355,361 @@ def cmd_inbox_drop(backend: str, root: Path, argv: Sequence[str], runner: Comman
     return 0
 
 
+def _in_job_context(env: Mapping[str, str]) -> bool:
+    if env.get("CLERK_JOB"):
+        return True
+    return env.get("CI", "").lower() not in {"", "0", "false", "no"}
+
+
+def _fetch_origin(runner: CommandRunner, root: Path, env: Mapping[str, str]) -> bool:
+    return runner.run(["git", "-C", str(root), "fetch", "origin"], env={**env, "GIT_TERMINAL_PROMPT": "0"}, timeout=10).returncode == 0
+
+
+def _ensure_delivery_worktree(runner: CommandRunner, root: Path, short: str) -> Path | None:
+    worktree = root / ".worktrees" / short
+    if worktree.is_dir():
+        return worktree
+    _git(runner, root, ["worktree", "prune"])
+    if _git(runner, root, ["worktree", "add", str(worktree), f"delivery/{short}"]).returncode == 0:
+        return worktree
+    if _show_ref(runner, root, f"refs/remotes/origin/delivery/{short}") and _git(
+        runner, root, ["worktree", "add", "-b", f"delivery/{short}", str(worktree), f"origin/delivery/{short}"]
+    ).returncode == 0:
+        return worktree
+    return None
+
+
+def _provision_worktree_beads(adapter: BdWorkGraphAdapter, root: Path, worktree: Path, id_: str) -> bool:
+    metadata = worktree / ".beads" / "metadata.json"
+    if (worktree / ".beads" / "config.yaml").is_file() and not metadata.is_file():
+        source = root / ".beads" / "metadata.json"
+        try:
+            shutil.copyfile(source, metadata)
+        except OSError:
+            return False
+    try:
+        return adapter.inspect_at(id_, str(worktree)).get("id") == id_
+    except WorkGraphBackendError:
+        return False
+
+
+def _replay_returned(runner: CommandRunner, root: Path, worktree: Path, short: str, base: str) -> None:
+    ref = f"returned/{short}" if _show_ref(runner, root, f"refs/heads/returned/{short}") else f"origin/returned/{short}"
+    commits = _git(runner, root, ["rev-list", "--reverse", f"{base}..{ref}"])
+    if commits.returncode == 0 and not commits.stdout.strip():
+        return
+    if _git(runner, worktree, ["cherry-pick", f"{base}..{ref}"]).returncode == 0:
+        return
+    conflicts = _git(runner, worktree, ["diff", "--name-only", "--diff-filter=U"]).stdout.strip().replace("\n", " ") or "unknown"
+    print(f"clerk: claim --from-returned hit conflicts while replaying returned/{short} onto delivery/{short}", file=sys.stderr)
+    print(f"       resolve in {worktree}, run git cherry-pick --continue, then clerk backlog submit; conflicted paths: {conflicts}", file=sys.stderr)
+    raise ClerkExit(2)
+
+
+def _gh_backlog_item_or_usage(runner: CommandRunner, id_: str, verb: str) -> dict[str, Any]:
+    result = runner.run(["gh", "issue", "view", id_, "--json", "number,title,body,assignees,state"])
+    if result.returncode != 0:
+        if "not found" in result.stderr.lower():
+            usage(f"{verb}: {id_} not found — check the id ('clerk backlog next' shows ready units)")
+        backend_fail(f"{verb.removeprefix('clerk ')} failed — gh issue view did not succeed for {id_}")
+    try:
+        value = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        backend_fail(f"{verb.removeprefix('clerk ')} failed — gh issue view did not return valid JSON for {id_}")
+    if not isinstance(value, dict) or not value.get("number"):
+        backend_fail(f"{verb.removeprefix('clerk ')} failed — gh issue view did not return an issue object for {id_}")
+    assignees = value.get("assignees") or []
+    holder = assignees[0].get("login", "") if assignees and isinstance(assignees[0], dict) else ""
+    return {"id": str(value["number"]), "title": value.get("title", ""), "description": value.get("body", ""), "status": value.get("state", ""), "assignee": holder}
+
+
+def _delivery_actor(backend: str, runner: CommandRunner, root: Path, env: Mapping[str, str]) -> str:
+    if backend == "bd":
+        return _claim_current_actor(runner, root, env)
+    result = runner.run(["gh", "api", "user", "--jq", ".login"])
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _parse_claim_args(argv: Sequence[str]) -> tuple[str, bool, bool, str]:
+    if not argv:
+        usage("clerk backlog claim: missing id — usage: clerk backlog claim <id>")
+    id_ = argv[0]
+    replay = fresh = False
+    disposition = ""
+    args = list(argv[1:])
+    i = 0
+    while i < len(args):
+        if args[i] == "--from-returned":
+            replay = True
+        elif args[i] == "--fresh":
+            fresh = True
+        elif args[i] == "--returned":
+            if i + 1 == len(args):
+                usage("clerk backlog claim: --returned needs keep or discard")
+            disposition = args[i + 1]
+            i += 1
+        else:
+            usage(f"clerk backlog claim: unknown argument '{args[i]}' — usage: clerk backlog claim <id> [--from-returned|--fresh --returned keep|discard]")
+        i += 1
+    if replay and fresh:
+        usage("clerk backlog claim: choose only one of --from-returned or --fresh")
+    if replay and disposition:
+        usage("clerk backlog claim: --returned is only valid with --fresh")
+    if not fresh and disposition:
+        usage("clerk backlog claim: --returned is only valid with --fresh")
+    if disposition not in {"", "keep", "discard"}:
+        usage("clerk backlog claim: --returned must be keep or discard")
+    return id_, replay, fresh, disposition
+
+
+def cmd_backlog_claim(backend: str, root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    id_arg, replay, fresh, disposition = _parse_claim_args(argv)
+    if backend == "bd":
+        item = _bd_issue_json_or_usage(runner, id_arg, "clerk backlog claim", "'clerk backlog next' shows ready units")
+    elif backend == "gh":
+        item = _gh_backlog_item_or_usage(runner, id_arg, "clerk backlog claim")
+    else:
+        backend_fail(f"backlog claim failed — unsupported backend {backend}")
+    id_ = str(item.get("id") or id_arg)
+    short = _returned_short_from_id(id_)
+    if not has_acceptance_criteria(item):
+        usage(f"clerk backlog claim: {id_} has no 'Acceptance Criteria' section — it needs a grill pass first (e.g. 'clerk inbox pregrill {id_}', then add the section) before it can be claimed")
+    adapter = BdWorkGraphAdapter(runner) if backend == "bd" else None
+    actor = _delivery_actor(backend, runner, root, env)
+    holder = str(item.get("assignee") or "")
+    mine = holder == actor and bool(actor) or _show_ref(runner, root, f"refs/heads/delivery/{short}")
+    if mine:
+        worktree = _ensure_delivery_worktree(runner, root, short)
+        if worktree is None:
+            backend_fail(f"claim failed — could not provision the worktree at {root}/.worktrees/{short} for delivery/{short}")
+        if adapter is not None and not _provision_worktree_beads(adapter, root, worktree, id_):
+            backend_fail(f"claim failed — could not provision or verify the worktree at {worktree}")
+        _success(f"{id_} already claimed by you — worktree ready", env)
+        print(worktree)
+        return 0
+    if holder:
+        _claim_conflict(f"clerk: backlog claim refused — delivery/{short} is already claimed by {holder}\n       wait for {holder} to release or finish it, or pick a different unit ('clerk backlog next')")
+    if adapter is not None:
+        try:
+            graph = adapter.load()
+        except WorkGraphBackendError as exc:
+            _emit_stderr(exc.result)
+            backend_fail("backlog claim failed — could not load the Work graph")
+        # A complete Work graph is required for blocker/child pickability.
+        work = graph.resolve(id_)
+        if work is None:
+            usage(f"clerk backlog claim: {id_} not found — check the id ('clerk backlog next' shows ready units)")
+        reasons = graph.pickability_reasons(work)
+        if reasons:
+            usage(f"clerk backlog claim: {id_} is not pickable — {', '.join(reasons)}")
+    offline = not _fetch_origin(runner, root, env)
+    has_returned = _returned_branch_exists(runner, root, short)
+    if replay and not has_returned:
+        usage(f"clerk backlog claim: --from-returned requested but returned/{short} was not found")
+    if has_returned and not replay and (not fresh or not disposition):
+        print(f"clerk backlog claim: returned/{short} exists — choose how to claim", file=sys.stderr)
+        print(f"  reuse returned work: clerk backlog claim {id_} --from-returned", file=sys.stderr)
+        print(f"  start fresh:         clerk backlog claim {id_} --fresh --returned keep|discard", file=sys.stderr)
+        raise ClerkExit(2)
+    if offline:
+        if _in_job_context(env):
+            usage(f"clerk: OFFLINE in a job context - refusing {short}: the claim lock needs the remote and no attendant can accept the staleness hazard. Retry when origin is reachable.")
+        base = "main"
+        if not _show_ref(runner, root, "refs/heads/main"):
+            backend_fail(f"claim failed — no local 'main' branch to base delivery/{short} on")
+        if _git(runner, root, ["branch", f"delivery/{short}", base]).returncode != 0:
+            backend_fail(f"claim failed — could not create local branch delivery/{short} from main")
+    else:
+        if _show_ref(runner, root, f"refs/remotes/origin/delivery/{short}"):
+            _claim_conflict(f"clerk: backlog claim refused — delivery/{short} is already claimed by {holder or 'someone else'}\n       wait for {holder or 'someone else'} to release or finish it, or pick a different unit ('clerk backlog next')")
+        base = "origin/main" if _show_ref(runner, root, "refs/remotes/origin/main") else "main"
+        base_sha = _git(runner, root, ["rev-parse", base]).stdout.strip()
+        if not base_sha:
+            backend_fail(f"claim failed — could not resolve a base commit (origin/main or main) for delivery/{short}")
+        if _git(runner, root, ["push", "origin", f"{base_sha}:refs/heads/delivery/{short}"]).returncode != 0:
+            _fetch_origin(runner, root, env)
+            _claim_conflict(f"clerk: backlog claim refused — delivery/{short} was just claimed by {holder or 'someone else'}\n       wait for {holder or 'someone else'} to release or finish it, or pick a different unit ('clerk backlog next')")
+        if _git(runner, root, ["branch", f"delivery/{short}", base_sha]).returncode != 0:
+            backend_fail(f"claim failed — delivery/{short} is pushed but the local branch could not be created")
+        _git(runner, root, ["branch", "--set-upstream-to", f"origin/delivery/{short}", f"delivery/{short}"])
+    if adapter is not None:
+        claimed = adapter.claim(id_)
+        _emit_stderr(claimed)
+        if claimed.returncode != 0 or str(_bd_issue_json_or_backend(runner, id_, f"claim failed — delivery/{short} was created but the bd claim did not confirm for {id_}").get("assignee") or "") != actor:
+            backend_fail(f"claim failed — delivery/{short} was created but the bd claim did not confirm for {id_}")
+    elif actor and runner.run(["gh", "issue", "edit", id_, "--add-assignee", actor]).returncode != 0:
+        backend_fail(f"claim failed — delivery/{short} was created but the GitHub claim did not succeed for {id_}")
+    worktree = _ensure_delivery_worktree(runner, root, short)
+    if worktree is None:
+        backend_fail(f"claim failed — could not provision the worktree at {root}/.worktrees/{short} for delivery/{short}")
+    if adapter is not None and not _provision_worktree_beads(adapter, root, worktree, id_):
+        backend_fail(f"claim failed — could not provision or verify the worktree at {worktree}")
+    if replay:
+        _replay_returned(runner, root, worktree, short, base)
+    elif fresh and disposition == "discard":
+        _dispose_returned(runner, root, short, env)
+    if offline:
+        print(f"clerk: OFFLINE - 'delivery/{short}' claimed LOCALLY ONLY (not pushed). The branch is the lock; it is compare-and-swapped at first reconnect (clerk submit/sync). If another machine claimed {short} meanwhile, that push wins and this local work is discarded. Proceeding, attended.", file=sys.stderr)
+    else:
+        _success(f"claimed {id_} — delivery/{short} pushed, worktree ready", env)
+    print(worktree)
+    return 0
+
+
+def _delivery_ahead_count(runner: CommandRunner, root: Path, short: str) -> int:
+    base = "origin/main" if _show_ref(runner, root, "refs/remotes/origin/main") else "main"
+    result = _git(runner, root, ["rev-list", "--count", f"{base}..delivery/{short}"])
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return 0
+
+
+def cmd_backlog_release(backend: str, root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    if not argv:
+        usage("clerk backlog release: missing id — usage: clerk backlog release <id>")
+    if len(argv) > 1:
+        usage(f"clerk backlog release: unknown argument '{argv[1]}' — usage: clerk backlog release <id>")
+    if backend == "bd":
+        item = _bd_issue_json_or_usage(runner, argv[0], "clerk backlog release", "'clerk backlog next' shows ready units")
+    elif backend == "gh":
+        item = _gh_backlog_item_or_usage(runner, argv[0], "clerk backlog release")
+    else:
+        backend_fail(f"backlog release failed — unsupported backend {backend}")
+    id_, short = str(item.get("id") or argv[0]), _returned_short_from_id(str(item.get("id") or argv[0]))
+    main_root = _primary_repo_root(runner, root)
+    actor, holder = _delivery_actor(backend, runner, main_root, env), str(item.get("assignee") or "")
+    if not ((actor and holder == actor) or _show_ref(runner, main_root, f"refs/heads/delivery/{short}")):
+        _success(f"{id_} is not claimed here (no local delivery/{short}) — nothing to release", env)
+        return 0
+    offline = not _fetch_origin(runner, main_root, env)
+    ahead = _delivery_ahead_count(runner, main_root, short)
+    if ahead:
+        print(f"clerk: backlog release refused — delivery/{short} has {ahead} commit(s) beyond main", file=sys.stderr)
+        print(f"       run 'clerk backlog submit {id_}' to save the work, or 'clerk backlog return {id_} --reason \"<text>\"' to abandon it", file=sys.stderr)
+        raise ClerkExit(2)
+    if offline and _in_job_context(env):
+        usage(f"clerk: OFFLINE in a job context - refusing to release {short}: the remote teardown needs origin and no attendant can accept the staleness hazard. Retry when origin is reachable.")
+    # The caller may be inside this disposable linked worktree; leave it before removal.
+    os.chdir(main_root)
+    worktree = main_root / ".worktrees" / short
+    if worktree.is_dir() and _git(runner, main_root, ["worktree", "remove", str(worktree)]).returncode != 0:
+        backend_fail(f"release failed — could not remove the worktree at {worktree} (commit or stash local changes first)")
+    if not worktree.is_dir():
+        _git(runner, main_root, ["worktree", "prune"])
+    if not offline and _show_ref(runner, main_root, f"refs/remotes/origin/delivery/{short}") and _git(runner, main_root, ["push", "origin", "--delete", f"delivery/{short}"]).returncode != 0:
+        backend_fail(f"release failed — could not delete origin delivery/{short}")
+    if _show_ref(runner, main_root, f"refs/heads/delivery/{short}") and _git(runner, main_root, ["branch", "-D", f"delivery/{short}"]).returncode != 0:
+        backend_fail(f"release failed — could not delete local branch delivery/{short}")
+    if backend == "bd":
+        adapter = BdWorkGraphAdapter(runner)
+        result = adapter.release(id_)
+        if result.returncode != 0:
+            backend_fail(f"release failed — bd update did not succeed for {id_}")
+        after = _bd_issue_json_or_backend(runner, id_, f"release failed — {id_} was not confirmed open/unassigned after release")
+        if after.get("status") != "open" or after.get("assignee"):
+            backend_fail(f"release failed — {id_} was not confirmed open/unassigned after release")
+    elif actor and runner.run(["gh", "issue", "edit", id_, "--remove-assignee", actor]).returncode != 0:
+        backend_fail(f"release failed — could not remove the GitHub claim for {id_}")
+    if offline:
+        print(f"clerk: OFFLINE - delivery/{short} deleted locally only; the remote branch delete is deferred to sync (clerk claim/sync will finish it at the next reconnect).", file=sys.stderr)
+    _success(f"released {id_} — delivery/{short} torn down, unit reopened (stage:ready kept)", env)
+    return 0
+
+
+def _archive_returned(runner: CommandRunner, root: Path, short: str, offline: bool) -> None:
+    branch, remote = f"returned/{short}", f"refs/remotes/origin/returned/{short}"
+    if not _show_ref(runner, root, f"refs/heads/{branch}"):
+        if not _show_ref(runner, root, remote):
+            return
+        if _git(runner, root, ["branch", branch, f"origin/{branch}"]).returncode != 0:
+            backend_fail(f"return failed — could not materialize origin/{branch} for archiving")
+    suffix = _git(runner, root, ["rev-parse", "--short", branch]).stdout.strip()
+    archive = f"{branch}-{suffix}"
+    if _git(runner, root, ["branch", "-M", branch, archive]).returncode != 0:
+        backend_fail(f"return failed — could not archive {branch} as {archive}")
+    if not offline:
+        if _git(runner, root, ["push", "origin", archive]).returncode != 0:
+            backend_fail(f"return failed — could not push {archive} to origin")
+        if _show_ref(runner, root, remote) and _git(runner, root, ["push", "origin", "--delete", branch]).returncode != 0:
+            backend_fail(f"return failed — could not delete origin {branch} before replacing it")
+
+
+def cmd_backlog_return(backend: str, root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    if not argv:
+        usage('clerk backlog return: missing id — usage: clerk backlog return <id> --reason "<text>"')
+    id_arg, reason = argv[0], ""
+    args, i = list(argv[1:]), 0
+    while i < len(args):
+        if args[i] != "--reason":
+            usage(f"clerk backlog return: unknown argument '{args[i]}' — usage: clerk backlog return <id> --reason \"<text>\"")
+        if i + 1 == len(args):
+            usage("clerk backlog return: --reason needs a value")
+        reason = args[i + 1]
+        i += 2
+    if not reason:
+        usage(f"clerk backlog return: missing --reason — usage: clerk backlog return {id_arg} --reason \"<text>\"")
+    if backend == "bd":
+        item = _bd_issue_json_or_usage(runner, id_arg, "clerk backlog return", "'clerk backlog next' shows ready units")
+    elif backend == "gh":
+        item = _gh_backlog_item_or_usage(runner, id_arg, "clerk backlog return")
+    else:
+        backend_fail(f"backlog return failed — unsupported backend {backend}")
+    id_ = str(item.get("id") or id_arg)
+    short, main_root = _returned_short_from_id(id_), _primary_repo_root(runner, root)
+    if not _show_ref(runner, main_root, f"refs/heads/delivery/{short}"):
+        usage(f"clerk backlog return: no local delivery/{short} — claim it first ('clerk backlog claim {id_}')")
+    offline = not _fetch_origin(runner, main_root, env)
+    if offline and _in_job_context(env):
+        usage(f"clerk: OFFLINE in a job context - refusing to return {short}: preserving the branch needs origin and no attendant can accept the staleness hazard. Retry when origin is reachable.")
+    sha = _git(runner, main_root, ["rev-parse", f"delivery/{short}"]).stdout.strip()
+    # The caller may be inside this disposable linked worktree. Leave it before
+    # removal so subsequent backend commands never inherit a deleted cwd.
+    os.chdir(main_root)
+    worktree = main_root / ".worktrees" / short
+    if worktree.is_dir() and _git(runner, main_root, ["worktree", "remove", str(worktree)]).returncode != 0:
+        backend_fail(f"return failed — could not remove the worktree at {worktree} (commit or stash local changes first)")
+    if not worktree.is_dir():
+        _git(runner, main_root, ["worktree", "prune"])
+    _archive_returned(runner, main_root, short, offline)
+    if _git(runner, main_root, ["branch", "-m", f"delivery/{short}", f"returned/{short}"]).returncode != 0:
+        backend_fail(f"return failed — could not rename delivery/{short} to returned/{short}")
+    if not offline:
+        if _git(runner, main_root, ["push", "origin", f"returned/{short}"]).returncode != 0:
+            backend_fail(f"return failed — could not push returned/{short} to origin")
+        if _show_ref(runner, main_root, f"refs/remotes/origin/delivery/{short}") and _git(runner, main_root, ["push", "origin", "--delete", f"delivery/{short}"]).returncode != 0:
+            backend_fail(f"return failed — could not delete origin delivery/{short}")
+    body = f"{reason}\n\nreturned from delivery of {id_}\nevidence: returned/{short} @ {sha}"
+    if backend == "bd":
+        adapter = BdWorkGraphAdapter(runner)
+        result = adapter.return_to_inbox(id_)
+        if result.returncode != 0:
+            backend_fail(f"return failed — bd update did not succeed for {id_}")
+        after = _bd_issue_json_or_backend(runner, id_, f"return failed — {id_} was not confirmed open/not-ready after return")
+        if after.get("status") != "open" or "stage:ready" in (after.get("labels") or []):
+            backend_fail(f"return failed — {id_} was not confirmed open/not-ready after return")
+        _bd_ensure_impediment_type(runner)
+        capture = adapter.create_impediment(f"backlog return: {id_}", body)
+        if capture.returncode != 0 or not capture.stdout.strip():
+            backend_fail(f"return failed — could not file the reason capture for {id_}")
+        capture_id = capture.stdout.strip()
+        _bd_issue_json_or_backend(runner, capture_id, f"return failed — reason capture {capture_id} was not confirmed after filing")
+    else:
+        if runner.run(["gh", "issue", "reopen", id_]).returncode != 0 or runner.run(["gh", "issue", "edit", id_, "--remove-label", "ready-for-agent"]).returncode != 0:
+            backend_fail(f"return failed — could not reopen {id_} as a GitHub backlog item")
+        actor = _delivery_actor("gh", runner, main_root, env)
+        if actor and runner.run(["gh", "issue", "edit", id_, "--remove-assignee", actor]).returncode != 0:
+            backend_fail(f"return failed — could not remove the GitHub claim for {id_}")
+        capture = runner.run(["gh", "issue", "create", "--title", f"backlog return: {id_}", "--body", body, "--label", "type:impediment"])
+        if capture.returncode != 0 or not capture.stdout.strip():
+            backend_fail(f"return failed — could not file the reason capture for {id_}")
+        capture_id = capture.stdout.strip()
+    if offline:
+        print(f"clerk: OFFLINE - returned/{short} created locally only; pushing it and deleting delivery/{short} on origin is deferred to sync (clerk claim/sync will finish it at the next reconnect).", file=sys.stderr)
+    _success(f"returned {id_} — returned/{short} preserved, reopened, reason filed as {capture_id}", env)
+    return 0
+
+
 MUTATION_HANDLERS = {
     ("capture",): cmd_capture,
     ("inbox", "pregrill"): cmd_inbox_pregrill,
@@ -1367,6 +1723,9 @@ MUTATION_HANDLERS = {
     ("inbox", "update"): cmd_inbox_update,
     ("inbox", "resolve"): cmd_inbox_resolve,
     ("backlog", "resolve"): cmd_backlog_resolve,
+    ("backlog", "claim"): cmd_backlog_claim,
+    ("backlog", "release"): cmd_backlog_release,
+    ("backlog", "return"): cmd_backlog_return,
 }
 
 

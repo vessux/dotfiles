@@ -83,6 +83,24 @@ break_origin() { # $1 = repo
 	[ "$(jq -r '(.[0].labels // []) | index("stage:ready")' <<<"$json")" != null ]
 }
 
+@test "release (bd): running from inside the delivery worktree tears down the primary checkout claim" {
+	repo=$(make_claim_repo rel_from_worktree)
+	cd "$repo"
+	id=$(mk_ready_unit "release from worktree unit")
+	short="${id#*-}"
+	"$CLERK" backlog claim "$id" >/dev/null
+	wt="$repo/.worktrees/$short"
+
+	cd "$wt"
+	run "$CLERK" backlog release "$id"
+	[ "$status" -eq 0 ]
+	[ ! -d "$wt" ]
+	! git -C "$repo" show-ref --verify --quiet "refs/heads/delivery/$short"
+	git -C "$repo" fetch -q origin
+	! git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/delivery/$short"
+	[ "$(bd -C "$repo" show "$id" --readonly --json | jq -r '.[0].status')" = open ]
+}
+
 @test "release (bd): a branch with commits beyond main is refused, exit 2, branch and worktree left intact" {
 	repo=$(make_claim_repo rel_work)
 	cd "$repo"

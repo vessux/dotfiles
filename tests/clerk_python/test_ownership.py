@@ -57,13 +57,17 @@ class OwnershipTests(unittest.TestCase):
             with self.subTest(argv=argv):
                 self.assertTrue(is_python_owned(argv))
 
-    def test_unported_workflow_verb_bodies_still_route_to_legacy_fallback(self):
+    def test_delivery_claim_lifecycle_is_python_owned(self):
         for argv in (
             ["backlog", "claim", "dotfiles-123"],
-            ["glean"],
+            ["backlog", "release", "dotfiles-123"],
+            ["backlog", "return", "dotfiles-123", "--reason", "blocked"],
         ):
             with self.subTest(argv=argv):
-                self.assertFalse(is_python_owned(argv))
+                self.assertTrue(is_python_owned(argv))
+
+    def test_unported_workflow_verbs_still_route_to_legacy_fallback(self):
+        self.assertFalse(is_python_owned(["glean"]))
 
     def test_public_verb_path_identifies_roster_paths_without_validating_args(self):
         self.assertEqual(public_verb_path(["backlog", "claim", "dotfiles-123"]), ("backlog", "claim"))
