@@ -19,6 +19,7 @@ from .work_graph import (
     Work,
     WorkGraph,
     WorkGraphBackendError,
+    has_acceptance_criteria,
     has_blocker as _has_block_edge,
     has_open_blockers,
     has_open_children,
@@ -324,6 +325,13 @@ def _returned_branch_exists(runner: CommandRunner, root: Path, short: str) -> bo
     return _show_ref(runner, main_root, f"refs/remotes/origin/returned/{short}")
 
 
+def _delivery_branch_exists(runner: CommandRunner, root: Path, short: str) -> bool:
+    if not (root / ".git").exists():
+        return False
+    main_root = _primary_repo_root(runner, root)
+    return _show_ref(runner, main_root, f"refs/heads/delivery/{short}") or _show_ref(runner, main_root, f"refs/remotes/origin/delivery/{short}")
+
+
 def _for_each_ref(runner: CommandRunner, main_root: Path, patterns: Sequence[str]) -> list[str]:
     result = _git(runner, main_root, ["for-each-ref", "--format=%(refname:short)", *patterns])
     if result.returncode != 0:
@@ -598,6 +606,98 @@ def cmd_backlog_next(backend: str, root: Path, _argv: Sequence[str], runner: Com
         if not isinstance(item, dict):
             backend_fail("backlog next failed — gh issue list did not return issue objects")
         print(f"  #{item.get('number')}  ready  {item.get('title', '')}")
+    return 0
+
+
+def cmd_backlog_waiting(backend: str, _root: Path, _argv: Sequence[str], runner: CommandRunner, _env: Mapping[str, str]) -> int:
+    if backend == "bd":
+        try:
+            waiting = BdWorkGraphAdapter(runner).backlog().waiting
+        except WorkGraphBackendError as exc:
+            _emit_stderr(exc.result)
+            backend_fail(f"backlog waiting failed — {exc}")
+        print(f"Backlog waiting — {len(waiting)} item(s):")
+        if not waiting:
+            print("  (empty)")
+            return 0
+        for item in waiting:
+            print(f"  {item.work.id}  blockers:{item.blocker_count} children:{item.child_count}  {item.work.title}")
+        return 0
+    print("Backlog waiting — 0 item(s):\n  (empty)")
+    return 0
+
+
+def cmd_backlog_resolve(backend: str, root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
+    if not argv:
+        usage("clerk backlog resolve: missing id — usage: clerk backlog resolve <id> [--returned keep|discard] [--file <path>|--stdin]")
+    id_ = argv[0]
+    returned_disposition = ""
+    input_args: list[str] = []
+    args = list(argv[1:])
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--returned":
+            if i + 1 >= len(args):
+                usage("clerk backlog resolve: --returned needs keep or discard")
+            returned_disposition = args[i + 1]
+            i += 2
+        elif arg == "--file":
+            if i + 1 >= len(args):
+                usage("clerk backlog resolve: --file needs a path")
+            input_args.extend(args[i:i + 2])
+            i += 2
+        elif arg == "--stdin":
+            input_args.append(arg)
+            i += 1
+        else:
+            usage(f"clerk backlog resolve: unknown argument '{arg}' — usage: clerk backlog resolve <id> [--returned keep|discard] [--file <path>|--stdin]")
+    if returned_disposition not in {"", "keep", "discard"}:
+        usage("clerk backlog resolve: --returned must be keep or discard")
+    if backend != "bd":
+        print("clerk: 'backlog resolve (gh)' is not yet implemented in this generation (see dotfiles-dft epic)", file=sys.stderr)
+        raise ClerkExit(3)
+
+    adapter = BdWorkGraphAdapter(runner)
+    try:
+        graph = adapter.load()
+    except WorkGraphBackendError as exc:
+        _emit_stderr(exc.result)
+        backend_fail(f"backlog resolve failed — {exc}")
+    item = graph.resolve(id_)
+    if item is None:
+        usage(f"clerk backlog resolve: {id_} not found — check the id ('clerk backlog next' shows ready units)")
+    if not has_acceptance_criteria(item.raw):
+        usage(f"clerk backlog resolve: {item.id} has no 'Acceptance Criteria' section — it needs a grill pass before no-code resolution")
+
+    reasons = list(graph.pickability_reasons(item))
+    short = _returned_short_from_id(item.id)
+    if _delivery_branch_exists(runner, root, short):
+        reasons.append(f"claimed by delivery/{short}")
+    if reasons:
+        usage(f"clerk backlog resolve: {item.id} is not pickable — {', '.join(reasons)}")
+    _handle_returned_disposition("backlog resolve", root, short, returned_disposition, runner, env)
+
+    text = _read_nonempty_text_arg("clerk backlog resolve", input_args)
+    note = f"clerk-backlog-resolution: {_utc_timestamp()}\n{text}"
+    result = adapter.append_notes(item.id, note)
+    _emit_stderr(result)
+    if result.returncode != 0:
+        backend_fail(f"backlog resolve failed — could not append resolution note for {item.id}")
+    result = adapter.close(item.id, "resolved without delivery")
+    _emit_stderr(result)
+    if result.returncode != 0:
+        backend_fail(f"backlog resolve failed — bd close did not succeed for {item.id}")
+    try:
+        after = adapter.inspect(item.id)
+    except WorkGraphBackendError as exc:
+        _emit_stderr(exc.result)
+        backend_fail(f"backlog resolve failed — {item.id} was not confirmed closed as resolved without delivery")
+    if str(after.get("status") or "") != "closed" or str(after.get("close_reason") or "") != "resolved without delivery":
+        backend_fail(f"backlog resolve failed — {item.id} was not confirmed closed as resolved without delivery")
+    if note not in str(after.get("notes") or ""):
+        backend_fail(f"backlog resolve failed — resolution note was not confirmed for {item.id}")
+    _success(f"resolved {item.id} without delivery", env)
     return 0
 
 
@@ -1266,6 +1366,7 @@ MUTATION_HANDLERS = {
     ("inbox", "note"): cmd_inbox_note,
     ("inbox", "update"): cmd_inbox_update,
     ("inbox", "resolve"): cmd_inbox_resolve,
+    ("backlog", "resolve"): cmd_backlog_resolve,
 }
 
 
@@ -1278,6 +1379,7 @@ QUERY_HANDLERS = {
     ("inbox", "blockers"): cmd_inbox_blockers,
     ("inbox", "blocked"): cmd_inbox_blocked,
     ("backlog", "next"): cmd_backlog_next,
+    ("backlog", "waiting"): cmd_backlog_waiting,
     ("backlog", "show"): cmd_backlog_show,
 }
 

@@ -94,12 +94,15 @@ class BdWorkGraphAdapterTests(unittest.TestCase):
     def test_backlog_excludes_ready_labels_without_acceptance_criteria(self):
         payload = [
             {"id": "missing", "title": "Missing", "status": "open", "labels": ["stage:ready"]},
+            {"id": "waiting", "title": "Waiting", "status": "open", "labels": ["stage:ready"], "dependencies": [{"type": "blocks", "depends_on_id": "blocker"}]},
+            {"id": "blocker", "title": "Blocker", "status": "open"},
             {"id": "valid", "title": "Valid", "status": "open", "labels": ["stage:ready"], "acceptance_criteria": "- valid"},
         ]
 
         backlog = BdWorkGraphAdapter(FakeRunner(payload)).backlog()
 
         self.assertEqual([item.id for item in backlog.pickable], ["valid"])
+        self.assertEqual([(item.work.id, item.blocker_count, item.child_count) for item in backlog.waiting], [("waiting", 1, 0)])
 
 
 if __name__ == "__main__":
