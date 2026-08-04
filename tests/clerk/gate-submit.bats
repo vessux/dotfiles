@@ -156,6 +156,33 @@ claimable_work() { # $1=repo
 	printf '%s' "$output" | jq -e '.[0].status == "closed"' >/dev/null
 }
 
+@test "the dotfiles synchronous adapter runs Bats on half the available CPUs" {
+	worktree="$BATS_TEST_TMPDIR/worktree"
+	mkdir -p "$worktree/bin" "$worktree/tests/clerk"
+	export BATS_ARGS="$BATS_TEST_TMPDIR/bats.args"
+	cat >"$STUB_BIN/bats" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >"$BATS_ARGS"
+SH
+	cat >"$STUB_BIN/shellcheck" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+	chmod +x "$STUB_BIN/bats" "$STUB_BIN/shellcheck"
+	git init -q -b main "$worktree"
+	git -C "$worktree" config user.email clerk@test
+	git -C "$worktree" config user.name clerk
+	: >"$worktree/bin/tool"
+	git -C "$worktree" add . && git -C "$worktree" commit -q -m fixture
+
+	run bash -c 'printf "%s" "{\"delivery\":{\"worktree\":\"$1\"}}" | "$2" run' _ "$worktree" "$BATS_TEST_DIRNAME/../../clerk/project-gate"
+	[ "$status" -eq 0 ]
+	cpus=$(getconf _NPROCESSORS_ONLN)
+	jobs=$((cpus / 2))
+	[ "$jobs" -ge 1 ] || jobs=1
+	[ "$(cat "$BATS_ARGS")" = "--jobs $jobs tests/clerk" ]
+}
+
 @test "the dotfiles synchronous adapter translates selected command failure to a terminal verdict" {
 	worktree="$BATS_TEST_TMPDIR/worktree"
 	mkdir -p "$worktree/bin" "$worktree/tests/clerk"
