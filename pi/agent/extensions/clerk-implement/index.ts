@@ -2,28 +2,28 @@ import { stripFrontmatter, type ExtensionAPI, type SlashCommandInfo } from "@ear
 import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-const DEFAULT_SCOPE = "the next pickable Work item";
+const NO_WORK_ID = "no Work ID supplied";
 
-function buildWorkflowPrompt(scope: string): string {
-	return `Implement Clerk Backlog Work: ${scope}.
+function buildWorkflowPrompt(workId: string): string {
+	return `Implement Clerk Backlog Work (${workId}).
 
 Follow this repo's Clerk workflow:
 
 1. Run \`clerk doctor\` if setup or the next workflow step is unclear.
-2. Resolve the Work item to implement from the supplied arguments (\`${scope}\`):
-   - If no arguments were supplied, run \`clerk backlog next\`, choose one pickable Work item, and inspect it with \`clerk backlog show <id>\`.
-   - If the arguments include a specific pickable Work ID, inspect it with \`clerk backlog show <id>\`.
-   - If the arguments name an epic or another non-pickable parent, inspect it with \`clerk backlog show <id>\`, run \`clerk backlog next\`, and choose the first direct child that appears in that pickable Backlog view and satisfies the supplied instructions. Inspect the chosen child with \`clerk backlog show <child-id>\`.
+2. Resolve exactly one pickable Work item:
+   - If no Work ID was supplied, run \`clerk backlog next\`, choose one item, and inspect it with \`clerk backlog show <id>\`.
+   - Otherwise, treat the supplied argument (\`${workId}\`) as one pickable Work ID and inspect it with \`clerk backlog show <id>\`.
+   - Epic or parent IDs, multiple IDs, and free-form scope are unsupported. Stop rather than trying to resolve or guess them.
    - Let Clerk determine pickability. Do not infer it independently from ready state, parent/child state, or blockers.
-   - If the requested scope cannot be resolved to exactly one pickable Work item, stop and explain what Clerk command/output blocks selection rather than guessing.
-3. Claim the resolved Work item with \`clerk backlog claim <id>\`.
-4. Do all implementation work inside the created \`.worktrees/<id>\` worktree, not the repo root.
-5. Implement only that resolved Backlog item and satisfy its Acceptance criteria; use TDD/test-first where practical. Record unrelated discoveries with \`clerk capture\` instead of expanding scope.
-6. Run the relevant checks/tests.
-7. Use \`/skill:code-review\` or the code-review skill to review the completed diff before submit.
-8. Run \`clerk --explain backlog submit\`, then invoke \`clerk backlog submit <id>\` with exactly the additional input, if any, prescribed by the current Clerk generation. If Clerk prescribes proof JSON, generate it with \`clerk backlog proof <id>\`, fill in the requested evidence, and pass it to submit.
-9. Run \`clerk backlog finish <id>\` until the reconciler reports that the Work item is merged, waiting, or needs another build loop. If another build loop is required, fix and verify the Work before submitting or finishing again.
-10. If the resolved Work item is impossible as refined, use \`clerk backlog return <id> --reason "..."\` rather than improvising scope.`;
+3. Claim the Work item with \`clerk backlog claim <id>\`.
+4. Change directory to the authoritative worktree path printed on the final line by Claim. Do not construct or guess the path.
+5. Implement only that Work item and satisfy its Acceptance criteria; use TDD/test-first where practical. Record unrelated discoveries with \`clerk capture\` instead of expanding scope.
+6. Run the relevant checks/tests and commit the work to the current delivery branch.
+7. Use \`/skill:code-review\` or the code-review skill to review the completed diff against the fixed point \`origin/main\` before submit.
+8. Submit with exactly \`clerk backlog submit <id>\`.
+9. If the Project gate is pending, repeat \`clerk backlog gate <id>\` until it reaches a terminal result. If it fails, repair, verify, review, commit, and submit again.
+10. Run \`clerk backlog finish <id>\` only when Submission ownership is \`clerk\` and Clerk owns a submitted PR.
+11. If the Work item is impossible as refined, use \`clerk backlog return <id> --reason "..."\` rather than improvising scope.`;
 }
 
 function expandSkill(command: SlashCommandInfo): string {
@@ -50,9 +50,9 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			const scope = args.trim() || DEFAULT_SCOPE;
+			const workId = args.trim() || NO_WORK_ID;
 			await ctx.waitForIdle();
-			pi.sendUserMessage(`${expandSkill(implementSkill)}\n\n${buildWorkflowPrompt(scope)}`);
+			pi.sendUserMessage(`${expandSkill(implementSkill)}\n\n${buildWorkflowPrompt(workId)}`);
 		},
 	});
 }
