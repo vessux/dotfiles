@@ -1642,10 +1642,20 @@ cmd_backlog_waiting() {
 	case "$backend" in
 		bd)
 			local json waiting count
-			if ! json=$(backlog_bd_ready_unclaimed_details_json); then
-				backend_fail "backlog waiting failed — bd list/show did not succeed"
+			if ! json=$(bd list --all --readonly --json --limit 0); then
+				backend_fail "backlog waiting failed — bd list did not succeed"
 			fi
-			waiting=$(printf '%s' "$json" | jq "$backlog_waiting_filter_jq")
+			waiting=$(printf '%s' "$json" | jq '
+				def edge_type: (.dependency_type // .type // "");
+				[ .[] as $work
+				  | select($work.status == "open"
+				      and ((($work.labels // []) | index("stage:ready")) != null)
+				      and (($work.assignee // "") == ""))
+				  | ([($work.dependencies // [])[] | select(((.dependency_type // .type // "") == "blocks") and ((.status // "open") != "closed"))] | length) as $blockers
+				  | ([.[] | select((.parent == $work.id) and ((.status // "open") != "closed"))] | length) as $children
+				  | select(($blockers + $children) > 0)
+				  | {id: $work.id, title: $work.title, blockers: $blockers, children: $children}
+				]')
 			count=$(printf '%s' "$waiting" | jq 'length')
 			printf 'Backlog waiting — %s item(s):\n' "$count"
 			if [ "$count" -eq 0 ]; then
