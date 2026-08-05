@@ -1,13 +1,6 @@
 import unittest
-from pathlib import Path
-
-from clerk.legacy import legacy_path
 from clerk.ownership import is_python_owned, public_verb_path
-
-
-class LegacyPathTests(unittest.TestCase):
-    def test_direct_module_invocation_finds_the_preserved_shell_script(self):
-        self.assertTrue((legacy_path({})).samefile(Path("clerk/legacy/clerk.bash")))
+from clerk.roster import all_public_verb_paths
 
 
 class OwnershipTests(unittest.TestCase):
@@ -72,6 +65,11 @@ class OwnershipTests(unittest.TestCase):
 
     def test_glean_is_python_owned(self):
         self.assertTrue(is_python_owned(["glean"]))
+
+    def test_all_public_verb_paths_are_python_owned(self):
+        for path in all_public_verb_paths():
+            with self.subTest(path=path):
+                self.assertTrue(is_python_owned(path))
 
     def test_public_verb_path_identifies_roster_paths_without_validating_args(self):
         self.assertEqual(public_verb_path(["backlog", "claim", "dotfiles-123"]), ("backlog", "claim"))

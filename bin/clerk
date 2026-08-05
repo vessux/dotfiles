@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# clerk public launcher: resolve this checkout and hand off to the stdlib Python
-# Clerk project, or to the preserved legacy shell implementation when explicitly forced.
+# clerk public launcher: resolve this checkout and hand off to stdlib Python.
 set -uo pipefail
 
 clerk_error() {
@@ -40,12 +39,7 @@ if ! repo_root=$(cd -P -- "$bin_dir/.." 2>/dev/null && pwd); then
 	exit 4
 fi
 
-legacy_path=$repo_root/clerk/legacy/clerk.bash
 python_src=$repo_root/clerk/src
-
-if [ -n "${CLERK_FORCE_LEGACY:-}" ] && [ "${CLERK_FORCE_LEGACY:-}" != 0 ]; then
-	exec "$legacy_path" "$@"
-fi
 
 find_python() {
 	local candidate
@@ -66,7 +60,7 @@ PY
 
 if ! python_bin=$(find_python); then
 	clerk_error "Python 3.11 or newer is required to run Clerk" \
-		"install Python 3.11+, set CLERK_PYTHON to its path, or rerun with CLERK_FORCE_LEGACY=1" \
+		"install Python 3.11+ or set CLERK_PYTHON to its path" \
 		"then run 'clerk doctor' if setup is still unclear"
 	exit 4
 fi
@@ -74,5 +68,4 @@ fi
 PYTHONDONTWRITEBYTECODE=1 \
 PYTHONPATH="$python_src${PYTHONPATH:+:$PYTHONPATH}" \
 CLERK_REPO_ROOT="$repo_root" \
-CLERK_LEGACY_PATH="$legacy_path" \
 exec "$python_bin" -m clerk "$@"

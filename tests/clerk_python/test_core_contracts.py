@@ -12,21 +12,14 @@ from clerk.manifest import ManifestStatus, read_manifest
 
 
 class CliBoundaryTests(unittest.TestCase):
-    def invoke(self, argv, *, env=None, legacy_code=77):
+    def invoke(self, argv, *, env=None):
         out = io.StringIO()
         err = io.StringIO()
-        calls = []
-
-        def fake_legacy(args):
-            calls.append(list(args))
-            return legacy_code
-
-        with mock.patch("clerk.cli.run_legacy", side_effect=fake_legacy), \
-            mock.patch.dict(os.environ, env or {}, clear=True), \
+        with mock.patch.dict(os.environ, env or {}, clear=True), \
             contextlib.redirect_stdout(out), \
             contextlib.redirect_stderr(err):
             code = main(argv)
-        return code, out.getvalue(), err.getvalue(), calls
+        return code, out.getvalue(), err.getvalue(), []
 
     def test_no_arguments_prints_public_roster_without_legacy(self):
         code, out, err, calls = self.invoke([])
@@ -120,7 +113,7 @@ class CliBoundaryTests(unittest.TestCase):
             try:
                 os.chdir(td)
                 with mock.patch("clerk.cli.run_mutation", side_effect=fake_mutation):
-                    code, out, err, calls = self.invoke(["capture", "title"], legacy_code=77)
+                    code, out, err, calls = self.invoke(["capture", "title"])
             finally:
                 os.chdir(cwd)
         self.assertEqual((code, out, err, calls), (0, "", "", []))
@@ -140,13 +133,13 @@ class CliBoundaryTests(unittest.TestCase):
             try:
                 os.chdir(td)
                 with mock.patch("clerk.cli.run_query", side_effect=fake_query):
-                    code, out, err, calls = self.invoke(["backlog", "show", "dotfiles-123"], legacy_code=77)
+                    code, out, err, calls = self.invoke(["backlog", "show", "dotfiles-123"])
             finally:
                 os.chdir(cwd)
         self.assertEqual((code, out, err, calls), (0, "", "", []))
         self.assertEqual(seen, [(("backlog", "show"), "bd", Path(td).name, ["dotfiles-123"])])
 
-    def test_known_workflow_verb_with_bad_manifest_refuses_before_legacy(self):
+    def test_known_workflow_verb_with_bad_manifest_refuses_before_a_handler(self):
         with tempfile.TemporaryDirectory() as td:
             subprocess.run(["git", "init", "-q", "-b", "main", td], check=True)
             cwd = os.getcwd()
@@ -159,6 +152,26 @@ class CliBoundaryTests(unittest.TestCase):
         self.assertEqual(out, "")
         self.assertIn("missing .clerk marker", err)
         self.assertEqual(calls, [])
+
+    def test_proof_is_python_owned(self):
+        seen = []
+
+        def fake_proof(backend, root, remaining, runner):
+            seen.append((backend, root.name, remaining))
+            return 0
+
+        with tempfile.TemporaryDirectory() as td:
+            subprocess.run(["git", "init", "-q", "-b", "main", td], check=True)
+            Path(td, ".clerk").write_text("backlog: bd\n")
+            cwd = os.getcwd()
+            try:
+                os.chdir(td)
+                with mock.patch("clerk.cli.cmd_backlog_proof", side_effect=fake_proof):
+                    result = self.invoke(["backlog", "proof", "dotfiles-123"])
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(result, (0, "", "", []))
+        self.assertEqual(seen, [("bd", Path(td).name, ["dotfiles-123"])])
 
 
 class ManifestParsingTests(unittest.TestCase):

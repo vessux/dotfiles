@@ -11,36 +11,17 @@ from . import __version__
 from .commands import ClerkExit, MUTATION_HANDLERS, QUERY_HANDLERS, run_mutation, run_query
 from .doctor import repo_root, run_doctor
 from .glean import run_glean
-from .legacy import run_legacy
 from .manifest import ManifestStatus, read_manifest
 from .proc import CommandRunner
-from .project_gate import cmd_backlog_gate, cmd_backlog_submit
+from .project_gate import cmd_backlog_gate, cmd_backlog_proof, cmd_backlog_submit
 from .reconciliation import RECONCILIATION_VERBS, run_reconciliation
 from .roster import EXPLAIN_TEXT, NOUN_VERBS, ROSTER_LINES, TOP_LEVEL_VERBS, roster_text, verb_label
 
-# The Python core owns diagnostics, help/explain/version, manifest gating,
-# doctor, read-only item query windows, Capture/text-based Inbox mutations,
-# Planning graph mutations/claims, the Inbox ready/drop bridge, the Backlog
-# Claim lifecycle, delivery reconciliation, and Glean. Unported workflow verb
-# bodies remain on the shell fallback.
 PYTHON_QUERY_VERBS: frozenset[tuple[str, ...]] = frozenset(QUERY_HANDLERS)
 PYTHON_MUTATION_VERBS: frozenset[tuple[str, ...]] = frozenset(MUTATION_HANDLERS)
-PYTHON_PROJECT_GATE_VERBS: frozenset[tuple[str, ...]] = frozenset({("backlog", "submit"), ("backlog", "gate")})
-
-LEGACY_WORKFLOW_VERBS: frozenset[tuple[str, ...]] = frozenset(
-    ({("capture",), ("sync",), ("glean",)} | {(noun, verb) for noun, verbs in NOUN_VERBS.items() for verb in verbs})
-    - PYTHON_QUERY_VERBS
-    - PYTHON_MUTATION_VERBS
-    - PYTHON_PROJECT_GATE_VERBS
-    - RECONCILIATION_VERBS
-    - {("glean",)}
+PYTHON_PROJECT_GATE_VERBS: frozenset[tuple[str, ...]] = frozenset(
+    {("backlog", "proof"), ("backlog", "submit"), ("backlog", "gate")}
 )
-
-# Kept explicit for the legacy public contract: unknown verbs are exit 2 with
-# roster; known-but-unimplemented verbs are exit 3 without roster. There are no
-# such stubs in this migration slice, but the distinction remains one table away.
-PYTHON_STUB_VERBS: frozenset[tuple[str, ...]] = frozenset()
-
 
 def _print_roster(*, stream) -> None:
     stream.write(roster_text())
@@ -55,14 +36,6 @@ def _unknown(label: str) -> int:
     print(f"clerk: unknown verb '{label}'", file=sys.stderr)
     _print_roster(stream=sys.stderr)
     return 2
-
-
-def _not_implemented(path: tuple[str, ...]) -> int:
-    print(
-        f"clerk: '{verb_label(path)}' is not yet implemented in this generation (see dotfiles-dft epic)",
-        file=sys.stderr,
-    )
-    return 3
 
 
 def _split_control_flags(argv: Sequence[str]) -> tuple[list[str], bool, bool]:
@@ -141,21 +114,10 @@ def _manifest_context(path: tuple[str, ...]) -> tuple[Path, str] | int:
     return 4
 
 
-def _manifest_gate(path: tuple[str, ...]) -> int | None:
-    context = _manifest_context(path)
-    if isinstance(context, int):
-        return context
-    return None
-
-
 def main(argv: Sequence[str] | None = None) -> int:
-    """Dispatch public Clerk argv to Python-owned handlers or legacy fallback."""
+    """Dispatch public Clerk argv to its Python command handlers."""
 
     original_args = list(sys.argv[1:] if argv is None else argv)
-
-    if os.environ.get("CLERK_FORCE_LEGACY") not in {None, "", "0"}:
-        return run_legacy(original_args)
-
     args, explain, help_ = _split_control_flags(original_args)
 
     if not args:
@@ -186,9 +148,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     if path == ("doctor",):
         return run_doctor(remaining)
 
-    if path in PYTHON_STUB_VERBS:
-        return _not_implemented(path)
-
     if path in PYTHON_QUERY_VERBS:
         context = _manifest_context(path)
         if isinstance(context, int):
@@ -209,6 +168,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return context
         root, backend = context
         try:
+            if path == ("backlog", "proof"):
+                return cmd_backlog_proof(backend, root, remaining, CommandRunner())
             handler = cmd_backlog_submit if path == ("backlog", "submit") else cmd_backlog_gate
             return handler(backend, root, remaining, CommandRunner(), os.environ)
         except ClerkExit as exc:
@@ -227,11 +188,5 @@ def main(argv: Sequence[str] | None = None) -> int:
             return context
         root, backend = context
         return run_glean(backend, root, remaining)
-
-    if path in LEGACY_WORKFLOW_VERBS:
-        refused = _manifest_gate(path)
-        if refused is not None:
-            return refused
-        return run_legacy(original_args)
 
     return _unknown(verb_label(path))
