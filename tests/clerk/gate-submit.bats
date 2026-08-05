@@ -15,7 +15,15 @@ install_gh_stub() {
 	cat >"$STUB_BIN/gh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$BATS_TEST_TMPDIR/gh.calls"
-exit 0
+previous=
+for arg; do
+	case "$previous" in
+		--title) printf '%s' "$arg" >"$BATS_TEST_TMPDIR/gh.title" ;;
+		--body) printf '%s' "$arg" >"$BATS_TEST_TMPDIR/gh.body" ;;
+	esac
+	previous="$arg"
+done
+printf '%s' "${GH_PR_CREATE_OUTPUT-https://github.com/example/repo/pull/1}"
 SH
 	chmod +x "$STUB_BIN/gh"
 }
@@ -42,9 +50,9 @@ make_repo() { # $1=name $2=adapter body $3=owner
 	printf '%s\n' "$repo"
 }
 
-claimable_work() { # $1=repo
-	local repo="$1" id short
-	id=$(cd "$repo" && bd create 'gate work' --acceptance 'gate acceptance' --silent)
+claimable_work() { # $1=repo $2=acceptance
+	local repo="$1" acceptance="${2:-gate acceptance}" id short
+	id=$(cd "$repo" && bd create 'gate work' --acceptance "$acceptance" --silent)
 	short="${id#*-}"
 	git -C "$repo" checkout -q -b "delivery/$short"
 	printf '%s\n' "$id"
@@ -84,6 +92,8 @@ claimable_work() { # $1=repo
 	run "$CLERK" backlog submit "$id"
 	[ "$status" -eq 6 ]
 	[[ "$output" == *"check failed"* ]]
+	[ -z "$(git ls-remote --heads origin "delivery/${id#*-}")" ]
+	[ ! -e "$BATS_TEST_TMPDIR/gh.calls" ]
 
 	broken=$'#!/usr/bin/env bash\nexit 9'
 	repo=$(make_repo broken "$broken")
@@ -113,13 +123,68 @@ claimable_work() { # $1=repo
 @test "a Clerk-owned passing result hands off the assessed delivery head" {
 	adapter=$'#!/usr/bin/env bash\nrequest=$(cat); head=$(printf "%s" "$request" | jq -r .delivery.starting_commit); jq -cn --arg h "$head" \'{status:"passed",summary:"green",assessed_commit:$h}\''
 	repo=$(make_repo clerk_pass "$adapter")
-	id=$(claimable_work "$repo")
+	acceptance=$'    indented criterion\n- gate acceptance'
+	id=$(claimable_work "$repo" "$acceptance")
 	install_gh_stub
 	cd "$repo"
 	run "$CLERK" backlog submit "$id"
 	[ "$status" -eq 0 ]
-	grep -q 'pr create' "$BATS_TEST_TMPDIR/gh.calls"
-	grep -q -- '--body' "$BATS_TEST_TMPDIR/gh.calls"
+	[ "$(grep -c '^pr create' "$BATS_TEST_TMPDIR/gh.calls")" -eq 1 ]
+	[ "$(cat "$BATS_TEST_TMPDIR/gh.title")" = "gate work ($id)" ]
+	[ "$(cat "$BATS_TEST_TMPDIR/gh.body")" = "$(printf '## Project gate\n\ngreen\n\n## Acceptance criteria\n\n%s' "$acceptance")" ]
+	! grep -q -- '--auto-merge' "$BATS_TEST_TMPDIR/gh.calls"
+}
+
+@test "submit refuses Work without Acceptance criteria before the Project gate" {
+	adapter=$'#!/usr/bin/env bash\ntouch "$BATS_TEST_TMPDIR/adapter-called"'
+	repo=$(make_repo missing_acceptance "$adapter")
+	id=$(cd "$repo" && bd create 'missing acceptance' --silent)
+	git -C "$repo" checkout -q -b "delivery/${id#*-}"
+	install_gh_stub
+	cd "$repo"
+	run "$CLERK" backlog submit "$id"
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"has no acceptance criteria"* ]]
+	[ ! -e "$BATS_TEST_TMPDIR/adapter-called" ]
+	[ ! -e "$BATS_TEST_TMPDIR/gh.calls" ]
+}
+
+@test "submit rejects missing malformed and additional PR creation output" {
+	adapter=$'#!/usr/bin/env bash\nrequest=$(cat); head=$(printf "%s" "$request" | jq -r .delivery.starting_commit); jq -cn --arg h "$head" \'{status:"passed",summary:"green",assessed_commit:$h}\''
+	for fixture in missing malformed invalid_owner invalid_repo additional; do
+		repo=$(make_repo "create_$fixture" "$adapter")
+		id=$(claimable_work "$repo")
+		install_gh_stub
+		case "$fixture" in
+			missing) export GH_PR_CREATE_OUTPUT='' ;;
+			malformed) export GH_PR_CREATE_OUTPUT='not-a-url' ;;
+			invalid_owner) export GH_PR_CREATE_OUTPUT='https://github.com/-owner/repo/pull/1' ;;
+			invalid_repo) export GH_PR_CREATE_OUTPUT='https://github.com/owner/./pull/1' ;;
+			additional) export GH_PR_CREATE_OUTPUT=$'https://github.com/example/repo/pull/1\nextra' ;;
+		esac
+		cd "$repo"
+		run "$CLERK" backlog submit "$id"
+		[ "$status" -eq 5 ]
+		[[ "$output" == *"exactly one well-formed GitHub pull-request URL"* ]]
+		[[ "$output" != *"submitted $id"* ]]
+		unset GH_PR_CREATE_OUTPUT
+	done
+}
+
+@test "submit reports a Work backend failure without running the Project gate" {
+	adapter=$'#!/usr/bin/env bash\ntouch "$BATS_TEST_TMPDIR/adapter-called"'
+	repo=$(make_repo backend_failure "$adapter")
+	id=$(claimable_work "$repo")
+	cat >"$STUB_BIN/bd" <<'SH'
+#!/usr/bin/env bash
+printf 'not-json'
+SH
+	chmod +x "$STUB_BIN/bd"
+	cd "$repo"
+	run "$CLERK" backlog submit "$id"
+	[ "$status" -eq 5 ]
+	[[ "$output" == *"Work lookup failed"* ]]
+	[ ! -e "$BATS_TEST_TMPDIR/adapter-called" ]
 }
 
 @test "pending runs require an id and only reconciliation invokes status" {

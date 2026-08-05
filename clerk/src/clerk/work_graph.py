@@ -22,6 +22,18 @@ class WorkGraphBackendError(Exception):
         self.result = result
 
 
+def acceptance_criteria(value: dict[str, Any]) -> str:
+    direct = str(value.get("acceptance_criteria") or "")
+    if direct.strip():
+        return direct
+    for source in (str(value.get("description") or ""), str(value.get("design") or "")):
+        lines = source.splitlines(keepends=True)
+        for index, line in enumerate(lines):
+            if line.strip().lower().strip("# ").rstrip(":") == "acceptance criteria":
+                return "".join(lines[index + 1 :])
+    return ""
+
+
 @dataclass(frozen=True)
 class Work:
     id: str
@@ -30,6 +42,7 @@ class Work:
     labels: tuple[str, ...]
     assignee: str
     parent: str
+    acceptance_criteria: str
     raw: dict[str, Any]
 
     @classmethod
@@ -41,6 +54,7 @@ class Work:
             labels=tuple(str(label) for label in value.get("labels") or []),
             assignee=str(value.get("assignee") or ""),
             parent=str(value.get("parent") or ""),
+            acceptance_criteria=acceptance_criteria(value),
             raw=value,
         )
 
@@ -266,23 +280,42 @@ class BdWorkGraphAdapter:
     def backlog(self) -> Backlog:
         return self.load().backlog()
 
-    def _inspect(self, id_: str, *, cwd: str | None = None) -> dict[str, Any]:
+    def _find(self, id_: str, *, cwd: str | None = None) -> tuple[Work | None, CommandResult]:
         result = self._runner.run(["bd", "show", id_, "--readonly", "--json"], cwd=cwd)
-        if result.returncode != 0:
-            raise WorkGraphBackendError(f"bd show did not succeed for {id_}", result)
         try:
             data = json.loads(result.stdout or "null")
         except json.JSONDecodeError as exc:
             raise WorkGraphBackendError(f"bd show did not return valid JSON for {id_}", result) from exc
+        if result.returncode != 0:
+            if isinstance(data, dict) and "no issue" in str(data.get("error") or ""):
+                return None, result
+            raise WorkGraphBackendError(f"bd show did not succeed for {id_}", result)
         if not isinstance(data, list) or not data or not isinstance(data[0], dict):
             raise WorkGraphBackendError(f"bd show did not return a Work item for {id_}", result)
-        return data[0]
+        return Work.from_json(data[0]), result
+
+    def find(self, id_: str) -> Work | None:
+        return self._find(id_)[0]
+
+    def _inspect(self, id_: str, *, cwd: str | None = None) -> dict[str, Any]:
+        work, result = self._find(id_, cwd=cwd)
+        if work is None:
+            raise WorkGraphBackendError(f"bd show did not return a Work item for {id_}", result)
+        return work.raw
 
     def append_notes(self, id_: str, note: str) -> CommandResult:
         return self._runner.run(["bd", "update", id_, "--append-notes", note])
 
     def close(self, id_: str, reason: str) -> CommandResult:
         return self._runner.run(["bd", "close", id_, "--reason", reason])
+
+    def complete_delivery(self, id_: str) -> None:
+        result = self.close(id_, "project gate completed")
+        if result.returncode != 0:
+            raise WorkGraphBackendError(f"bd close did not succeed for {id_}", result)
+        work = self._inspect(id_)
+        if work.get("status") != "closed" or work.get("close_reason") != "project gate completed":
+            raise WorkGraphBackendError(f"delivery completion was not confirmed for {id_}", result)
 
     def inspect(self, id_: str) -> dict[str, Any]:
         return self._inspect(id_)
