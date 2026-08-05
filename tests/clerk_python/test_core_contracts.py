@@ -65,11 +65,39 @@ class CliBoundaryTests(unittest.TestCase):
             cwd = os.getcwd()
             try:
                 os.chdir(td)
-                code, out, err, calls = self.invoke(["sync"], legacy_code=0)
+                code, out, err, calls = self.invoke(["glean"], legacy_code=0)
             finally:
                 os.chdir(cwd)
         self.assertEqual((code, out, err), (0, "", ""))
-        self.assertEqual(calls, [["sync"]])
+        self.assertEqual(calls, [["glean"]])
+
+    def test_reconciliation_verbs_are_python_owned(self):
+        seen = []
+
+        def fake_reconciliation(path, backend, root, remaining):
+            seen.append((path, backend, root.name, remaining))
+            return 0
+
+        with tempfile.TemporaryDirectory() as td:
+            subprocess.run(["git", "init", "-q", "-b", "main", td], check=True)
+            Path(td, ".clerk").write_text("backlog: bd\n")
+            cwd = os.getcwd()
+            try:
+                os.chdir(td)
+                with mock.patch("clerk.cli.run_reconciliation", side_effect=fake_reconciliation):
+                    sync = self.invoke(["sync"])
+                    finish = self.invoke(["backlog", "finish", "dotfiles-123", "--watch"])
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(sync, (0, "", "", []))
+        self.assertEqual(finish, (0, "", "", []))
+        self.assertEqual(
+            seen,
+            [
+                (("sync",), "bd", Path(td).name, []),
+                (("backlog", "finish"), "bd", Path(td).name, ["dotfiles-123", "--watch"]),
+            ],
+        )
 
     def test_python_mutation_verb_uses_manifest_context_without_legacy(self):
         seen = []

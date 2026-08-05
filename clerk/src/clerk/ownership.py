@@ -14,12 +14,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from .commands import MUTATION_HANDLERS, QUERY_HANDLERS
+from .reconciliation import RECONCILIATION_VERBS
 from .roster import NOUN_VERBS, TOP_LEVEL_VERBS
 
 PYTHON_OWNED_DIRECT_PATHS: frozenset[tuple[str, ...]] = frozenset(
     {("doctor",), ("--version",), ("-V",), ("--help",), ("-h",), ("backlog", "submit"), ("backlog", "gate")}
     | set(QUERY_HANDLERS)
     | set(MUTATION_HANDLERS)
+    | set(RECONCILIATION_VERBS)
 )
 
 
