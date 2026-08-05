@@ -136,6 +136,34 @@ def _work(backend: str, runner: CommandRunner, id_: str, verb: str) -> tuple[str
     return f"#{obj.get('number')}", str(obj.get("title") or ""), acceptance_criteria({"description": obj.get("body")})
 
 
+def _proof_criteria(acceptance: str) -> list[str]:
+    bullets: list[str] = []
+    fallback: list[str] = []
+    for line in acceptance.splitlines():
+        text = line.strip()
+        if not text or re.fullmatch(r"#{0,6}\s*acceptance criteria:?", text, re.IGNORECASE):
+            continue
+        bullet = re.fullmatch(r"(?:-|\d+[.)])\s+(.+?)\s*", text)
+        if bullet:
+            bullets.append(bullet.group(1).strip())
+        else:
+            fallback.append(text)
+    return bullets if bullets or len(fallback) != 1 else fallback
+
+
+def cmd_backlog_proof(backend: str, root: Path, argv: Sequence[str], runner: CommandRunner) -> int:
+    if not argv:
+        usage("clerk backlog proof: missing id — usage: clerk backlog proof <id>")
+    if len(argv) > 1:
+        usage(f"clerk backlog proof: unknown argument '{argv[1]}' — usage: clerk backlog proof <id>")
+    work_id, _, acceptance = _work(backend, runner, argv[0], "clerk backlog proof")
+    criteria = _proof_criteria(acceptance)
+    if not criteria:
+        usage(f"clerk backlog proof: {work_id} has no acceptance criteria — return it to discovery before submitting")
+    print(json.dumps({"acceptance": [{"text": text, "evidence": ""} for text in criteria]}, indent=2, ensure_ascii=False))
+    return 0
+
+
 def _short(id_: str) -> str:
     value = id_[1:] if id_.startswith("#") else id_
     return value.split("-", 1)[1] if "-" in value else value

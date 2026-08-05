@@ -16,7 +16,6 @@ setup() {
 	# shellcheck disable=SC2034 # symmetry with OK/FAIL tags; warn lines not asserted yet
 	WARN_TAG="  ${ESC}[33m[warn]${ESC}[0m"
 	FAIL_TAG="  ${ESC}[31m[fail]${ESC}[0m"
-	NOT_IMPL="is not yet implemented in this generation (see dotfiles-dft epic)"
 	ALL_VERBS=(
 		"capture" "sync" "glean"
 		"inbox list" "inbox show" "inbox dups" "inbox ready" "inbox drop" "inbox pregrill"
@@ -25,10 +24,6 @@ setup() {
 		"backlog next" "backlog show" "backlog waiting" "backlog claim" "backlog release" "backlog resolve"
 		"backlog proof" "backlog submit" "backlog gate" "backlog finish" "backlog return"
 	)
-	# dotfiles-dft.6 implements the final top-level stub (`glean`), so the stub matrix is
-	# intentionally empty. Keep it as a matrix so a future generation gap can add entries
-	# without reshaping the dispatcher tests.
-	STUB_VERBS=()
 	mkdir -p "$BATS_TEST_TMPDIR/empty-transcripts" "$BATS_TEST_TMPDIR/glean-state"
 	export CLERK_GLEAN_TRANSCRIPT_DIR="$BATS_TEST_TMPDIR/empty-transcripts"
 	export CLERK_GLEAN_STATE_DIR="$BATS_TEST_TMPDIR/glean-state"
@@ -87,7 +82,7 @@ assert_no_python_bytecode() { # $1 = package root to inspect
 
 # ------------------------------------------------------------- version ------
 
-@test "launcher invokes the Python Clerk project, which falls back to legacy behavior" {
+@test "launcher invokes the Python Clerk project" {
 	real_python=$(python3 -c 'import sys; print(sys.executable)')
 	fake_python="$BATS_TEST_TMPDIR/python3"
 	log="$BATS_TEST_TMPDIR/python-argv.log"
@@ -110,9 +105,8 @@ EOF
 @test "launcher does not write Python bytecode into its checkout" {
 	real_python=$(python3 -c 'import sys; print(sys.executable)')
 	fresh="$BATS_TEST_TMPDIR/fresh-checkout"
-	mkdir -p "$fresh/bin" "$fresh/clerk/src" "$fresh/clerk/legacy"
+	mkdir -p "$fresh/bin" "$fresh/clerk/src"
 	cp "$REPO_ROOT/bin/clerk" "$fresh/bin/clerk"
-	cp "$REPO_ROOT/clerk/legacy/clerk.bash" "$fresh/clerk/legacy/clerk.bash"
 	cp -R "$REPO_ROOT/clerk/src/clerk" "$fresh/clerk/src/"
 	rm -rf "$fresh/clerk/src/clerk/__pycache__"
 	find "$fresh/clerk/src/clerk" -type f \( -name '*.py[co]' -o -name '*.pyd' \) -delete
@@ -132,20 +126,6 @@ EOF
 	[ "$output" = "clerk 0.1.0" ]
 }
 
-@test "force-legacy override bypasses the Python runtime" {
-	fake_python="$BATS_TEST_TMPDIR/python3"
-	cat >"$fake_python" <<'EOF'
-#!/bin/sh
-echo "python should not run" >&2
-exit 99
-EOF
-	chmod +x "$fake_python"
-
-	run env -i CLERK_FORCE_LEGACY=1 CLERK_PYTHON="$fake_python" PATH="/usr/bin:/bin" "$CLERK" --version
-	[ "$status" -eq 0 ]
-	[ "$output" = "clerk 0.1.0" ]
-}
-
 @test "launcher reports a prescriptive Clerk-shaped error when Python 3.11+ is unavailable" {
 	fake_bin="$BATS_TEST_TMPDIR/no-python-bin"
 	mkdir -p "$fake_bin"
@@ -154,7 +134,7 @@ EOF
 	run env -i PATH="$fake_bin" "$CLERK" --version
 	[ "$status" -eq 4 ]
 	[ "${lines[0]}" = "clerk: Python 3.11 or newer is required to run Clerk" ]
-	[ "${lines[1]}" = "       install Python 3.11+, set CLERK_PYTHON to its path, or rerun with CLERK_FORCE_LEGACY=1" ]
+	[ "${lines[1]}" = "       install Python 3.11+ or set CLERK_PYTHON to its path" ]
 	[ "${lines[2]}" = "       then run 'clerk doctor' if setup is still unclear" ]
 }
 
@@ -165,23 +145,6 @@ EOF
 }
 
 # -------------------------------------------- dispatch: root vs worktree ----
-
-@test "matrix: every still-stubbed roster verb resolves the repo identically from root and worktree" {
-	repo=$(make_repo matrix "backlog: bd")
-	wt=$(make_worktree "$repo" wt1)
-	for v in "${STUB_VERBS[@]}"; do
-		cd "$repo"
-		# shellcheck disable=SC2086 # word-split $v into noun + verb on purpose
-		run "$CLERK" $v
-		[ "$status" -eq 3 ]
-		[ "$output" = "clerk: '$v' $NOT_IMPL" ]
-		cd "$wt"
-		# shellcheck disable=SC2086 # word-split $v into noun + verb on purpose
-		run "$CLERK" $v
-		[ "$status" -eq 3 ]
-		[ "$output" = "clerk: '$v' $NOT_IMPL" ]
-	done
-}
 
 @test "dispatch resolves the repo from a nested subdirectory of a worktree" {
 	repo=$(make_repo nested "backlog: bd")
@@ -236,14 +199,6 @@ EOF
 	run "$CLERK" glean
 	[ "$status" -eq 4 ]
 	[ "$output" = "clerk: invalid .clerk marker at $repo/.clerk — run 'clerk doctor' to diagnose it" ]
-}
-
-@test "legacy workflow fallback accepts the optional project-gate directive" {
-	repo=$(make_repo legacy_gate $'backlog: bd\nproject-gate: gate.json')
-	cd "$repo"
-	run env CLERK_FORCE_LEGACY=1 "$CLERK" backlog finish
-	[ "$status" -eq 2 ]
-	[[ "$output" != *"invalid .clerk marker"* ]]
 }
 
 @test "marker tolerates surrounding whitespace and # comments" {
