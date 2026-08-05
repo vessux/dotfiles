@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -12,9 +13,18 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .commands import ClerkExit, _bd_issue_json_or_usage, _emit_stderr, _git, _success, backend_fail, usage
+from .commands import ClerkExit, _emit_stderr, _git, _success, backend_fail, usage
 from .manifest import ManifestStatus, parse_manifest
 from .proc import CommandResult, CommandRunner
+from .work_graph import BdWorkGraphAdapter, WorkGraphBackendError, acceptance_criteria
+
+
+_PR_URL = re.compile(
+    r"https://github\.com/"
+    r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}/"
+    r"(?=[A-Za-z0-9._-]{1,100}/pull/)(?=[^/]*[A-Za-z0-9])[A-Za-z0-9._-]+/"
+    r"pull/[1-9][0-9]*\n?"
+)
 
 
 @dataclass(frozen=True)
@@ -104,33 +114,26 @@ def _adapter_source(runner: CommandRunner, root: Path, config: GateConfig) -> st
     )
 
 
-def _acceptance(obj: Mapping[str, Any]) -> str:
-    value = str(obj.get("acceptance_criteria") or "").strip()
-    if value:
-        return value
-    for value in (str(obj.get("description") or ""), str(obj.get("design") or "")):
-        marker = "acceptance criteria"
-        lines = value.splitlines()
-        for index, line in enumerate(lines):
-            if line.strip().lower().strip("# ").rstrip(":") == marker:
-                return "\n".join(lines[index + 1 :]).strip()
-    return ""
-
-
-def _work(backend: str, runner: CommandRunner, id_: str) -> tuple[str, str, str]:
+def _work(backend: str, runner: CommandRunner, id_: str, verb: str) -> tuple[str, str, str]:
     if backend == "bd":
-        obj = _bd_issue_json_or_usage(runner, id_, "clerk backlog submit", "'clerk backlog next' shows ready units")
-        return str(obj.get("id") or id_), str(obj.get("title") or ""), _acceptance(obj)
+        try:
+            work = BdWorkGraphAdapter(runner).find(id_)
+        except WorkGraphBackendError as exc:
+            _emit_stderr(exc.result)
+            backend_fail(f"{verb.removeprefix('clerk ')} Work lookup failed — {exc}")
+        if work is None:
+            usage(f"{verb}: {id_} not found — check the id ('clerk backlog next' shows ready units)")
+        return work.id, work.title, work.acceptance_criteria
     result = runner.run(["gh", "issue", "view", id_, "--json", "number,title,body"])
     if result.returncode != 0:
-        usage(f"clerk backlog submit: {id_} not found — check the id ('clerk backlog next' shows ready units)")
+        usage(f"{verb}: {id_} not found — check the id ('clerk backlog next' shows ready units)")
     try:
         obj = json.loads(result.stdout)
     except json.JSONDecodeError:
-        backend_fail("backlog submit failed — gh issue view did not return valid JSON")
+        backend_fail(f"{verb.removeprefix('clerk ')} failed — gh issue view did not return valid JSON")
     if not isinstance(obj, dict):
-        backend_fail("backlog submit failed — gh issue view did not return an issue object")
-    return f"#{obj.get('number')}", str(obj.get("title") or ""), _acceptance({"description": obj.get("body")})
+        backend_fail(f"{verb.removeprefix('clerk ')} failed — gh issue view did not return an issue object")
+    return f"#{obj.get('number')}", str(obj.get("title") or ""), acceptance_criteria({"description": obj.get("body")})
 
 
 def _short(id_: str) -> str:
@@ -257,14 +260,20 @@ def _record_terminal(runner: CommandRunner, root: Path, short: str, request: Map
 
 
 def _close_work(backend: str, runner: CommandRunner, id_: str) -> None:
-    args = ["bd", "close", id_, "--reason", "project gate completed"] if backend == "bd" else ["gh", "issue", "close", id_]
-    result = runner.run(args)
+    if backend == "bd":
+        try:
+            BdWorkGraphAdapter(runner).complete_delivery(id_)
+        except WorkGraphBackendError as exc:
+            _emit_stderr(exc.result)
+            backend_fail(f"project gate failed — could not confirm project-gate delivery completion: {exc}")
+        return
+    result = runner.run(["gh", "issue", "close", id_])
     _emit_stderr(result)
     if result.returncode != 0:
         backend_fail("project gate failed — could not record project-gate delivery completion")
 
 
-def _handoff(backend: str, runner: CommandRunner, root: Path, branch: str, title: str, work_id: str, short: str, summary: str) -> None:
+def _handoff(runner: CommandRunner, root: Path, branch: str, title: str, work_id: str, summary: str, acceptance: str) -> None:
     result = _git(runner, root, ["push", "-u", "origin", branch])
     if result.returncode != 0:
         backend_fail(f"submit failed — could not push {branch} to origin")
@@ -280,21 +289,23 @@ def _handoff(backend: str, runner: CommandRunner, root: Path, branch: str, title
             "--title",
             f"{title} ({work_id})",
             "--body",
-            f"## Project gate\n\n{summary}",
+            f"## Project gate\n\n{summary}\n\n## Acceptance criteria\n\n{acceptance}",
         ]
     )
     _emit_stderr(result)
     if result.returncode != 0:
         backend_fail("submit failed — gh pr create did not succeed")
+    if _PR_URL.fullmatch(result.stdout) is None:
+        backend_fail("submit failed — gh pr create did not emit exactly one well-formed GitHub pull-request URL")
 
 
-def _finish_terminal(backend: str, runner: CommandRunner, root: Path, config: GateConfig, result: GateResult, work_id: str, title: str, branch: str, short: str, env: Mapping[str, str]) -> int:
+def _finish_terminal(backend: str, runner: CommandRunner, root: Path, config: GateConfig, result: GateResult, work_id: str, title: str, acceptance: str, branch: str, short: str, env: Mapping[str, str]) -> int:
     if result.status == "failed":
         print(f"clerk: project gate failed for {work_id}: {result.summary}", file=sys.stderr)
         return 6
     if result.status == "pending":
         assert result.run_id is not None
-        request = _with_starting_commit(runner, root, _request(work_id, title, "", branch, root, config.submission_owner))
+        request = _with_starting_commit(runner, root, _request(work_id, title, acceptance, branch, root, config.submission_owner))
         _save_pending(runner, root, short, request, result.run_id)
         _success(f"project gate pending for {work_id}: {result.summary}", env)
         return 0
@@ -302,7 +313,7 @@ def _finish_terminal(backend: str, runner: CommandRunner, root: Path, config: Ga
         head = _git(runner, root, ["rev-parse", "HEAD"])
         if head.returncode != 0 or head.stdout.strip() != result.assessed_commit:
             backend_fail("project gate failed — passed assessed_commit is not the current delivery worktree head")
-        _handoff(backend, runner, root, branch, title, work_id, short, result.summary)
+        _handoff(runner, root, branch, title, work_id, result.summary, acceptance)
         _success(f"submitted {work_id} — project gate passed; PR created", env)
         return 0
     if not result.delivery_completed:
@@ -315,7 +326,7 @@ def _finish_terminal(backend: str, runner: CommandRunner, root: Path, config: Ga
 def cmd_backlog_submit(backend: str, root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
     if len(argv) != 1:
         usage("clerk backlog submit: usage: clerk backlog submit <id>")
-    work_id, title, acceptance = _work(backend, runner, argv[0])
+    work_id, title, acceptance = _work(backend, runner, argv[0], "clerk backlog submit")
     if not acceptance:
         usage(f"clerk backlog submit: {work_id} has no acceptance criteria — return it to discovery before submitting")
     short = _short(work_id)
@@ -332,7 +343,7 @@ def cmd_backlog_submit(backend: str, root: Path, argv: Sequence[str], runner: Co
         _success(f"project gate pending for {work_id}: {result.summary}", env)
         return 0
     _record_terminal(runner, root, short, request, result)
-    return _finish_terminal(backend, runner, root, config, result, work_id, title, branch, short, env)
+    return _finish_terminal(backend, runner, root, config, result, work_id, title, acceptance, branch, short, env)
 
 
 def cmd_backlog_gate(backend: str, root: Path, argv: Sequence[str], runner: CommandRunner, env: Mapping[str, str]) -> int:
@@ -343,11 +354,23 @@ def cmd_backlog_gate(backend: str, root: Path, argv: Sequence[str], runner: Comm
     branch = f"delivery/{short}"
     if _current_branch(runner, root) != branch:
         usage(f"clerk backlog gate: not inside {branch} — claim {requested_id} first")
+    current_work_id = ""
+    if backend == "bd":
+        current_work_id, _, current_acceptance = _work(backend, runner, requested_id, "clerk backlog gate")
+        if not current_acceptance:
+            usage(f"clerk backlog gate: {current_work_id} has no acceptance criteria — return it to discovery before submitting")
     request, run_id = _load_pending(runner, root, short)
     work = request.get("work")
-    if not isinstance(work, dict) or not isinstance(work.get("id"), str) or not isinstance(work.get("title"), str):
+    if (
+        not isinstance(work, dict)
+        or not isinstance(work.get("id"), str)
+        or not isinstance(work.get("title"), str)
+        or not isinstance(work.get("acceptance_criteria"), str)
+        or not work["acceptance_criteria"]
+        or (current_work_id and work["id"] != current_work_id)
+    ):
         backend_fail("project gate failed — pending Gate-run metadata is malformed")
-    work_id, title = work["id"], work["title"]
+    work_id, title, acceptance = work["id"], work["title"], work["acceptance_criteria"]
     config = _load_config(runner, root)
     request = dict(request)
     request["run"] = {"id": run_id}
@@ -359,4 +382,4 @@ def cmd_backlog_gate(backend: str, root: Path, argv: Sequence[str], runner: Comm
         return 0
     _clear_pending(runner, root, short)
     _record_terminal(runner, root, short, request, result)
-    return _finish_terminal(backend, runner, root, config, result, work_id, title, branch, short, env)
+    return _finish_terminal(backend, runner, root, config, result, work_id, title, acceptance, branch, short, env)
