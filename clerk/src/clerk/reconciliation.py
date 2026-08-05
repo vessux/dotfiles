@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .commands import ClerkExit, _emit_stderr, _git, _primary_repo_root, _show_ref, _success, backend_fail, usage
-from .proc import CommandRunner
+from .proc import CommandResult, CommandRunner
 from .work_graph import BdWorkGraphAdapter, Work, WorkGraphBackendError
 
 RECONCILIATION_VERBS = frozenset({("sync",), ("backlog", "finish")})
@@ -26,6 +26,27 @@ def _current_delivery_short(runner: CommandRunner, root: Path) -> str:
     return branch.removeprefix("delivery/") if branch.startswith("delivery/") else ""
 
 
+def _gh_not_found(result: CommandResult) -> bool:
+    message = f"{result.stdout}\n{result.stderr}".lower()
+    return any(text in message for text in ("could not resolve to an issue", "no issue", "not found"))
+
+
+def _gh_issue(runner: CommandRunner, id_: str) -> dict[str, Any] | None:
+    result = runner.run(["gh", "issue", "view", id_, "--json", "number,title,body,assignees,state,labels"])
+    if result.returncode != 0:
+        if _gh_not_found(result):
+            return None
+        _emit_stderr(result)
+        backend_fail(f"finish failed — gh issue view did not succeed for {id_}")
+    try:
+        value = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        backend_fail(f"finish failed — gh issue view did not return valid JSON for {id_}")
+    if not isinstance(value, dict) or not value.get("number"):
+        backend_fail(f"finish failed — gh issue view did not return an issue object for {id_}")
+    return value
+
+
 def _resolve_work(backend: str, runner: CommandRunner, root: Path, id_arg: str) -> tuple[str, str] | None:
     if backend == "bd":
         try:
@@ -35,17 +56,11 @@ def _resolve_work(backend: str, runner: CommandRunner, root: Path, id_arg: str) 
             backend_fail(f"finish failed — could not resolve Work {id_arg}: {exc}")
         return (work.id, _short(work.id)) if work is not None else None
     if backend == "gh":
-        result = runner.run(["gh", "issue", "view", id_arg, "--json", "number,title,body,assignees,state"])
-        if result.returncode != 0:
+        value = _gh_issue(runner, id_arg)
+        if value is None:
             return None
-        try:
-            value = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            backend_fail(f"finish failed — gh issue view did not return valid JSON for {id_arg}")
-        if not isinstance(value, dict) or not value.get("number"):
-            return None
-        full = str(value["number"])
-        return full, full
+        work_id = str(value["number"])
+        return work_id, work_id
     backend_fail(f"finish failed — unsupported backend {backend}")
     raise AssertionError("unreachable")
 
@@ -108,7 +123,37 @@ def _push_if_needed(runner: CommandRunner, root: Path, short: str) -> int:
 
 
 def _remote_branch_exists(runner: CommandRunner, root: Path, branch: str) -> bool:
-    return _git(runner, root, ["ls-remote", "--exit-code", "--heads", "origin", branch]).returncode == 0
+    result = _git(runner, root, ["ls-remote", "--exit-code", "--heads", "origin", branch])
+    if result.returncode == 0:
+        return True
+    if result.returncode == 2:
+        return False
+    _emit_stderr(result)
+    backend_fail(f"finish failed — could not query origin for {branch}")
+    raise AssertionError("unreachable")
+
+
+def _finish_gh_work(runner: CommandRunner, work_id: str) -> None:
+    work = _gh_issue(runner, work_id)
+    if work is None:
+        backend_fail(f"finish failed — could not read {work_id} after finish")
+    labels = {str(label.get("name") or "") for label in work.get("labels") or [] if isinstance(label, dict)}
+    if work.get("state") != "CLOSED":
+        result = runner.run(["gh", "issue", "close", work_id])
+        _emit_stderr(result)
+        if result.returncode != 0:
+            backend_fail(f"finish failed — could not close {work_id}")
+    if "ready-for-agent" in labels:
+        result = runner.run(["gh", "issue", "edit", work_id, "--remove-label", "ready-for-agent"])
+        _emit_stderr(result)
+        if result.returncode != 0:
+            backend_fail(f"finish failed — could not remove ready-for-agent from {work_id}")
+    work = _gh_issue(runner, work_id)
+    if work is None or work.get("state") != "CLOSED":
+        backend_fail(f"finish failed — {work_id} was not confirmed closed after finish")
+    labels = {str(label.get("name") or "") for label in work.get("labels") or [] if isinstance(label, dict)}
+    if "ready-for-agent" in labels:
+        backend_fail(f"finish failed — {work_id} was not confirmed without ready-for-agent after finish")
 
 
 def _cleanup_merged(
@@ -146,7 +191,7 @@ def _cleanup_merged(
             _emit_stderr(exc.result)
             backend_fail(f"finish failed — {exc}")
     else:
-        runner.run(["gh", "issue", "edit", full, "--remove-label", "ready-for-agent"])
+        _finish_gh_work(runner, full)
     _success(f"finished {full} — PR #{pr_number} merged, delivery/{short} cleaned up, unit closed", env)
 
 
@@ -174,25 +219,25 @@ def _reconcile(
                 file=sys.stderr,
             )
         usage("clerk backlog finish: not inside delivery/<short> and no id was supplied — cd into the claimed worktree or run 'clerk backlog finish <id>'")
-    full, short = resolved
-    branch = f"delivery/{short}"
-    push_code = _push_if_needed(runner, root, short)
+    work_id, branch_token = resolved
+    branch = f"delivery/{branch_token}"
+    push_code = _push_if_needed(runner, root, branch_token)
     if push_code:
         return push_code
     pr = _active_pr(runner, branch)
     if pr is None:
         if sync:
             if not _show_ref(runner, root, f"refs/heads/{branch}") and not _show_ref(runner, root, f"refs/remotes/origin/{branch}"):
-                print(f"clerk: sync: {full} is claimed but has no delivery/{short} branch/worktree — no PR created")
+                print(f"clerk: sync: {work_id} is claimed but has no delivery/{branch_token} branch/worktree — no PR created")
             else:
-                print(f"clerk: sync: {full} has delivery/{short} but no PR — no PR created; run 'clerk backlog submit {full} --body-file <path-to-pr-body.md>'")
+                print(f"clerk: sync: {work_id} has delivery/{branch_token} but no PR — no PR created; run 'clerk backlog submit {work_id} --body-file <path-to-pr-body.md>'")
             return 0
-        print(f"clerk: backlog finish refused — no PR found for delivery/{short}", file=sys.stderr)
-        print(f"       run 'clerk backlog submit {full} --body-file <path-to-pr-body.md>'", file=sys.stderr)
+        print(f"clerk: backlog finish refused — no PR found for delivery/{branch_token}", file=sys.stderr)
+        print(f"       run 'clerk backlog submit {work_id} --body-file <path-to-pr-body.md>'", file=sys.stderr)
         return 2
     pr_number = str(pr.get("number") or "")
     if pr.get("state") == "MERGED" or pr.get("mergedAt"):
-        _cleanup_merged(backend, runner, root, full, short, pr_number, env)
+        _cleanup_merged(backend, runner, root, work_id, branch_token, pr_number, env)
         return 0
     if watch:
         result = runner.run(["gh", "pr", "checks", pr_number, "--watch"])
@@ -203,25 +248,28 @@ def _reconcile(
             backend_fail(f"finish failed — PR #{pr_number} disappeared after gh pr checks --watch")
     failures = _check_names(pr, "failed")
     if failures:
-        print(f"clerk: PR #{pr_number} for {full} has failing checks")
+        print(f"clerk: PR #{pr_number} for {work_id} has failing checks")
         for name in failures:
             print(f"  {name}")
         return 1
     pending = _check_names(pr, "pending")
     if pending:
-        print(f"clerk: PR #{pr_number} for {full} has pending checks — run 'clerk backlog finish {full} --watch' to wait")
+        print(f"clerk: PR #{pr_number} for {work_id} has pending checks — run 'clerk backlog finish {work_id} --watch' to wait")
         for name in pending:
             print(f"  {name}")
         return 0
+    if pr.get("isDraft"):
+        print(f"clerk: PR #{pr_number} for {work_id} is a draft — finish will complete after it is marked ready")
+        return 0
     if pr.get("reviewDecision") in {"REVIEW_REQUIRED", "CHANGES_REQUESTED"}:
-        print(f"clerk: PR #{pr_number} for {full} is awaiting review — finish will complete after review")
+        print(f"clerk: PR #{pr_number} for {work_id} is awaiting review — finish will complete after review")
         return 0
     if runner.run(["gh", "pr", "merge", pr_number, "--squash", "--delete-branch=false"]).returncode != 0:
         backend_fail(f"finish failed — gh pr merge --squash did not succeed for PR #{pr_number}")
     pr = _active_pr(runner, branch)
     if pr is None or (pr.get("state") != "MERGED" and not pr.get("mergedAt")):
         backend_fail(f"finish failed — PR #{pr_number} was not confirmed merged after gh pr merge")
-    _cleanup_merged(backend, runner, root, full, short, pr_number, env)
+    _cleanup_merged(backend, runner, root, work_id, branch_token, pr_number, env)
     return 0
 
 

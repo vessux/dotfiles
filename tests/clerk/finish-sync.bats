@@ -74,6 +74,7 @@ if [ "$1 $2" = "pr list" ]; then
 		pending) json='[{"number":6,"url":"https://example/pr/6","state":"OPEN","mergedAt":"","reviewDecision":"APPROVED","statusCheckRollup":[{"name":"delivery-gate","status":"IN_PROGRESS","conclusion":""}],"headRefName":"delivery/x","isDraft":false,"updatedAt":"2026-07-10T00:00:00Z"}]' ;;
 		fail) json='[{"number":8,"url":"https://example/pr/8","state":"OPEN","mergedAt":"","reviewDecision":"APPROVED","statusCheckRollup":[{"name":"delivery-gate","status":"COMPLETED","conclusion":"FAILURE"},{"name":"unit-tests","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefName":"delivery/x","isDraft":false,"updatedAt":"2026-07-10T00:00:00Z"}]' ;;
 		merged) json='[{"number":9,"url":"https://example/pr/9","state":"MERGED","mergedAt":"2026-07-10T00:00:00Z","reviewDecision":"APPROVED","statusCheckRollup":[{"name":"delivery-gate","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefName":"delivery/x","isDraft":false,"updatedAt":"2026-07-10T00:00:00Z"}]' ;;
+		draft) json='[{"number":10,"url":"https://example/pr/10","state":"OPEN","mergedAt":"","reviewDecision":"APPROVED","statusCheckRollup":[{"name":"delivery-gate","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefName":"delivery/x","isDraft":true,"updatedAt":"2026-07-10T00:00:00Z"}]' ;;
 		multi) json='[{"number":5,"url":"https://example/pr/5","state":"CLOSED","mergedAt":"","reviewDecision":"","statusCheckRollup":[],"headRefName":"delivery/x","isDraft":false,"updatedAt":"2026-07-09T00:00:00Z"},{"number":12,"url":"https://example/pr/12","state":"OPEN","mergedAt":"","reviewDecision":"REVIEW_REQUIRED","statusCheckRollup":[{"name":"delivery-gate","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefName":"delivery/x","isDraft":false,"updatedAt":"2026-07-10T00:00:00Z"}]' ;;
 	esac
 	jq_expr=""
@@ -87,6 +88,22 @@ if [ "$1 $2" = "pr list" ]; then
 	else
 		printf '%s\n' "$json"
 	fi
+	exit 0
+fi
+if [ "$1 $2" = "issue view" ]; then
+	state=OPEN
+	labels='[{"name":"ready-for-agent"}]'
+	[ ! -e "$BATS_TEST_TMPDIR/gh.closed" ] || state=CLOSED
+	[ ! -e "$BATS_TEST_TMPDIR/gh.label-removed" ] || labels='[]'
+	printf '{"number":42,"title":"finish unit","body":"","assignees":[],"state":"%s","labels":%s}\n' "$state" "$labels"
+	exit 0
+fi
+if [ "$1 $2" = "issue close" ]; then
+	touch "$BATS_TEST_TMPDIR/gh.closed"
+	exit 0
+fi
+if [ "$1 $2" = "issue edit" ]; then
+	touch "$BATS_TEST_TMPDIR/gh.label-removed"
 	exit 0
 fi
 if [ "$1 $2" = "pr merge" ]; then
@@ -153,6 +170,19 @@ SH
 	[[ "$output" != *"unit-tests"* ]]
 }
 
+@test "finish: draft PR is reported without a merge attempt" {
+	repo=$(make_finish_repo finish_draft)
+	cd "$repo"
+	id=$(mk_claimed_unit)
+	short="${id#*-}"
+	git checkout -q "delivery/$short"
+	install_gh_pr_stub draft
+	run "$CLERK" backlog finish
+	[ "$status" -eq 0 ]
+	[ "$output" = "clerk: PR #10 for $id is a draft — finish will complete after it is marked ready" ]
+	! grep -q 'pr merge' "$BATS_TEST_TMPDIR/gh.calls"
+}
+
 @test "finish: ignores stale closed PRs and reconciles the active PR for the branch" {
 	repo=$(make_finish_repo finish_multi)
 	cd "$repo"
@@ -209,6 +239,59 @@ SH
 	json=$(bd -C "$repo" show "$id" --readonly --json)
 	[ "$(jq -r '.[0].status' <<<"$json")" = closed ]
 	[ "$(jq -r '(.[0].labels // []) | index("stage:ready")' <<<"$json")" = null ]
+}
+
+@test "finish: remote branch lookup failure stops before Work closure" {
+	repo=$(make_finish_repo finish_remote_failure)
+	cd "$repo"
+	id=$(mk_claimed_unit)
+	short="${id#*-}"
+	git worktree add -q "$repo/.worktrees/$short" "delivery/$short"
+	install_gh_pr_stub merged
+	git remote set-url origin "$repo/missing-origin.git"
+	cd "$repo/.worktrees/$short"
+	run "$CLERK" backlog finish
+	[ "$status" -eq 5 ]
+	[[ "$output" == *"could not query origin for delivery/$short"* ]]
+	json=$(bd -C "$repo" show "$id" --readonly --json)
+	[ "$(jq -r '.[0].status' <<<"$json")" = in_progress ]
+}
+
+@test "finish: gh-backed cleanup closes and verifies the Work exactly once" {
+	repo=$(make_finish_repo finish_gh_merged)
+	cd "$repo"
+	printf 'backlog: gh\n' >.clerk
+	git branch -q delivery/42 origin/main
+	git push -q origin delivery/42
+	git worktree add -q "$repo/.worktrees/42" delivery/42
+	printf 'backlog: gh\n' >"$repo/.worktrees/42/.clerk"
+	git -C "$repo/.worktrees/42" add .clerk
+	git -C "$repo/.worktrees/42" commit -q -m 'gh marker'
+	install_gh_pr_stub merged
+	cd "$repo/.worktrees/42"
+	run "$CLERK" backlog finish 42
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"finished 42 — PR #9 merged, delivery/42 cleaned up, unit closed"* ]]
+	cd "$repo"
+	run "$CLERK" backlog finish 42
+	[ "$status" -eq 0 ]
+	[ "$(grep -c '^issue close ' "$BATS_TEST_TMPDIR/gh.calls")" -eq 1 ]
+	[ "$(grep -c '^issue edit ' "$BATS_TEST_TMPDIR/gh.calls")" -eq 1 ]
+}
+
+@test "finish: gh lookup backend failure is not misreported as a bad Work id" {
+	repo=$(make_finish_repo finish_gh_lookup_failure)
+	cd "$repo"
+	printf 'backlog: gh\n' >.clerk
+	cat >"$STUB_BIN/gh" <<'SH'
+#!/usr/bin/env bash
+printf 'network unavailable\n' >&2
+exit 1
+SH
+	chmod +x "$STUB_BIN/gh"
+	run "$CLERK" backlog finish 42
+	[ "$status" -eq 5 ]
+	[[ "$output" == *"finish failed — gh issue view did not succeed for 42"* ]]
 }
 
 @test "finish: stage:ready strip is self-verified before success" {
