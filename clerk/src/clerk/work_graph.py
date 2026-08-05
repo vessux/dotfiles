@@ -413,3 +413,22 @@ class BdWorkGraphAdapter:
 
     def create_impediment(self, title: str, body: str) -> CommandResult:
         return self._runner.run(["bd", "create", title, "--description", body, "--type", "impediment", "--silent"])
+
+    def find_by_description(self, text: str) -> Work | None:
+        result = self._runner.run(["bd", "search", "--desc-contains", text, "--readonly", "--json"])
+        try:
+            data = json.loads(result.stdout or "null")
+        except json.JSONDecodeError as exc:
+            raise WorkGraphBackendError("bd search did not return valid JSON", result) from exc
+        if result.returncode != 0:
+            raise WorkGraphBackendError("bd search did not succeed", result)
+        if not isinstance(data, list):
+            raise WorkGraphBackendError("bd search did not return a Work list", result)
+        if not data:
+            return None
+        if not isinstance(data[0], dict):
+            raise WorkGraphBackendError("bd search did not return Work items", result)
+        return Work.from_json(data[0])
+
+    def create_impediment_from_file(self, title: str, body_file: str) -> CommandResult:
+        return self._runner.run(["bd", "create", title, "--body-file", body_file, "--type", "impediment", "--silent"])

@@ -70,8 +70,8 @@ class OwnershipTests(unittest.TestCase):
         self.assertTrue(is_python_owned(["backlog", "finish", "dotfiles-123"]))
         self.assertTrue(is_python_owned(["sync"]))
 
-    def test_unported_workflow_verbs_still_route_to_legacy_fallback(self):
-        self.assertFalse(is_python_owned(["glean"]))
+    def test_glean_is_python_owned(self):
+        self.assertTrue(is_python_owned(["glean"]))
 
     def test_public_verb_path_identifies_roster_paths_without_validating_args(self):
         self.assertEqual(public_verb_path(["backlog", "claim", "dotfiles-123"]), ("backlog", "claim"))
