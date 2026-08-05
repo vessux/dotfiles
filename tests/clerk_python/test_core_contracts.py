@@ -58,18 +58,25 @@ class CliBoundaryTests(unittest.TestCase):
         self.assertEqual(err, "")
         self.assertEqual(calls, [])
 
-    def test_known_unported_workflow_verb_with_valid_manifest_routes_to_legacy(self):
+    def test_glean_is_python_owned(self):
+        seen = []
+
+        def fake_glean(backend, root, remaining):
+            seen.append((backend, root.name, remaining))
+            return 0
+
         with tempfile.TemporaryDirectory() as td:
             subprocess.run(["git", "init", "-q", "-b", "main", td], check=True)
             Path(td, ".clerk").write_text("backlog: bd\n")
             cwd = os.getcwd()
             try:
                 os.chdir(td)
-                code, out, err, calls = self.invoke(["glean"], legacy_code=0)
+                with mock.patch("clerk.cli.run_glean", side_effect=fake_glean):
+                    result = self.invoke(["glean", "--async"])
             finally:
                 os.chdir(cwd)
-        self.assertEqual((code, out, err), (0, "", ""))
-        self.assertEqual(calls, [["glean"]])
+        self.assertEqual(result, (0, "", "", []))
+        self.assertEqual(seen, [("bd", Path(td).name, ["--async"])])
 
     def test_reconciliation_verbs_are_python_owned(self):
         seen = []

@@ -10,6 +10,7 @@ from pathlib import Path
 from . import __version__
 from .commands import ClerkExit, MUTATION_HANDLERS, QUERY_HANDLERS, run_mutation, run_query
 from .doctor import repo_root, run_doctor
+from .glean import run_glean
 from .legacy import run_legacy
 from .manifest import ManifestStatus, read_manifest
 from .proc import CommandRunner
@@ -20,8 +21,8 @@ from .roster import EXPLAIN_TEXT, NOUN_VERBS, ROSTER_LINES, TOP_LEVEL_VERBS, ros
 # The Python core owns diagnostics, help/explain/version, manifest gating,
 # doctor, read-only item query windows, Capture/text-based Inbox mutations,
 # Planning graph mutations/claims, the Inbox ready/drop bridge, the Backlog
-# Claim lifecycle, and delivery reconciliation. Unported workflow verb bodies
-# remain on the shell fallback.
+# Claim lifecycle, delivery reconciliation, and Glean. Unported workflow verb
+# bodies remain on the shell fallback.
 PYTHON_QUERY_VERBS: frozenset[tuple[str, ...]] = frozenset(QUERY_HANDLERS)
 PYTHON_MUTATION_VERBS: frozenset[tuple[str, ...]] = frozenset(MUTATION_HANDLERS)
 PYTHON_PROJECT_GATE_VERBS: frozenset[tuple[str, ...]] = frozenset({("backlog", "submit"), ("backlog", "gate")})
@@ -32,6 +33,7 @@ LEGACY_WORKFLOW_VERBS: frozenset[tuple[str, ...]] = frozenset(
     - PYTHON_MUTATION_VERBS
     - PYTHON_PROJECT_GATE_VERBS
     - RECONCILIATION_VERBS
+    - {("glean",)}
 )
 
 # Kept explicit for the legacy public contract: unknown verbs are exit 2 with
@@ -218,6 +220,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             return context
         root, backend = context
         return run_reconciliation(path, backend, root, remaining)
+
+    if path == ("glean",):
+        context = _manifest_context(path)
+        if isinstance(context, int):
+            return context
+        root, backend = context
+        return run_glean(backend, root, remaining)
 
     if path in LEGACY_WORKFLOW_VERBS:
         refused = _manifest_gate(path)

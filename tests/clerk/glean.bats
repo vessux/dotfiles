@@ -263,6 +263,32 @@ SH
 	[[ "$output" != *"sub-threshold chunk skipped"* ]]
 }
 
+@test "glean: appended transcript lines are harvested from the saved offset" {
+	local tmpdir transcript
+	tmpdir=$(mktemp -d)
+	cd "$tmpdir"
+	git init -q
+	git config user.email "test@test"
+	git config user.name "Test"
+	printf 'backlog: bd\n' >.clerk
+
+	transcript="${CLERK_TEST_TRANSCRIPT_DIR}/session.jsonl"
+	write_transcript "$transcript" '{"type":"mode","sessionId":"first"}'
+	export CLERK_GLEAN_TRANSCRIPT_DIR="${CLERK_TEST_TRANSCRIPT_DIR}"
+	export CLERK_GLEAN_STATE_DIR="${CLERK_GLEAN_STATE_DIR}"
+	export CLERK_GLEAN_MIN_CHUNK_LINES=1
+
+	run "$CLERK" glean
+	[ "$status" -eq 0 ]
+	[ "$(cat "${CLERK_GLEAN_STATE_DIR}"/*.watermark)" -eq 1 ]
+
+	printf '%s\n' '{"type":"mode","sessionId":"second"}' >>"$transcript"
+	run "$CLERK" glean
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"lines 2-2"* ]]
+	[ "$(cat "${CLERK_GLEAN_STATE_DIR}"/*.watermark)" -eq 2 ]
+}
+
 @test "glean: malformed judgment output does not advance the watermark" {
 	local tmpdir
 	tmpdir=$(mktemp -d)
@@ -279,8 +305,31 @@ SH
 	create_test_transcripts "${CLERK_TEST_TRANSCRIPT_DIR}"
 
 	run "$CLERK" glean
-	[ "$status" -eq 0 ]
+	[ "$status" -eq 5 ]
 	[[ "$output" == *"failed to process"* ]]
+	[[ "$output" == *"rerun 'clerk glean'"* ]]
+	[ -z "$(find "${CLERK_GLEAN_STATE_DIR}" -name '*.watermark' -print -quit 2>/dev/null)" ]
+}
+
+@test "glean: failed judgment command does not advance the watermark" {
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	cd "$tmpdir"
+	git init -q
+	git config user.email "test@test"
+	git config user.name "Test"
+	printf 'backlog: bd\n' >.clerk
+
+	export CLERK_GLEAN_TRANSCRIPT_DIR="${CLERK_TEST_TRANSCRIPT_DIR}"
+	export CLERK_GLEAN_STATE_DIR="${CLERK_GLEAN_STATE_DIR}"
+	export CLERK_GLEAN_MIN_CHUNK_LINES=1
+	export CLERK_GLEAN_JUDGMENT_CMD='cat >/dev/null; exit 9'
+	create_test_transcripts "${CLERK_TEST_TRANSCRIPT_DIR}"
+
+	run "$CLERK" glean
+	[ "$status" -eq 5 ]
+	[[ "$output" == *"failed to process"* ]]
+	[[ "$output" == *"rerun 'clerk glean'"* ]]
 	[ -z "$(find "${CLERK_GLEAN_STATE_DIR}" -name '*.watermark' -print -quit 2>/dev/null)" ]
 }
 
@@ -346,6 +395,7 @@ mkdir -p "$state/captures"
 case "$1" in
   config) exit 0 ;;
   search)
+    [ "${FAIL_BD_SEARCH:-0}" = 1 ] && exit 9
     if [ "$2" != "--desc-contains" ]; then
       # Real bd searches titles by default; the idempotency key lives in the body.
       printf '[]\n'
@@ -403,12 +453,21 @@ FAKEBD
 	create_test_transcripts "$transcript_dir"
 
 	run "$CLERK" glean
-	[ "$status" -eq 0 ]
+	[ "$status" -eq 5 ]
 	[ -z "$(find "${CLERK_GLEAN_STATE_DIR}" -name '*.watermark' -print -quit 2>/dev/null)" ]
 	[ "$(grep -c '^candidate one$' "$logdir/create.log")" -eq 1 ]
 
+	# Retry output may differ; chunk position, not model wording, is the idempotency key.
+	export CLERK_GLEAN_JUDGMENT_CMD='cat >/dev/null; echo "{\"type\":\"impediment\",\"title\":\"candidate one\",\"body\":\"reworded body\"}"; echo "{\"type\":\"impediment\",\"title\":\"candidate two\",\"body\":\"body two\"}"'
 	run "$CLERK" glean
-	[ "$status" -eq 0 ]
+	[ "$status" -eq 5 ]
+	[ "$(grep -c '^candidate one$' "$logdir/create.log")" -eq 1 ]
+
+	# A failed idempotency lookup is operational failure, never permission to duplicate.
+	export FAIL_BD_SEARCH=1
+	run "$CLERK" glean
+	[ "$status" -eq 5 ]
+	[[ "$output" == *"capture lookup failed"* ]]
 	[ "$(grep -c '^candidate one$' "$logdir/create.log")" -eq 1 ]
 }
 
@@ -427,6 +486,24 @@ FAKEBD
 
 	run "$CLERK" glean
 	[ "$status" -eq 0 ]
+}
+
+@test "glean: unavailable state directory is a prescriptive operational failure" {
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	cd "$tmpdir"
+	git init -q
+	git config user.email "test@test"
+	git config user.name "Test"
+	printf 'backlog: bd\n' >.clerk
+
+	export CLERK_GLEAN_STATE_DIR=/dev/null/clerk-glean
+	export CLERK_GLEAN_TRANSCRIPT_DIR="${CLERK_TEST_TRANSCRIPT_DIR}"
+	run "$CLERK" glean
+	[ "$status" -eq 5 ]
+	[[ "$output" == *"state path unavailable"* ]]
+	[[ "$output" == *"rerun 'clerk glean'"* ]]
+	[[ "$output" != *"Traceback"* ]]
 }
 
 @test "glean: --async starts a background harvest and returns immediately" {
