@@ -66,6 +66,10 @@ class OwnershipTests(unittest.TestCase):
             with self.subTest(argv=argv):
                 self.assertTrue(is_python_owned(argv))
 
+    def test_delivery_reconciliation_is_python_owned(self):
+        self.assertTrue(is_python_owned(["backlog", "finish", "dotfiles-123"]))
+        self.assertTrue(is_python_owned(["sync"]))
+
     def test_unported_workflow_verbs_still_route_to_legacy_fallback(self):
         self.assertFalse(is_python_owned(["glean"]))
 

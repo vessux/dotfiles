@@ -280,6 +280,9 @@ class BdWorkGraphAdapter:
     def backlog(self) -> Backlog:
         return self.load().backlog()
 
+    def open_claims(self) -> tuple[Work, ...]:
+        return tuple(work for work in self.load().items if work.status == "in_progress")
+
     def _find(self, id_: str, *, cwd: str | None = None) -> tuple[Work | None, CommandResult]:
         result = self._runner.run(["bd", "show", id_, "--readonly", "--json"], cwd=cwd)
         try:
@@ -316,6 +319,26 @@ class BdWorkGraphAdapter:
         work = self._inspect(id_)
         if work.get("status") != "closed" or work.get("close_reason") != "project gate completed":
             raise WorkGraphBackendError(f"delivery completion was not confirmed for {id_}", result)
+
+    def finish_delivery(self, id_: str, reason: str) -> None:
+        work = self._inspect(id_)
+        if work.get("status") != "closed":
+            result = self.close(id_, reason)
+            if result.returncode != 0:
+                raise WorkGraphBackendError(f"bd close did not succeed for {id_}", result)
+            work = self._inspect(id_)
+            if work.get("status") != "closed":
+                raise WorkGraphBackendError(f"{id_} was not confirmed closed after finish", result)
+        if "stage:ready" in (work.get("labels") or []):
+            result = self.remove_ready_label(id_)
+            if result.returncode != 0:
+                raise WorkGraphBackendError(f"could not remove stage:ready from {id_}", result)
+            work = self._inspect(id_)
+            if "stage:ready" in (work.get("labels") or []):
+                raise WorkGraphBackendError(f"{id_} was not confirmed without stage:ready after finish", result)
+        result = self._runner.run(["bd", "dolt", "push"])
+        if result.returncode != 0:
+            raise WorkGraphBackendError("bd dolt push did not succeed", result)
 
     def inspect(self, id_: str) -> dict[str, Any]:
         return self._inspect(id_)
