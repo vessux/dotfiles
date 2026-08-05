@@ -322,7 +322,6 @@ class BdWorkGraphAdapter:
 
     def finish_delivery(self, id_: str, reason: str) -> None:
         work = self._inspect(id_)
-        changed = False
         if work.get("status") != "closed":
             result = self.close(id_, reason)
             if result.returncode != 0:
@@ -330,7 +329,6 @@ class BdWorkGraphAdapter:
             work = self._inspect(id_)
             if work.get("status") != "closed":
                 raise WorkGraphBackendError(f"{id_} was not confirmed closed after finish", result)
-            changed = True
         if "stage:ready" in (work.get("labels") or []):
             result = self.remove_ready_label(id_)
             if result.returncode != 0:
@@ -338,11 +336,9 @@ class BdWorkGraphAdapter:
             work = self._inspect(id_)
             if "stage:ready" in (work.get("labels") or []):
                 raise WorkGraphBackendError(f"{id_} was not confirmed without stage:ready after finish", result)
-            changed = True
-        if changed:
-            result = self._runner.run(["bd", "dolt", "push"])
-            if result.returncode != 0:
-                raise WorkGraphBackendError("bd dolt push did not succeed", result)
+        result = self._runner.run(["bd", "dolt", "push"])
+        if result.returncode != 0:
+            raise WorkGraphBackendError("bd dolt push did not succeed", result)
 
     def inspect(self, id_: str) -> dict[str, Any]:
         return self._inspect(id_)

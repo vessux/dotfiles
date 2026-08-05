@@ -2,7 +2,7 @@ import json
 import unittest
 
 from clerk.proc import CommandResult
-from clerk.work_graph import BdWorkGraphAdapter
+from clerk.work_graph import BdWorkGraphAdapter, WorkGraphBackendError
 
 
 class FakeRunner:
@@ -19,6 +19,7 @@ class DeliveryRunner:
     def __init__(self):
         self.item = {"id": "work-1", "title": "Work", "status": "in_progress", "labels": ["stage:ready"]}
         self.calls = []
+        self.push_failures = 0
 
     def run(self, args, *, cwd=None, env=None):
         self.calls.append(list(args))
@@ -26,6 +27,9 @@ class DeliveryRunner:
             return CommandResult(tuple(args), 0, json.dumps([self.item]), "")
         if args[:2] == ["bd", "show"]:
             return CommandResult(tuple(args), 0, json.dumps([self.item]), "")
+        if args[:3] == ["bd", "dolt", "push"] and self.push_failures:
+            self.push_failures -= 1
+            return CommandResult(tuple(args), 1, "", "push failed")
         if args[:2] == ["bd", "close"]:
             self.item = {**self.item, "status": "closed", "close_reason": args[-1]}
         elif "--remove-label" in args:
@@ -119,7 +123,20 @@ class BdWorkGraphAdapterTests(unittest.TestCase):
 
         self.assertEqual(sum(call[:2] == ["bd", "close"] for call in runner.calls), 1)
         self.assertEqual(sum("--remove-label" in call for call in runner.calls), 1)
-        self.assertEqual(sum(call[:3] == ["bd", "dolt", "push"] for call in runner.calls), 1)
+        self.assertEqual(sum(call[:3] == ["bd", "dolt", "push"] for call in runner.calls), 2)
+
+    def test_delivery_reconciliation_retries_backend_push_after_local_state_changed(self):
+        runner = DeliveryRunner()
+        runner.push_failures = 1
+        adapter = BdWorkGraphAdapter(runner)
+
+        with self.assertRaises(WorkGraphBackendError):
+            adapter.finish_delivery("work-1", "delivered: PR #9 merged")
+        adapter.finish_delivery("work-1", "delivered: PR #9 merged")
+
+        self.assertEqual(sum(call[:2] == ["bd", "close"] for call in runner.calls), 1)
+        self.assertEqual(sum("--remove-label" in call for call in runner.calls), 1)
+        self.assertEqual(sum(call[:3] == ["bd", "dolt", "push"] for call in runner.calls), 2)
 
     def test_backlog_excludes_ready_labels_without_acceptance_criteria(self):
         payload = [

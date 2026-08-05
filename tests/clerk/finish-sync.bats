@@ -130,6 +130,26 @@ SH
 	[ "${lines[1]}" = "       run 'clerk backlog submit $id --body-file <path-to-pr-body.md>'" ]
 }
 
+@test "finish: explicit missing Work id is a prescriptive usage error" {
+	repo=$(make_finish_repo finish_missing_work)
+	cd "$repo"
+	install_gh_pr_stub none
+	run "$CLERK" backlog finish dotfiles-missing
+	[ "$status" -eq 2 ]
+	[ "$output" = "clerk backlog finish: dotfiles-missing not found — check the id ('clerk backlog show <id>' inspects Work)" ]
+}
+
+@test "finish: unresolved current branch stays behind the Clerk boundary" {
+	repo=$(make_finish_repo finish_unresolved_branch)
+	cd "$repo"
+	git checkout -q -b delivery/missing origin/main
+	run "$CLERK" backlog finish
+	[ "$status" -eq 2 ]
+	[ "$output" = "clerk backlog finish: could not resolve Work for delivery/missing — run 'clerk doctor' to check backend state or rerun 'clerk backlog finish <full-id>'" ]
+	[[ "$output" != *"bd "* ]]
+	[[ "$output" != *"bead"* ]]
+}
+
 @test "finish: awaiting-review reports and exits 0 with no merge attempt" {
 	repo=$(make_finish_repo finish_review)
 	cd "$repo"
@@ -285,7 +305,7 @@ SH
 	printf 'backlog: gh\n' >.clerk
 	cat >"$STUB_BIN/gh" <<'SH'
 #!/usr/bin/env bash
-printf 'network unavailable\n' >&2
+printf 'repository not found\n' >&2
 exit 1
 SH
 	chmod +x "$STUB_BIN/gh"

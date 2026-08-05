@@ -9,16 +9,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from .commands import ClerkExit, _emit_stderr, _git, _primary_repo_root, _show_ref, _success, backend_fail, usage
+from .commands import ClerkExit, _emit_stderr, _git, _primary_repo_root, _returned_short_from_id, _show_ref, _success, backend_fail, usage
 from .proc import CommandResult, CommandRunner
 from .work_graph import BdWorkGraphAdapter, Work, WorkGraphBackendError
 
 RECONCILIATION_VERBS = frozenset({("sync",), ("backlog", "finish")})
-
-
-def _short(id_: str) -> str:
-    value = id_[1:] if id_.startswith("#") else id_
-    return value.split("-", 1)[1] if "-" in value else value
 
 
 def _current_delivery_short(runner: CommandRunner, root: Path) -> str:
@@ -28,7 +23,7 @@ def _current_delivery_short(runner: CommandRunner, root: Path) -> str:
 
 def _gh_not_found(result: CommandResult) -> bool:
     message = f"{result.stdout}\n{result.stderr}".lower()
-    return any(text in message for text in ("could not resolve to an issue", "no issue", "not found"))
+    return any(text in message for text in ("could not resolve to an issue", "no issue"))
 
 
 def _gh_issue(runner: CommandRunner, id_: str) -> dict[str, Any] | None:
@@ -54,7 +49,7 @@ def _resolve_work(backend: str, runner: CommandRunner, root: Path, id_arg: str) 
         except WorkGraphBackendError as exc:
             _emit_stderr(exc.result)
             backend_fail(f"finish failed — could not resolve Work {id_arg}: {exc}")
-        return (work.id, _short(work.id)) if work is not None else None
+        return (work.id, _returned_short_from_id(work.id)) if work is not None else None
     if backend == "gh":
         value = _gh_issue(runner, id_arg)
         if value is None:
@@ -204,8 +199,9 @@ def _reconcile(
     sync: bool,
     env: Mapping[str, str],
 ) -> int:
+    supplied_id = bool(id_arg)
     inferred_short = ""
-    if not id_arg:
+    if not supplied_id:
         inferred_short = _current_delivery_short(runner, root)
         id_arg = inferred_short
     resolved = _resolve_work(backend, runner, root, id_arg) if id_arg else None
@@ -213,11 +209,12 @@ def _reconcile(
         if sync:
             print(f"clerk: sync: skipped an unresolvable claim id {id_arg or '<current>'}")
             return 0
-        if inferred_short and backend == "bd":
-            print(
-                f"clerk: could not resolve bead for delivery/{inferred_short} — run 'bd dolt pull' to refresh local state or rerun 'clerk backlog finish <full-id>'",
-                file=sys.stderr,
+        if inferred_short:
+            usage(
+                f"clerk backlog finish: could not resolve Work for delivery/{inferred_short} — run 'clerk doctor' to check backend state or rerun 'clerk backlog finish <full-id>'"
             )
+        if supplied_id:
+            usage(f"clerk backlog finish: {id_arg} not found — check the id ('clerk backlog show <id>' inspects Work)")
         usage("clerk backlog finish: not inside delivery/<short> and no id was supplied — cd into the claimed worktree or run 'clerk backlog finish <id>'")
     work_id, branch_token = resolved
     branch = f"delivery/{branch_token}"
