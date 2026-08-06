@@ -71,6 +71,6 @@ rejected up front — it would silently break every non-zsh caller (yazi, pi's b
   diverges from zsh. The retry snippet the inline function comment had carried was dropped —
   `bd list --ready --label stage:ready --sort priority` now lives verbatim in
   `bin/nextdelivery`.
-- 2026-07-11: `nextdelivery` retired to a compatibility shim that execs `clerk backlog next`.
-  `md` remains the exemplar reusable helper in `bin/`; Clerk owns ready-pool dispatch and setup
+- 2026-07-11: `nextdelivery` retired to a compatibility shim that execs `phyllary backlog next`.
+  `md` remains the exemplar reusable helper in `bin/`; Phyllary owns ready-pool dispatch and setup
   diagnosis now.

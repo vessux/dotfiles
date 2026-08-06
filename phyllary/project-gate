@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Dotfiles' synchronous Project-gate transform shim.
+set -euo pipefail
+
+operation=${1:-}
+[ "$operation" = run ] || exit 64
+request=$(cat)
+worktree=$(printf '%s' "$request" | jq -er '.delivery.worktree')
+
+if (cd "$worktree" && bats tests/phyllary && shellcheck -S error bin/* phyllary/project-gate) >&2; then
+	status=passed
+	summary='bats tests/phyllary and shellcheck passed'
+else
+	status=failed
+	summary='dotfiles validation commands failed'
+fi
+assessed_commit=$(git -C "$worktree" rev-parse HEAD)
+jq -cn --arg status "$status" --arg summary "$summary" --arg assessed_commit "$assessed_commit" \
+	'{status: $status, summary: $summary, assessed_commit: $assessed_commit}'

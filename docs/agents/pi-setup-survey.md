@@ -68,7 +68,7 @@ the corrections are kept inline so a future reader isn't misled.
 Project-level `.pi/prompts/*.md`, declarative only. Most relevant:
 
 - **`/wr` → `/deliver`** — context-aware wrap (changelog + commit + push),
-  `[instructions]` arg. Mirrors this repo's `clerk`/`nextdelivery`/
+  `[instructions]` arg. Mirrors this repo's `phyllary`/`nextdelivery`/
   `dotfiles-dft.N` gate as one command. Highest fit.
 - **`/pr <PR-URL>`** — review a PR by URL without checking out (files-only via
   `gh pr diff` + `git show <ref>:<path>`). Matches the no-`gh pr checkout`

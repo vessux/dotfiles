@@ -2,8 +2,8 @@
 # bin/bd.test.sh — hermetic tests for the bin/bd shim's shared-server bootstrap fix
 # (dotfiles-<TBD>). Follows the ccstatusline/umbel-segment.test.sh convention: a standalone,
 # non-bats companion script next to the file it tests (exit 0 = all pass), NOT currently wired
-# into clerk/project-gate (which only runs `bats tests/clerk` — see that file's `bats
-# tests/clerk && shellcheck -S error bin/*`). Run directly: ./bin/bd.test.sh
+# into phyllary/project-gate (which only runs `shellcheck -S error bin/*`). Run directly:
+# ./bin/bd.test.sh
 #
 # Two layers, matching the two halves of the fix:
 #   1. Direct unit tests of the two new helper functions, via SOURCING bin/bd — exactly what
