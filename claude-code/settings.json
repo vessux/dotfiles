@@ -5,13 +5,13 @@
   "includeCoAuthoredBy": false,
   "permissions": {
     "allow": [
-      "Bash(clerk capture:*)",
-      "Bash(clerk inbox list)",
-      "Bash(clerk inbox show:*)",
-      "Bash(clerk inbox dups:*)",
-      "Bash(clerk backlog next)",
-      "Bash(clerk backlog show:*)",
-      "Bash(clerk backlog claim:*)"
+      "Bash(phyllary capture:*)",
+      "Bash(phyllary inbox list)",
+      "Bash(phyllary inbox show:*)",
+      "Bash(phyllary inbox dups:*)",
+      "Bash(phyllary backlog next)",
+      "Bash(phyllary backlog show:*)",
+      "Bash(phyllary backlog claim:*)"
     ],
     "defaultMode": "auto"
   },

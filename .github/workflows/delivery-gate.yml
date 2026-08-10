@@ -24,18 +24,7 @@ jobs:
       - name: Install system checks
         run: |
           sudo apt-get update
-          sudo apt-get install -y bats shellcheck jq parallel
-
-      - name: Set up Go for pinned bd install
-        uses: actions/setup-go@v5
-        with:
-          go-version: stable
-
-      - name: Install bd 1.0.4
-        run: |
-          go install github.com/steveyegge/beads/cmd/bd@ce242a879
-          sudo install -m 0755 "$(go env GOPATH)/bin/bd" /usr/local/bin/bd
-          bd --version | grep 'bd version 1.0.4'
+          sudo apt-get install -y bats shellcheck jq
 
       - name: project-gate
         run: |
@@ -44,6 +33,6 @@ jobs:
             --arg branch "${GITHUB_HEAD_REF}" \
             --arg commit "$head" \
             --arg worktree "$GITHUB_WORKSPACE" \
-            '{work: {id: "pull-request", title: "Pull request validation", acceptance_criteria: "Project-gate CI validation"}, delivery: {branch: $branch, starting_commit: $commit, worktree: $worktree}, submission_owner: "clerk"}')
-          printf '%s\n' "$request" | clerk/project-gate run | tee result.json
+            '{work: {id: "pull-request", title: "Pull request validation", acceptance_criteria: "Project-gate CI validation"}, delivery: {branch: $branch, starting_commit: $commit, worktree: $worktree}, submission_owner: "phyllary"}')
+          printf '%s\n' "$request" | phyllary/project-gate run | tee result.json
           jq -e --arg head "$head" '.status == "passed" and .assessed_commit == $head' result.json

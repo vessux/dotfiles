@@ -55,13 +55,13 @@ state, and provision everything the bundle needs to be fully utilised (tier mark
 per-repo skill defaults), adapting to what is already there.
 _Avoid_: install, apply, enable, pin
 
-**Clerk**:
+**Phyllary**:
 The workflow's single command facade — the desk-laborer that executes mechanism (filing, syncing,
 provisioning, reconciling) on the agent's behalf. The split is judgment vs paperwork: the agent
-speaks a workflow verb and authors anything requiring judgment; the Clerk performs the menial,
+speaks a workflow verb and authors anything requiring judgment; the Phyllary performs the menial,
 deterministic steps exactly, so mechanism lives in scripts rather than in prose the agent must
-re-read and obey each session. The Clerk is **opaque**: skills and agent-facing instructions speak
-only Clerk verbs and never name the backing store — which tracker holds the inbox is the Clerk's
+re-read and obey each session. The Phyllary is **opaque**: skills and agent-facing instructions speak
+only Phyllary verbs and never name the backing store — which tracker holds the inbox is the Phyllary's
 private business.
 _Avoid_: dispatcher, wrapper, helper, tool, facade (as a name)
 
@@ -104,32 +104,32 @@ separate from dropping raw inbox work, returning a flawed refinement, or deliver
 _Avoid_: drop, return, submit
 
 **Project gate**:
-A project-owned delivery validation pipeline, including its project-selected checks and any optional independent Acceptance-criteria verifier. Clerk invokes it at the workflow handoff and relays either an immediate verdict or a pending external run; it does not own the pipeline's policy, tools, models, prompts, budget, evidence, or artifact retention.
-_Avoid_: Clerk gate, delivery-gate
+A project-owned delivery validation pipeline, including its project-selected checks and any optional independent Acceptance-criteria verifier. Phyllary invokes it at the workflow handoff and relays either an immediate verdict or a pending external run; it does not own the pipeline's policy, tools, models, prompts, budget, evidence, or artifact retention.
+_Avoid_: Phyllary gate, delivery-gate
 
 **Project gate adapter**:
-A project-owned command boundary between Clerk and its Project gate. Its required `run` operation translates one Gate request into the gate's native interface and returns a Gate result; `status` is required only for a run that returned `pending`. A minimal adapter can be a small synchronous transform shim around a project command, without a run database or artifact store.
+A project-owned command boundary between Phyllary and its Project gate. Its required `run` operation translates one Gate request into the gate's native interface and returns a Gate result; `status` is required only for a run that returned `pending`. A minimal adapter can be a small synchronous transform shim around a project command, without a run database or artifact store.
 _Avoid_: gate integration, gate plugin
 
 **Project gate configuration**:
-A project-owned, committed configuration that defines its required Project gate adapter and validation policy. Clerk's manifest carries only a stable repository-relative reference to it and resolves both configuration and adapter from the trusted default branch, not the delivery branch it validates; absent configuration fails delivery submission closed.
-_Avoid_: Clerk configuration, gate settings
+A project-owned, committed configuration that defines its required Project gate adapter and validation policy. Phyllary's manifest carries only a stable repository-relative reference to it and resolves both configuration and adapter from the trusted default branch, not the delivery branch it validates; absent configuration fails delivery submission closed.
+_Avoid_: Phyllary configuration, gate settings
 
 **Gate-run metadata**:
-Clerk-owned structured metadata on a Work item that records a Project gate adapter identity and latest relayed status, summary, assessed commit, and optional run reference/URL. The Project gate remains authoritative for the run itself.
+Phyllary-owned structured metadata on a Work item that records a Project gate adapter identity and latest relayed status, summary, assessed commit, and optional run reference/URL. The Project gate remains authoritative for the run itself.
 _Avoid_: gate notes, local gate state
 
 **Gate result**:
-The one JSON document a Project gate adapter writes to stdout for `run` or, for an asynchronous run, `status`. It has required `status`, `summary`, and the exact assessed commit. `pending` additionally requires opaque `run.id`; terminal results may provide it. Optional fields include run URL, verbatim details, and delivery reference/URL plus lifecycle state. It represents a valid `passed`, `failed`, or `pending` verdict; an adapter process error is distinct and reported through a non-zero exit. A `passed` result authorizes only the assessed delivery head Clerk will hand off; its adapter is authoritative for delivery lifecycle state when it owns submission.
+The one JSON document a Project gate adapter writes to stdout for `run` or, for an asynchronous run, `status`. It has required `status`, `summary`, and the exact assessed commit. `pending` additionally requires opaque `run.id`; terminal results may provide it. Optional fields include run URL, verbatim details, and delivery reference/URL plus lifecycle state. It represents a valid `passed`, `failed`, or `pending` verdict; an adapter process error is distinct and reported through a non-zero exit. A `passed` result authorizes only the assessed delivery head Phyllary will hand off; its adapter is authoritative for delivery lifecycle state when it owns submission.
 _Avoid_: adapter output, gate log
 
 **Gate request**:
-The one structured stdin document Clerk sends to a Project gate adapter. It carries the Work item identity, title, full Acceptance criteria, and delivery branch, commit, worktree, and Submission ownership, so the adapter need not query Clerk's backend.
+The one structured stdin document Phyllary sends to a Project gate adapter. It carries the Work item identity, title, full Acceptance criteria, and delivery branch, commit, worktree, and Submission ownership, so the adapter need not query Phyllary's backend.
 _Avoid_: adapter arguments, tracker lookup
 
 **Submission ownership**:
-The project-selected owner of the push/PR/CI handoff after a delivery Claim. `clerk` means Clerk invokes the Project gate adapter before performing its Git/PR workflow; `project-gate` means the adapter performs the handoff and reports delivery lifecycle state for Clerk to reconcile.
-_Avoid_: clerk-submit boolean, submission mode
+The project-selected owner of the push/PR/CI handoff after a delivery Claim. `phyllary` means Phyllary invokes the Project gate adapter before performing its Git/PR workflow; `project-gate` means the adapter performs the handoff and reports delivery lifecycle state for Phyllary to reconcile.
+_Avoid_: phyllary-submit boolean, submission mode
 
 **Claim**:
 The atomic, identity-independent acquisition of one pickable ready unit by a single worker before
@@ -199,7 +199,7 @@ _Avoid_: friction, digest, taxonomy, audit
 - A **delivery** **Track** session opens by **Claim**ing one pickable ready unit, or may **Resolve**
   a pickable unit without code when its Acceptance criteria are already satisfied. The Claim is
   atomic, so concurrent workers — even sharing one identity — never take the same unit.
-- The **Clerk** executes the mechanism of every workflow verb (**Capture** filing, **Claim**,
+- The **Phyllary** executes the mechanism of every workflow verb (**Capture** filing, **Claim**,
   finish); the agent keeps the judgment half — deciding *which* verb, and authoring whatever the
   verb needs written.
 - An **Impediment** is a **Capture** whose subject is the workflow, not the task. It is recorded

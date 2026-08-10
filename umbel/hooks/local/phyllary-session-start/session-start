@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+SEED="$HERE/seed.md"
+
+escape_for_json() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
+start_glean() {
+  if command -v phyllary >/dev/null 2>&1; then
+    (phyllary glean --async >/dev/null 2>&1 || true) &
+  fi
+}
+
+start_glean
+
+content="$(cat "$SEED")"
+context="<phyllary-operating-rules>
+These are the Phyllary workflow rules for this session. Follow them as procedure; explicit user and project instructions still win.
+
+$content
+</phyllary-operating-rules>"
+escaped="$(escape_for_json "$context")"
+printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$escaped"

@@ -1,17 +1,17 @@
 # Domain Docs
 
 How the engineering skills should consume this repo's domain documentation when exploring the
-codebase. This repo is **multi-context**: Umbel and Clerk are documented contexts; more are added
-only when they need their own vocabulary or decisions.
+codebase. This repo's local documented context is Umbel; Phyllary is an external documented context.
+More local contexts are added only when they need their own vocabulary or decisions.
 
 ## Before exploring, read these
 
 - **`CONTEXT-MAP.md`** at the repo root, if it exists — it points at one `CONTEXT.md` per context.
   Read the `CONTEXT.md` for the context you're working in.
 - **`<context>/CONTEXT.md`** — read the context that owns the area: currently
-  `umbel/CONTEXT.md` or `clerk/CONTEXT.md`.
+  `umbel/CONTEXT.md`, or the external Phyllary context linked from `CONTEXT-MAP.md`.
 - **`<context>/docs/adr/`** — read ADRs that touch the area: currently
-  `umbel/docs/adr/` or `clerk/docs/adr/`. System-wide decisions live at `docs/adr/`.
+  `umbel/docs/adr/`, or Phyllary's external ADRs. System-wide decisions live at `docs/adr/`.
 
 If any of these files don't exist, proceed silently. The producer skills create them lazily when a
 term or decision is actually resolved.
@@ -25,9 +25,6 @@ term or decision is actually resolved.
 ├── umbel/                        ← discovery/delivery workflow context
 │   ├── CONTEXT.md
 │   └── docs/adr/
-├── clerk/                        ← workflow-verb facade context
-│   ├── CONTEXT.md
-│   └── docs/adr/
 ```
 
 Other dotfile areas (zsh, nvim, tmux, git, etc.) carry no domain language yet and need no
@@ -35,7 +32,7 @@ Other dotfile areas (zsh, nvim, tmux, git, etc.) carry no domain language yet an
 
 ## Use the glossary's vocabulary
 
-When your output names a domain concept — a Clerk capture title, refactor proposal, hypothesis, or
+When your output names a domain concept — a Phyllary capture title, refactor proposal, hypothesis, or
 test name — use the term as defined in the relevant `CONTEXT.md`. Don't drift to synonyms the
 glossary explicitly avoids.
 

@@ -24,10 +24,10 @@ Four proof classes, with a strict authority split:
   the PR body, failing on absence. Truth comes from C3 where a test surface exists; the gap is
   deliberate pressure — a repo's gate gains teeth exactly as fast as its tests do.
 - **C3 — executable proof**: run the repo's checks. This repo's first real test surface is the
-  epic's own deliverable (clerk's bats suite — printed output tested like exit codes — plus
+  epic's own deliverable (phyllary's bats suite — printed output tested like exit codes — plus
   shellcheck on `bin/`), so the no-CI floor is genuine CI, not a placeholder.
 - **C4 — acceptance proof**: Refinement's output is twofold — the work *and the proof it is done
-  as designed*. `clerk inbox ready` refuses units without acceptance criteria (presence is
+  as designed*. `phyllary inbox ready` refuses units without acceptance criteria (presence is
   structural; quality is grill judgment) but does **not** require the unit to be pickable: a
   blocked item or a parent with open children can still be refinement-complete. `submit` stamps the
   unit's criteria into the PR body and requires one evidence entry per criterion — delivery may add
@@ -39,7 +39,7 @@ Four proof classes, with a strict authority split:
 
 Authority split: the server-side check is authoritative for what the server can see (C1–C3, and
 C4's criterion-evidence correspondence, which submit made server-visible); claim-state truth stays
-clerk-side (`submit`/`finish` hold `bd` access; an Action cannot read the Dolt store). `clerk
+phyllary-side (`submit`/`finish` hold `bd` access; an Action cannot read the Dolt store). `phyllary
 submit` runs the same gate script as a local preflight — fast feedback, never the authority.
 
 **Review-required branch protection is the attended dial** (the merge key, K1 of ADR 0015):
@@ -48,7 +48,7 @@ review-required and leaving the check — a platform setting, not prompt discipl
 
 **The judgment-loop law**: every judgment point in the workflow declares its compounding loop —
 the signals that indict it, the glean category that carries them, and the guidance artifact its
-lessons land in. One circuit for all loops: signals are filed ungated (clerk-filed ambient
+lessons land in. One circuit for all loops: signals are filed ungated (phyllary-filed ambient
 captures; glean's transcript sweep) → they land in the ordinary inbox → pre-sort clusters them via
 `inbox dups` → one grill lands the cluster as a single compounded unit → the deliverable is a
 **gated edit to the guidance artifact**. The intent anchor is the human at the attended grill; the
@@ -67,7 +67,7 @@ Delivery *build* craft is deliberately uncovered — that is the swappable metho
 methods declare their own loops under the law.
 
 **Pregrill** (the prep half of the loop): pre-sort's successor is decision-free with exactly one
-write verb — `clerk inbox pregrill <id>` appends a dated, structured, state-neutral note (open
+write verb — `phyllary inbox pregrill <id>` appends a dated, structured, state-neutral note (open
 decisions, premises each with a suggested verification, draft criteria) **onto the unit itself**
 (a bead exists to hold perishable context). Dispositions stay ephemeral per pass; prep persists.
 Pregrill fires per-delta (note missing or stale — body edited after note date, cluster grew),
@@ -101,12 +101,12 @@ the pregrill's premises live.
 - The squash commit carries the criteria-evidence summary, so `git log` is the audit surface the
   `criteria-miss` glean reads.
 - Glean's category list grows to four; `/glean`'s harvest mechanism is unchanged (ADR 0012,
-  mechanics now `clerk glean` per ADR 0015).
+  mechanics now `phyllary glean` per ADR 0015).
 
 ## Amendment (2026-07-09): submit / delivery-gate operational contracts (dotfiles-dft.4)
 
-`clerk backlog submit` and the delivery-gate use one gate implementation, exposed as the first-class
-verb `clerk backlog gate`. `submit` invokes it locally as a preflight; the GitHub Actions required
+`phyllary backlog submit` and the delivery-gate use one gate implementation, exposed as the first-class
+verb `phyllary backlog gate`. `submit` invokes it locally as a preflight; the GitHub Actions required
 check invokes the same verb in CI. A gate run exits `0` only when every proof class passes and exits
 `6` when one or more proof classes fail. Gate failures report every failing class in one run, not
 only the first failure.
@@ -155,9 +155,9 @@ file above. It **never arms PR auto-merge** in this generation. Review-required 
 the attended merge dial; unattended auto-merge may be introduced only by a later ratified change once
 the gate has operated successfully in practice.
 
-This repo's C3 scope for dotfiles-dft.4 is `bats tests/clerk` plus `shellcheck bin/`. The gate must
-have parity tests proving the same fixture receives the same per-class verdict through both the local
-preflight input mode and the CI input mode.
+Phyllary's CLI contract suite now lives in its standalone repository. This dotfiles Project gate
+runs its own `bats tests/phyllary` adapter checks plus `shellcheck bin/ phyllary/project-gate`; Phyllary
+validates its workflow mechanism independently.
 
 ## Amendment (2026-07-10): solo merge posture for this repo
 
@@ -170,7 +170,7 @@ Solo mode changes the platform dial only; it does not weaken the delivery-gate p
 still cannot merge normally without the required `delivery-gate` check passing, and `submit` still
 never arms PR auto-merge. Human attendance is the manual PR merge action after reading the PR body
 and gate result, not a GitHub review record. If a real second reviewer becomes available, the repo
-may flip K1 back to review-required branch protection without changing the clerk contract.
+may flip K1 back to review-required branch protection without changing the phyllary contract.
 
 ## Amendment (2026-07-13): returned-branch disposition is a fail-closed grill decision (dotfiles-5jw)
 
@@ -180,10 +180,10 @@ material), but no later verb collected it: `claim` bases a fresh `delivery/<shor
 therefore orphan `returned/<short>` silently.
 
 The grill — already the named consumer of `returned/*` — now supplies an explicit disposition at
-its exit points. `clerk inbox ready` and `clerk inbox drop` accept `--returned keep|discard` and
+its exit points. `phyllary inbox ready` and `phyllary inbox drop` accept `--returned keep|discard` and
 refuse (exit 2) when `returned/<short>` exists and no disposition is given. `keep` leaves the
 branch untouched as evidence. `discard` deletes `returned/<short>` locally and from origin; if
-origin is unreachable, Clerk deletes the local ref, prints a deferred-to-sync warning, and proceeds
+origin is unreachable, Phyllary deletes the local ref, prints a deferred-to-sync warning, and proceeds
 with the ready/drop decision. This makes branch collection a fail-closed judgment, not a hidden
 side effect.
 
@@ -193,12 +193,12 @@ lock, and the rename destroys the evidence ref that the impediment capture cites
 returned attempt as a re-delivery base is therefore a claim-side option (`claim --from-returned`,
 dotfiles-uky), not a returned-branch rename.
 
-## Amendment (2026-07-24): Clerk Project-gate mechanism moved to its own context
+## Amendment (2026-07-24): Phyllary Project-gate mechanism moved to its own context
 
 The Project-gate adapter/configuration and Gate-result contract is now owned by
-[Clerk ADR 0019](../../../clerk/docs/adr/0019-project-gate-adapter-contract.md). It supersedes the
-former Clerk-owned fixed C1–C4 delivery-gate policy and defines the portable boundary through which
-Clerk invokes project-selected validation.
+[Phyllary ADR 0019](https://github.com/vessux/phyllary/blob/main/docs/adr/0019-project-gate-adapter-contract.md). It supersedes the
+former Phyllary-owned fixed C1–C4 delivery-gate policy and defines the portable boundary through which
+Phyllary invokes project-selected validation.
 
 This Umbel ADR continues to own the discovery/delivery judgment-loop law and the rule that
 Acceptance criteria are authored in Refinement before an implementer exists. A Project gate may

@@ -4,31 +4,31 @@ Personal dotfiles repo.
 
 ## Agent workflow
 
-Use **Clerk** (`clerk`) as the workflow facade for this repo.
+Use **Phyllary** (`phyllary`) as the workflow facade for this repo.
 
-- Capture raw work with `clerk capture`.
-- Inspect/refine work with `clerk inbox ...`.
-- Pick up and deliver ready work with `clerk backlog ...`.
-- Run `clerk doctor` when setup or the next workflow step is unclear.
+- Capture raw work with `phyllary capture`.
+- Inspect/refine work with `phyllary inbox ...`.
+- Pick up and deliver ready work with `phyllary backlog ...`.
+- Run `phyllary doctor` when setup or the next workflow step is unclear.
 
-Runtime instructions should speak Clerk verbs only. Operator-only docs under `docs/agents/`
+Runtime instructions should speak Phyllary verbs only. Operator-only docs under `docs/agents/`
 may describe lower-level storage details for maintenance.
 
 ## Domain docs
 
-Multi-context; see `CONTEXT-MAP.md` for the documented Umbel and Clerk contexts and their ADRs.
+See `CONTEXT-MAP.md` for the local Umbel and external Phyllary contexts and their ADRs.
 See `docs/agents/domain.md`.
 
 ## Agent skills
 
 ### Issue tracker
 
-Work is tracked through Clerk, not an external issue tracker. Use `clerk capture`,
-`clerk inbox ...`, and `clerk backlog ...`. See `docs/agents/issue-tracker.md`.
+Work is tracked through Phyllary, not an external issue tracker. Use `phyllary capture`,
+`phyllary inbox ...`, and `phyllary backlog ...`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-The canonical triage roles map to Clerk inbox/backlog dispositions, not tracker labels. See
+The canonical triage roles map to Phyllary inbox/backlog dispositions, not tracker labels. See
 `docs/agents/triage-labels.md`.
 
 ### Domain docs
