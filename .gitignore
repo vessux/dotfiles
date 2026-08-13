@@ -53,6 +53,9 @@ pi/agent/extensions/*/*
 # project config is ever wanted — see the claude-code/* block above.
 .claude/
 
+# pi-subagents: project-local run artifacts and transcripts.
+.pi-subagents/
+
 # phyllary: provisioned delivery worktrees live under the checkout; the branches and
 # commits are tracked by git refs, not by recursively staging worktree contents.
 .worktrees/

@@ -1,0 +1,6 @@
+{
+  "artifactDir": "session",
+  "maxSubagentDepth": 1,
+  "globalConcurrencyLimit": 4,
+  "maxSubagentSpawnsPerSession": 20
+}

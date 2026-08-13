@@ -1,7 +1,7 @@
 /**
  * Pi Notify Publisher
  *
- * Publishes agent-end events to the same ntfy.sh topic Claude Code uses.
+ * Publishes main-agent settled events to the same ntfy.sh topic Claude Code uses.
  * The existing Mac subscriber (claude-code/scripts/notify-subscriber.sh)
  * picks up all messages and fires popup + voice — the "Pi: " prefix lets
  * you distinguish Pi notifications from Claude Code ones.
@@ -46,7 +46,9 @@ async function publish(message: string): Promise<void> {
 // ── extension ────────────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
-  pi.on("agent_end", async (_event, ctx) => {
+  if (process.env.PI_SUBAGENT_CHILD === "1") return;
+
+  pi.on("agent_settled", async (_event, ctx) => {
     const project = basename(ctx.cwd);
     // "Pi: " prefix so voice says "Pi: dotfiles ready" — distinguishable from Claude Code
     publish(`Pi: ${project} ready`);

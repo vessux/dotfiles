@@ -34,12 +34,21 @@
   "packages": [
     "npm:@zigai/pi-status-bar",
     "npm:pi-web-search",
-    "npm:pi-subagents",
     "npm:context-mode",
     "git:github.com/DietrichGebert/ponytail",
-    "npm:@plannotator/pi-extension",
-    "npm:@quintinshaw/pi-dynamic-workflows",
     "npm:@juicesharp/rpiv-ask-user-question",
-    "npm:@ff-labs/pi-fff"
-  ]
+    "npm:@ff-labs/pi-fff",
+    "npm:pi-subagents@0.45.0"
+  ],
+  "skills": [
+    "/home/kovis/.config/pi/agent/skills/sidekick"
+  ],
+  "subagents": {
+    "agentOverrides": {
+      "scout": {
+        "model": "openai-codex/gpt-5.6-luna",
+        "thinking": "low"
+      }
+    }
+  }
 }
