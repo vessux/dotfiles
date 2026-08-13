@@ -2,11 +2,51 @@
 # cc-cost — token usage + API-price cost report from Claude Code transcript JSONL.
 #
 # Usage:
+#   cc-cost                    bare: auto-discover THIS session's transcript (via
+#                              $CLAUDE_CODE_SESSION_ID, falling back to the newest
+#                              *.jsonl by mtime) plus its subagents/ tree, under
+#                              this cwd's project dir. See discover_transcripts().
 #   cc-cost PATH...            PATHs are .jsonl transcript files or directories
 #                              (directories are scanned recursively for *.jsonl:
 #                              session transcripts, subagent + workflow agent files)
-#   cc-cost --json PATH...     raw aggregation as JSON (for scripting)
-#   cc-cost --no-price PATH... token counts only, no cost columns
+#   cc-cost --json [PATH...]   raw aggregation as JSON (for scripting)
+#   cc-cost --no-price [P...]  token counts only, no cost columns
+#   cc-cost --no-subagents     bare mode only: session transcript alone, skip subagents/
+#   cc-cost --include-session <uuid>   repeatable; fold another session (this
+#                              project dir, its own transcript + subagents) into
+#                              a bare report — e.g. the predecessor of a resumed
+#                              session. Never automatic; see detect_predecessor_hint().
+#   cc-cost --chain            bare mode; HEURISTIC. Transitively follow resumed
+#                              predecessors: from the resolved session, find
+#                              sibling session uuids referenced in FILESYSTEM PATH
+#                              form only (/<uuid>/, <uuid>.jsonl, <uuid>-), recurse
+#                              into each (cycle-safe, depth-capped, count-capped),
+#                              and fold each one in. Claude Code records no resume
+#                              link, so this infers from incidental path mentions —
+#                              audited on stderr (which sessions, why, how deep),
+#                              never silent. A transcript that OPENS with /clear
+#                              ends the chain there (continuity was explicitly
+#                              severed), and a candidate whose last record
+#                              postdates this session's first is rejected as
+#                              overlapping. Both rejections print to stderr.
+#                              Still a heuristic: prefer --since when you need a
+#                              number you can defend without inference.
+#   cc-cost --since <spec>     bare mode; DETERMINISTIC, no inference. Fold in every
+#                              session in this project dir (+ subagents) whose
+#                              LAST RECORDED ACTIVITY falls in the window: today,
+#                              <N>d, <N>h (e.g. 1d, 3d, 7d, 12h). Keyed on the
+#                              transcript's final record timestamp, NOT file mtime
+#                              (mtime can be touched days after the last message,
+#                              which used to pull stale sessions into "today");
+#                              any such exclusion is reported on stderr. Handles
+#                              arbitrary continuation depth with no uuid needed.
+#                              Recommended for "what did this line of work cost".
+#   cc-cost --all-sessions     bare mode: every session in this project dir (+
+#                              subagents). Coarse but exact; prints the session
+#                              count prominently since it can be large.
+#   cc-cost --update-prices    fetch the live pricing page and refresh the cache
+#                              (see PRICE_CACHE below); exits, no transcript needed
+#   cc-cost --no-fetch ...     suppress ALL network access (cache + built-in only)
 #
 # What counts as hard data: per-request `message.usage` records in the JSONL.
 # A message's usage can appear on several lines (streaming snapshots share one
@@ -14,58 +54,724 @@
 # over-counts input massively. This script dedupes to ONE final snapshot per
 # message id (max output_tokens) before summing.
 #
-# What is NOT hard data: the price sheet below, hardcoded per MTok USD.
-# Cache pricing: write = 1.25x input rate (5m TTL), read = 0.1x input rate.
-# Verify against https://platform.claude.com/docs/en/pricing before trusting
-# the dollar column for anything that matters.
+# Cache writes bill at the TTL actually used, not a fixed multiplier: 5-minute
+# writes at 1.25x input, 1-hour writes at 2x input (published rates, when the
+# price sheet has them). `message.usage.cache_creation` (when present) reports
+# `ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens` directly — read
+# those instead of guessing. Older transcripts lack that field; they fall back
+# to today's behavior (`cache_creation_input_tokens` priced at the 5m rate).
+#
+# Why cc-cost's total can differ from Claude Code's own statusline figure:
+# (a) the statusline is Claude Code's own billing accounting, cc-cost re-derives
+# purely from transcript `usage` records; (b) the statusline is cumulative
+# across a resumed session's predecessors, cc-cost's bare mode is scoped to one
+# session unless you pass --include-session; (c) the live transcript keeps
+# growing between the moment you check the statusline and the moment you run
+# cc-cost. See SKILL.md for a worked reconciliation.
+#
+# What is NOT hard data: model prices per MTok USD. Resolution order:
+#   1. the price CACHE (PRICE_CACHE below), auto-refreshed from
+#      https://platform.claude.com/docs/en/about-claude/pricing.md when
+#      missing, >7 days old, or missing a model seen in the transcripts;
+#   2. the built-in PRICES_JSON fallback below (used verbatim if the cache is
+#      absent/unreadable or a fetch fails — network issues never break a
+#      report, they just fall back and print a warning to stderr);
+#   3. unpriced: "no price entry for: ..." — token counts only, never a crash.
+# Cache read: 0.1x input rate (published as a flat multiplier across models).
 set -euo pipefail
 
-PRICES_ASOF="2026-07-06"
+PRICES_ASOF="2026-08-05"
+PRICING_URL="${CC_COST_PRICING_URL:-https://platform.claude.com/docs/en/about-claude/pricing.md}"
+PRICE_CACHE="${XDG_CONFIG_HOME:-$HOME/.config}/cc-cost/prices.json"
+PRICE_CACHE_MAX_AGE_S=$((7 * 24 * 3600))
+
 # Longest-prefix match against message.model, so dated IDs resolve too.
+# This is the OFFLINE fallback only — see PRICE_CACHE above for the primary,
+# auto-updated source. Keep this roughly current for the no-network path.
+# claude-sonnet-5 carries introductory pricing of 2.00/10.00 through
+# 2026-08-31 (standard 3.00/15.00 takes effect 2026-09-01) — set below.
 PRICES_JSON='{
   "claude-fable-5":   {"in": 10.0, "out": 50.0},
   "claude-mythos-5":  {"in": 10.0, "out": 50.0},
+  "claude-opus-5":    {"in": 5.0,  "out": 25.0},
   "claude-opus-4-8":  {"in": 5.0,  "out": 25.0},
   "claude-opus-4-7":  {"in": 5.0,  "out": 25.0},
   "claude-opus-4-6":  {"in": 5.0,  "out": 25.0},
   "claude-opus-4-5":  {"in": 5.0,  "out": 25.0},
-  "claude-sonnet-5":  {"in": 3.0,  "out": 15.0},
+  "claude-sonnet-5":  {"in": 2.0,  "out": 10.0},
   "claude-sonnet-4-6":{"in": 3.0,  "out": 15.0},
   "claude-sonnet-4-5":{"in": 3.0,  "out": 15.0},
   "claude-haiku-4-5": {"in": 1.0,  "out": 5.0}
 }'
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,71p' "$0" | sed 's/^# \{0,1\}//'; }
+
+CLAUDE_CFG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.config/claude-code}"
+
+# --- fetch + parse the live pricing page into PRICE_CACHE -------------------
+# Anchored to the "## Model pricing" section only (stops at the next "## "
+# heading) so the fast-mode and batch-API tables — same 6-column shape,
+# discounted rates — never leak in. Validates before writing; a bad parse
+# never overwrites a good cache.
+update_prices() {
+  local tmp rc
+  tmp="$(mktemp "${TMPDIR:-/tmp}/cc-cost-pricing.XXXXXX")"
+  if ! curl -fsSL --max-time 10 "$PRICING_URL" -o "$tmp" 2>/dev/null; then
+    echo "cc-cost: could not fetch pricing page from $PRICING_URL" >&2
+    rm -f "$tmp"
+    return 1
+  fi
+  rc=0
+  python3 - "$tmp" "$PRICE_CACHE" "$PRICING_URL" <<'PYEOF' || rc=$?
+import datetime, json, os, re, sys
+
+md_path, cache_path, source_url = sys.argv[1], sys.argv[2], sys.argv[3]
+
+with open(md_path, encoding="utf-8") as f:
+    text = f.read()
+
+# --- anchor to the standard "## Model pricing" table only -------------------
+m = re.search(r'^## Model pricing\s*$', text, re.M)
+if not m:
+    print("cc-cost: could not find '## Model pricing' heading in fetched page", file=sys.stderr)
+    sys.exit(1)
+start = m.end()
+m2 = re.search(r'^## ', text[start:], re.M)
+section = text[start:start + m2.start()] if m2 else text[start:]
+
+def money(cell):
+    mm = re.search(r'\$([\d.]+)', cell)
+    return float(mm.group(1)) if mm else None
+
+def qualifier(model_raw):
+    """('through'|'starting', date) parsed from the model cell, or (None, None)."""
+    mm = re.search(r'\[(through|starting)\s+([A-Za-z]+ \d{1,2},\s*\d{4})\]', model_raw)
+    if not mm:
+        mm = re.search(r'\b(through|starting)\s+([A-Za-z]+ \d{1,2},\s*\d{4})\b', model_raw)
+    if not mm:
+        return None, None
+    try:
+        d = datetime.datetime.strptime(mm.group(2).replace("  ", " "), "%B %d, %Y").date()
+    except ValueError:
+        return None, None
+    return mm.group(1), d
+
+def normalize(model_raw):
+    s = model_raw
+    s = re.sub(r'\[[^\]]*\]\([^)]*\)', '', s)          # markdown links incl. their bracket text
+    prev = None
+    while prev != s:                                    # parenthetical notes, incl. leftovers
+        prev = s
+        s = re.sub(r'\([^()]*\)', '', s)
+    s = re.sub(r'\b(through|starting)\s+[A-Za-z]+ \d{1,2},\s*\d{4}\b', '', s)  # unbracketed qualifier
+    s = s.strip().lower()
+    s = s.replace('.', '-')
+    s = re.sub(r'\s+', '-', s)
+    s = re.sub(r'-+', '-', s).strip('-')
+    return s
+
+rows = []
+for line in section.splitlines():
+    line = line.strip()
+    if not line.startswith('| Claude'):
+        continue
+    cells = [c.strip() for c in line.strip('|').split('|')]
+    if len(cells) != 6:
+        continue
+    model_raw, in_c, cw5_c, cw1h_c, cr_c, out_c = cells
+    kind, qdate = qualifier(model_raw)
+    rows.append(dict(
+        id=normalize(model_raw), raw=model_raw, qual_kind=kind, qual_date=qdate,
+        rate_in=money(in_c), cache_write_5m=money(cw5_c), cache_write_1h=money(cw1h_c),
+        cache_read=money(cr_c), rate_out=money(out_c),
+    ))
+
+if len(rows) < 5:
+    print(f"cc-cost: only parsed {len(rows)} standard-pricing rows (need >= 5) — aborting, cache untouched", file=sys.stderr)
+    sys.exit(1)
+
+by_id = {}
+for r in rows:
+    by_id.setdefault(r["id"], []).append(r)
+
+today = datetime.date.today()
+chosen = {}
+for mid, entries in by_id.items():
+    if len(entries) == 1:
+        chosen[mid] = entries[0]
+        continue
+    candidates = []
+    for e in entries:
+        k, d = e["qual_kind"], e["qual_date"]
+        if k == "through" and d is not None and today <= d:
+            candidates.append(e)
+        elif k == "starting" and d is not None and today >= d:
+            candidates.append(e)
+    if len(candidates) == 1:
+        chosen[mid] = candidates[0]
+    elif len(candidates) > 1:
+        print(f"cc-cost: ambiguous date-gated pricing rows for {mid}, using the first match", file=sys.stderr)
+        chosen[mid] = candidates[0]
+    else:
+        dated = [e for e in entries if e["qual_date"] is not None]
+        chosen[mid] = min(dated, key=lambda e: abs((e["qual_date"] - today).days)) if dated else entries[0]
+        print(f"cc-cost: no date-gated row matched today for {mid}; using nearest ({chosen[mid]['qual_kind']} {chosen[mid]['qual_date']})", file=sys.stderr)
+
+prices = {}
+for mid, r in chosen.items():
+    if r["rate_in"] is None or r["rate_out"] is None:
+        continue
+    prices[mid] = {"in": r["rate_in"], "out": r["rate_out"]}
+    if r["cache_write_5m"] is not None:
+        prices[mid]["cache_write_5m"] = r["cache_write_5m"]
+    if r["cache_write_1h"] is not None:
+        prices[mid]["cache_write_1h"] = r["cache_write_1h"]
+    if r["cache_read"] is not None:
+        prices[mid]["cache_read"] = r["cache_read"]
+
+# --- validate before ever writing --------------------------------------------
+errs = []
+if len(prices) < 5:
+    errs.append(f"only {len(prices)} priced models parsed (need >= 5)")
+for mid, p in prices.items():
+    if not (isinstance(p.get("in"), (int, float)) and p["in"] > 0):
+        errs.append(f"{mid}: missing/non-positive input rate")
+    if not (isinstance(p.get("out"), (int, float)) and p["out"] > 0):
+        errs.append(f"{mid}: missing/non-positive output rate")
+for required in ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"):
+    if required not in prices:
+        errs.append(f"required model missing from parse: {required}")
+for mid, p in prices.items():
+    if p.get("in") is not None and not (0.10 <= p["in"] <= 100):
+        errs.append(f"{mid}: input rate {p['in']} outside sanity band [0.10, 100] $/MTok")
+
+if errs:
+    print("cc-cost: pricing parse failed validation, cache left untouched:", file=sys.stderr)
+    for e in errs:
+        print(f"  - {e}", file=sys.stderr)
+    sys.exit(1)
+
+os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+cache = {
+    "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+    "source_url": source_url,
+    "prices": prices,
+    "parsed_rows": [
+        {"id": r["id"], "raw": r["raw"], "qual_kind": r["qual_kind"],
+         "qual_date": r["qual_date"].isoformat() if r["qual_date"] else None,
+         "in": r["rate_in"], "out": r["rate_out"]}
+        for r in rows
+    ],
+}
+tmp_out = cache_path + ".tmp"
+with open(tmp_out, "w") as f:
+    json.dump(cache, f, indent=2, sort_keys=True)
+    f.write("\n")
+os.replace(tmp_out, cache_path)
+
+sonnet = prices.get("claude-sonnet-5", {})
+print(f"cc-cost: wrote {cache_path} — {len(prices)} models "
+      f"(claude-sonnet-5 = {sonnet.get('in')}/{sonnet.get('out')} effective {today.isoformat()})")
+PYEOF
+  rm -f "$tmp"
+  return $rc
+}
+
+# --- resolve the prices to use for this run: cache -> built-in -> unpriced ---
+# Auto-refreshes (unless --no-fetch) when the cache is missing, stale (>7d),
+# or a model seen in these transcripts isn't covered by cache+built-in yet.
+# A failed/slow/offline fetch NEVER breaks the report: warn to stderr, keep
+# going with whatever prices are already available.
+resolve_prices() {
+  local cache_prices="{}" need_refresh=0 cache_asof=""
+  if [ -f "$PRICE_CACHE" ]; then
+    cache_prices="$(jq -c '.prices // {}' "$PRICE_CACHE" 2>/dev/null || echo '{}')"
+    cache_asof="$(jq -r '.fetched_at // empty' "$PRICE_CACHE" 2>/dev/null || true)"
+  fi
+  local merged
+  merged="$(jq -c -n --argjson base "$PRICES_JSON" --argjson over "$cache_prices" '$base * $over')"
+
+  if [ "$no_fetch" -eq 0 ]; then
+    if [ ! -f "$PRICE_CACHE" ]; then
+      need_refresh=1
+    else
+      local mtime now age
+      mtime="$(stat -c %Y "$PRICE_CACHE" 2>/dev/null || stat -f %m "$PRICE_CACHE" 2>/dev/null || echo 0)"
+      now="$(date +%s)"
+      age=$(( now - mtime ))
+      [ "$age" -gt "$PRICE_CACHE_MAX_AGE_S" ] && need_refresh=1
+    fi
+    if [ "$need_refresh" -eq 0 ] && [ "${#files[@]}" -gt 0 ]; then
+      local distinct_models unpriced=0 mm
+      distinct_models="$(for f in "${files[@]}"; do
+        jq -r 'select(.message?.model? != null) | .message.model' "$f" 2>/dev/null
+      done | sort -u)"
+      while IFS= read -r mm; do
+        [ -z "$mm" ] && continue
+        local hit
+        hit="$(jq -r --arg m "$mm" '[keys[] | select($m | startswith(.))] | length' <<<"$merged")"
+        if [ "$hit" -eq 0 ]; then unpriced=1; break; fi
+      done <<<"$distinct_models"
+      [ "$unpriced" -eq 1 ] && need_refresh=1
+    fi
+  fi
+
+  if [ "$need_refresh" -eq 1 ]; then
+    if update_prices >&2; then
+      cache_prices="$(jq -c '.prices // {}' "$PRICE_CACHE" 2>/dev/null || echo '{}')"
+      cache_asof="$(jq -r '.fetched_at // empty' "$PRICE_CACHE" 2>/dev/null || true)"
+      merged="$(jq -c -n --argjson base "$PRICES_JSON" --argjson over "$cache_prices" '$base * $over')"
+    else
+      echo "cc-cost: auto price-refresh failed; using cached/built-in prices" >&2
+    fi
+  fi
+
+  local label
+  if [ -n "$cache_asof" ]; then
+    label="${cache_asof%%T*} (auto-updated cache)"
+  else
+    label="$PRICES_ASOF (built-in fallback — no cache yet; run cc-cost --update-prices)"
+  fi
+  # Two lines out: merged prices JSON (always single-line, jq -c), then the
+  # as-of label. resolve_prices runs inside a `$(...)` subshell in the caller,
+  # so any variable set in here is lost on return — print, don't export.
+  printf '%s\n%s\n' "$merged" "$label"
+}
+
+# --- sanity-check the 5m/1h cache-write split against the JSONL's own total -
+# Wherever a message carries the newer `cache_creation` breakdown AND the
+# older flat `cache_creation_input_tokens` total side by side, the two must
+# agree (5m + 1h == total). A cheap one-jq-per-file pass; capped output so a
+# widespread mismatch doesn't flood stderr — this is a warn, not a crash,
+# since either number still prices something reasonable.
+check_cache_ttl_sanity() {
+  local f
+  # `head` closing early after 5 lines can SIGPIPE a still-writing producer
+  # upstream; under `set -o pipefail` that would abort the whole script even
+  # though it is a benign truncation, not a real failure — disable pipefail
+  # for just this pipeline (restored immediately after).
+  set +o pipefail
+  for f in "${files[@]}"; do
+    jq -r '
+      select(.message?.usage?.cache_creation? != null
+             and .message.usage.cache_creation_input_tokens? != null)
+      | (.message.usage.cache_creation.ephemeral_5m_input_tokens // 0) as $m5
+      | (.message.usage.cache_creation.ephemeral_1h_input_tokens // 0) as $m1
+      | .message.usage.cache_creation_input_tokens as $tot
+      | select(($m5 + $m1) != $tot)
+      | "cc-cost: cache-write TTL mismatch (id \(.message.id // .uuid // "?")): 5m(\($m5))+1h(\($m1))=\($m5+$m1) != cache_creation_input_tokens(\($tot))"
+    ' "$f" 2>/dev/null
+  done | head -5 >&2
+  set -o pipefail
+}
+
+# --- shared file-set builder: dedupe by path across every fold-in mechanism -
+# --include-session / --chain / --since / --all-sessions can all reach the
+# same transcript by different routes (e.g. --chain discovers a uuid that was
+# also passed to --include-session) — add_file is the single choke point that
+# ensures it's counted once. _files_seen is a global associative array;
+# declared where `files=()` is initialized in the main flow below.
+add_file() {
+  if [ -z "${_files_seen[$1]:-}" ]; then
+    _files_seen["$1"]=1
+    files+=("$1")
+  fi
+}
+
+# Fold one session's transcript + its subagents (unconditionally — unlike the
+# resolved BARE session, --no-subagents only trims the base session; a session
+# explicitly folded in by uuid/chain/window is folded in whole). Returns
+# non-zero (and warns) if the uuid names no real transcript.
+add_session() {
+  local project_dir="$1" uid="$2" reason="$3" f sd sf
+  f="$project_dir/$uid.jsonl"
+  if [ ! -f "$f" ]; then
+    echo "cc-cost: $reason: no such transcript $f — skipped" >&2
+    return 1
+  fi
+  add_file "$f"
+  sd="$project_dir/$uid/subagents"
+  if [ -d "$sd" ]; then
+    while IFS= read -r sf; do add_file "$sf"; done < <(find "$sd" -name '*.jsonl' -type f | sort)
+  fi
+  return 0
+}
+
+# --- predecessor-session hint (detect, never auto-merge) --------------------
+# A resumed session's transcript references its predecessor's uuid (task /
+# scratchpad paths, etc.) many times over. Grep the CURRENT session file once
+# for UUID-shaped strings, and for any that also name a real sibling
+# transcript in this project dir, print a stderr hint suggesting
+# --include-session — never fold it into the total automatically (this
+# project dir holds unrelated sessions too; auto-summing would over-report
+# wildly). Cheap: one grep pass, capped candidate + hint counts.
+detect_predecessor_hint() {
+  local project_dir="$1" sid="$2" session_file="$3"
+  local candidates u found=0
+  # Rank by FREQUENCY, not alphabetically: a real resumed predecessor is
+  # referenced repeatedly (task/scratchpad paths etc — hundreds of times),
+  # while incidental uuid-shaped matches (message/tool ids that happen to be
+  # in this project dir for unrelated reasons) show up once or twice. An
+  # alphabetical cap would truncate before ever seeing the real candidate.
+  # Same benign-SIGPIPE hazard as check_cache_ttl_sanity's `head` — disable
+  # pipefail for this one capture.
+  set +o pipefail
+  candidates="$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' "$session_file" 2>/dev/null \
+                | sort | uniq -c | sort -rn | head -n 20 | awk '{print $2}')"
+  set -o pipefail
+  while IFS= read -r u; do
+    [ -z "$u" ] && continue
+    [ "$u" = "$sid" ] && continue
+    # Already folded in by --include-session / --chain / --since / --all-sessions?
+    # Don't hint about something already in the report.
+    [ -n "${_files_seen["$project_dir/$u.jsonl"]:-}" ] && continue
+    if [ -f "$project_dir/$u.jsonl" ]; then
+      echo "cc-cost: this session's transcript references another session, ${u:0:8}… — possibly a resumed predecessor (its cost is NOT included). Pass --include-session $u to fold it in." >&2
+      found=$((found + 1))
+      [ "$found" -ge 3 ] && break
+    fi
+  done <<<"$candidates"
+}
+
+# --- --chain: transitive predecessor following (HEURISTIC) ------------------
+# Claude Code records no resume link (no `type:"summary"`, no `leafUuid`, no
+# parent-session field, no sidecar) — this INFERS a chain from incidental
+# filesystem-path references, so it can be wrong. Three guards keep it honest:
+#  1. Only path-SHAPED references count — /<uuid>/, <uuid>.jsonl, <uuid>-
+#     — never a bare prose mention. This is what kills the feedback loop:
+#     cc-cost's own hint text mentions a uuid in prose ("references another
+#     session, XXXXXXXX…" / "--include-session <uuid> to fold it in"), never
+#     in path form, so the hint can't bootstrap itself into "evidence".
+#  2. Belt-and-braces: any line containing cc-cost's own hint markers
+#     (--include-session, resumed predecessor) is excluded before extraction,
+#     in case some other phrasing ever produces an accidental path-shaped
+#     match.
+#  3. Minimum reference count (CHAIN_MIN_REFS). Verified empirically: an
+#     agent poking around its own project dir (`ls`, `find` — routine during
+#     development, and exactly what built/tested this feature) prints OTHER
+#     sessions' `<uuid>.jsonl` / `<uuid>/subagents` paths too, which are
+#     legitimately path-shaped but have nothing to do with a resume — they
+#     showed up 2-6 times each (one command + its echoed result). A genuinely
+#     resumed predecessor is referenced by the ongoing scratchpad/task-path
+#     convention continuously throughout the transcript — 50+ times in every
+#     case observed here. Path-shape alone does not separate these; the count
+#     does.
+#  4. `/clear` severs the chain (see transcript_opens_cleared). This is the
+#     only guard based on OPERATOR INTENT rather than inference, and it is the
+#     one that catches what guard 3 structurally cannot — see below.
+#  5. Temporal disjointness: a predecessor must have ENDED before the session
+#     that references it BEGAN. Rejects interleaved/concurrent sessions whose
+#     paths cross-reference each other.
+#
+# Why guard 3 alone is not enough (observed 2026-08-08, isle): every background
+# Bash task and subagent writes output under
+# /tmp/claude-1000/<slug>/<uuid>/tasks/<task-id>, and that <uuid> is the task
+# directory's — which can DIFFER from the running session's own id. So the ref
+# count measures HOW MUCH BACKGROUND WORK THE SESSION DID, not how strongly it
+# resembles a resume. A delegation-heavy session cleared CHAIN_MIN_REFS on
+# artifacts alone (18 refs, all from .../tasks/), folding in an unrelated
+# session and reporting $140.71 against a true $31.70. Raising the floor cannot
+# fix this: parallel-subagent work is the norm, so artifact refs only grow.
+# Hence guard 4 — ask what the operator MEANT instead of counting harder.
+CHAIN_MAX_DEPTH=5
+CHAIN_MAX_TOTAL=20
+CHAIN_MIN_REFS=10
+
+# A transcript that OPENS with `/clear` had its continuity deliberately severed:
+# the operator asked for a fresh context, which is exactly why Claude Code's
+# statusline reports the post-clear session alone. Do not chain past such a
+# transcript. Scoped to the opening records — `/clear` starts a NEW transcript,
+# so a genuine one lands at the top; a later mention (e.g. an agent discussing
+# the command, or this very comment being grepped) must not count. A resumed
+# session (`claude --resume`) carries no such marker, so real chains are
+# unaffected.
+transcript_opens_cleared() {
+  head -c 65536 "$1" 2>/dev/null | grep -q 'command-name>/clear<'
+}
+
+# First/last record timestamps, by single-pass grep rather than `jq -s` (which
+# would slurp multi-MB transcripts once per candidate). Claude Code stamps
+# ISO-8601 UTC, so lexicographic comparison IS chronological.
+# NOTE: deliberately read from RECORD CONTENT, not file mtime — a transcript's
+# mtime can be touched long after its last record (one observed here sat at
+# today 07:45 while its final record was two days earlier).
+transcript_first_ts() { grep -oh -m1 '"timestamp":"[^"]*"' "$1" 2>/dev/null | head -1 | cut -d'"' -f4; }
+transcript_last_ts()  { grep -oh      '"timestamp":"[^"]*"' "$1" 2>/dev/null | tail -1 | cut -d'"' -f4; }
+
+fold_chain() {
+  local project_dir="$1" root_sid="$2" root_file="$3"
+  local uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+  local structural_re
+  structural_re="(/${uuid_re}/|${uuid_re}\.jsonl|${uuid_re}-)"
+  local -A visited=()
+  visited["$root_sid"]=1
+  local -a q_file=("$root_file") q_depth=(0)
+  local qi=0 folded=0 capped=0
+  while [ "$qi" -lt "${#q_file[@]}" ]; do
+    local cur_file="${q_file[$qi]}" depth="${q_depth[$qi]}"
+    qi=$((qi + 1))
+    [ "$depth" -ge "$CHAIN_MAX_DEPTH" ] && continue
+    [ -f "$cur_file" ] || continue
+
+    # Guard 4 — operator intent beats inference.
+    local cur_uid; cur_uid="$(basename "$cur_file" .jsonl)"
+    if transcript_opens_cleared "$cur_file"; then
+      echo "cc-cost: chain: ${cur_uid:0:8}… opens with /clear — continuity explicitly severed, not chaining past it" >&2
+      continue
+    fi
+    local cur_first; cur_first="$(transcript_first_ts "$cur_file")"
+
+    local counts line cnt u
+    set +o pipefail   # grep|sort|uniq|sort — same benign-SIGPIPE class as elsewhere
+    counts="$(grep -v -E -- '--include-session|resumed predecessor' "$cur_file" 2>/dev/null \
+              | grep -oE "$structural_re" 2>/dev/null \
+              | grep -oE "$uuid_re" 2>/dev/null \
+              | sort | uniq -c | sort -rn)"
+    set -o pipefail
+
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      cnt="$(awk '{print $1}' <<<"$line")"
+      u="$(awk '{print $2}' <<<"$line")"
+      [ -z "$u" ] && continue
+      [ -n "${visited[$u]:-}" ] && continue
+      visited["$u"]=1
+      [ -f "$project_dir/$u.jsonl" ] || continue
+      if [ "$cnt" -lt "$CHAIN_MIN_REFS" ]; then
+        continue   # below the noise floor — an incidental path mention, not a predecessor
+      fi
+      # Guard 5 — a predecessor must have ended before this session began.
+      local cand_last; cand_last="$(transcript_last_ts "$project_dir/$u.jsonl")"
+      if [ -n "$cand_last" ] && [ -n "$cur_first" ] && [[ "$cand_last" > "$cur_first" ]]; then
+        echo "cc-cost: chain: -${u:0:8}… rejected: its last record ($cand_last) postdates this session's first ($cur_first) — overlapping, not a predecessor" >&2
+        continue
+      fi
+      if [ "$folded" -ge "$CHAIN_MAX_TOTAL" ]; then
+        capped=1
+        continue
+      fi
+      folded=$((folded + 1))
+      echo "cc-cost: chain: +${u:0:8}… ($cnt path refs, depth $((depth + 1)))" >&2
+      add_session "$project_dir" "$u" "chain"
+      q_file+=("$project_dir/$u.jsonl"); q_depth+=("$((depth + 1))")
+    done <<<"$counts"
+  done
+  if [ "$capped" -eq 1 ]; then
+    echo "cc-cost: chain: hit the cap of $CHAIN_MAX_TOTAL folded sessions — some candidates were not followed further. This is a heuristic; use --since for a number you don't have to trust an inference for." >&2
+  fi
+}
+
+# --- --since: deterministic activity-window fold-in, no inference -----------
+# Window membership is decided by the transcript's LAST RECORD timestamp, not
+# its mtime. mtime is metadata and can be touched long after the last message:
+# observed 2026-08-08 (isle) a transcript whose mtime read "today 07:45" while
+# its final record was 2026-08-07T22:34Z — two days of drift, which silently
+# pulled a stale session into `--since today` and over-reported it. Since
+# --since is the flag documented as the one you use when the number must be
+# defensible, it must key on activity the transcript actually records.
+# Falls back to mtime only when no timestamp can be parsed at all, and says so.
+parse_since_cutoff() {
+  local spec="$1" n
+  case "$spec" in
+    today) date -d 'today 00:00:00' +%s 2>/dev/null ;;
+    *h)
+      n="${spec%h}"
+      [[ "$n" =~ ^[0-9]+$ ]] || return 1
+      echo $(( $(date +%s) - n * 3600 )) ;;
+    *d)
+      n="${spec%d}"
+      [[ "$n" =~ ^[0-9]+$ ]] || return 1
+      echo $(( $(date +%s) - n * 86400 )) ;;
+    *) return 1 ;;
+  esac
+}
+
+fold_since() {
+  local project_dir="$1" spec="$2" cutoff cutoff_human count=0 f mtime u
+  local last_ts activity fellback=0 mtime_only=0
+  cutoff="$(parse_since_cutoff "$spec")" || {
+    echo "cc-cost: --since: could not parse '$spec' — try: today, 1d, 3d, 7d, 12h" >&2
+    exit 2
+  }
+  cutoff_human="$(date -d "@$cutoff" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "epoch $cutoff")"
+  while IFS= read -r f; do
+    mtime="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)"
+    # Decide on RECORDED ACTIVITY, not mtime (see header).
+    last_ts="$(transcript_last_ts "$f")"
+    activity=0
+    [ -n "$last_ts" ] && activity="$(date -d "$last_ts" +%s 2>/dev/null || echo 0)"
+    if [ "$activity" -eq 0 ]; then
+      activity="$mtime"   # unparsable/empty transcript — mtime is all we have
+      fellback=$((fellback + 1))
+    elif [ "$mtime" -ge "$cutoff" ] && [ "$activity" -lt "$cutoff" ]; then
+      # The exact drift this flag was fixed for: mtime says in-window, records say not.
+      mtime_only=$((mtime_only + 1))
+    fi
+    if [ "$activity" -ge "$cutoff" ]; then
+      u="$(basename "$f" .jsonl)"
+      add_session "$project_dir" "$u" "--since $spec" && count=$((count + 1))
+    fi
+  done < <(find "$project_dir" -maxdepth 1 -name '*.jsonl' -type f)
+  echo "cc-cost: --since $spec: cutoff $cutoff_human — $count session(s) in window (by last recorded activity)" >&2
+  if [ "$mtime_only" -gt 0 ]; then
+    echo "cc-cost: --since $spec: excluded $mtime_only session(s) whose mtime falls in the window but whose last RECORD predates it (touched-but-stale transcripts)" >&2
+  fi
+  if [ "$fellback" -gt 0 ]; then
+    echo "cc-cost: --since $spec: $fellback transcript(s) carried no parsable timestamp — fell back to mtime for those" >&2
+  fi
+}
+
+# --- --all-sessions: everything in this project dir, coarse but exact -------
+fold_all_sessions() {
+  local project_dir="$1" count=0 f u
+  while IFS= read -r f; do
+    u="$(basename "$f" .jsonl)"
+    add_session "$project_dir" "$u" "--all-sessions" && count=$((count + 1))
+  done < <(find "$project_dir" -maxdepth 1 -name '*.jsonl' -type f | sort)
+  echo "cc-cost: --all-sessions: folding in ALL $count session(s) found in this project dir — coarse, not scoped to any one line of work" >&2
+}
+
+# --- bare-invocation auto-discovery: this session's own transcript(s) -------
+# Project dir: $CLAUDE_CFG_DIR/projects/<slug>, <slug> = cwd with every '/' -> '-'
+# (bash's ${PWD//\//-} turns the leading '/' into a leading '-' too, matching
+# the on-disk convention). Session id: $CLAUDE_CODE_SESSION_ID if it names a
+# real transcript file, else the newest top-level *.jsonl by mtime (a guess,
+# flagged as such). Subagents: <project_dir>/<session_id>/subagents/, recursed
+# fully (workflow runs nest agent-*.jsonl further down, not just one level).
+# Never silently emits an empty report — a dir/file that can't be found is a
+# hard failure with the computed slug/path named, so it reads as "couldn't
+# find it" rather than "this session was free".
+discover_transcripts() {
+  local slug project_dir session_file sid how subdir
+  slug="${PWD//\//-}"
+  project_dir="$CLAUDE_CFG_DIR/projects/$slug"
+
+  if [ ! -d "$project_dir" ]; then
+    echo "cc-cost: no project dir for cwd '$PWD' (slug '$slug') under $CLAUDE_CFG_DIR/projects — nothing to report. Pass explicit transcript paths instead." >&2
+    exit 2
+  fi
+
+  if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -f "$project_dir/${CLAUDE_CODE_SESSION_ID}.jsonl" ]; then
+    session_file="$project_dir/${CLAUDE_CODE_SESSION_ID}.jsonl"
+    sid="$CLAUDE_CODE_SESSION_ID"
+    how="env (\$CLAUDE_CODE_SESSION_ID)"
+  else
+    # Same benign-SIGPIPE hazard as the other head-terminated pipelines below
+    # (a project dir with many sessions means `sort`'s full output can exceed
+    # what `head -n1` reads before closing) — pipefail off for this capture.
+    set +o pipefail
+    session_file="$(find "$project_dir" -maxdepth 1 -name '*.jsonl' -type f -printf '%T@ %p\n' 2>/dev/null \
+                     | sort -rn | head -n1 | cut -d' ' -f2-)"
+    set -o pipefail
+    if [ -z "$session_file" ]; then
+      echo "cc-cost: no session transcripts (*.jsonl) found in $project_dir — nothing to report." >&2
+      exit 2
+    fi
+    sid="$(basename "$session_file" .jsonl)"
+    how="mtime-guess (newest *.jsonl — \$CLAUDE_CODE_SESSION_ID unset or stale)"
+  fi
+
+  add_file "$session_file"
+  if [ "$no_subagents" -eq 0 ]; then
+    subdir="$project_dir/$sid/subagents"
+    if [ -d "$subdir" ]; then
+      while IFS= read -r f; do add_file "$f"; done < <(find "$subdir" -name '*.jsonl' -type f | sort)
+    fi
+  fi
+
+  # --include-session: explicit fold-in only, never automatic.
+  local inc
+  for inc in "${include_sessions[@]:-}"; do
+    [ -z "$inc" ] && continue
+    add_session "$project_dir" "$inc" "--include-session"
+  done
+
+  # --chain / --since / --all-sessions: opt-in scope widening (see each
+  # function's doc comment). All compose and union via add_file's dedupe.
+  [ "$chain_enabled" -eq 1 ] && fold_chain "$project_dir" "$sid" "$session_file"
+  [ -n "$since_spec" ] && fold_since "$project_dir" "$since_spec"
+  [ "$all_sessions_enabled" -eq 1 ] && fold_all_sessions "$project_dir"
+
+  echo "cc-cost: session ${sid:0:8}… resolved via $how — ${#files[@]} file(s) — project slug $slug" >&2
+  # Hint only — the operator decides whether to widen scope with --include-session
+  # (or --chain / --since / --all-sessions). Already-folded uuids are skipped.
+  detect_predecessor_hint "$project_dir" "$sid" "$session_file"
+}
 
 json_out=0
 no_price=0
+no_fetch=0
+no_subagents=0
+do_update_prices=0
+chain_enabled=0
+since_spec=""
+all_sessions_enabled=0
 paths=()
-for arg in "$@"; do
-  case "$arg" in
+include_sessions=()
+while [ $# -gt 0 ]; do
+  case "$1" in
     --json) json_out=1 ;;
     --no-price) no_price=1 ;;
+    --no-fetch) no_fetch=1 ;;
+    --no-subagents) no_subagents=1 ;;
+    --update-prices) do_update_prices=1 ;;
+    --chain) chain_enabled=1 ;;
+    --all-sessions) all_sessions_enabled=1 ;;
+    --since)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "cc-cost: --since requires a window argument (today, 1d, 3d, 7d, 12h)" >&2; usage >&2; exit 2
+      fi
+      since_spec="$1"
+      ;;
+    --include-session)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "cc-cost: --include-session requires a session uuid argument" >&2; usage >&2; exit 2
+      fi
+      include_sessions+=("$1")
+      ;;
     -h|--help) usage; exit 0 ;;
-    -*) echo "cc-cost: unknown flag '$arg'" >&2; usage >&2; exit 2 ;;
-    *) paths+=("$arg") ;;
+    -*) echo "cc-cost: unknown flag '$1'" >&2; usage >&2; exit 2 ;;
+    *) paths+=("$1") ;;
   esac
+  shift
 done
-if [ "${#paths[@]}" -eq 0 ]; then
-  echo "cc-cost: no transcript paths given" >&2; usage >&2; exit 2
+
+if [ "$do_update_prices" -eq 1 ]; then
+  update_prices
+  exit $?
 fi
 
 files=()
-for p in "${paths[@]}"; do
-  if [ -d "$p" ]; then
-    while IFS= read -r f; do files+=("$f"); done < <(find "$p" -name '*.jsonl' -type f | sort)
-  elif [ -f "$p" ]; then
-    files+=("$p")
-  else
-    echo "cc-cost: no such file or directory: $p" >&2; exit 2
+declare -A _files_seen=()
+if [ "${#paths[@]}" -eq 0 ]; then
+  discover_transcripts   # bare invocation: auto-discover, or exit with a clear error
+else
+  if [ "${#include_sessions[@]}" -gt 0 ] || [ "$chain_enabled" -eq 1 ] \
+     || [ -n "$since_spec" ] || [ "$all_sessions_enabled" -eq 1 ]; then
+    echo "cc-cost: --include-session/--chain/--since/--all-sessions only apply to bare (auto-discovery) invocations — ignored with explicit paths" >&2
   fi
-done
-if [ "${#files[@]}" -eq 0 ]; then
-  echo "cc-cost: no .jsonl files found under given paths" >&2; exit 2
+  for p in "${paths[@]}"; do
+    if [ -d "$p" ]; then
+      while IFS= read -r f; do files+=("$f"); done < <(find "$p" -name '*.jsonl' -type f | sort)
+    elif [ -f "$p" ]; then
+      files+=("$p")
+    else
+      echo "cc-cost: no such file or directory: $p" >&2; exit 2
+    fi
+  done
+  if [ "${#files[@]}" -eq 0 ]; then
+    echo "cc-cost: no .jsonl files found under given paths" >&2; exit 2
+  fi
 fi
+
+check_cache_ttl_sanity
+
+# cache -> built-in -> unpriced, with fail-soft auto-refresh (see resolve_prices).
+_resolved="$(resolve_prices)"
+resolved_prices="$(head -n1 <<<"$_resolved")"
+asof_label="$(tail -n1 <<<"$_resolved")"
 
 # 16-color ANSI only, and only on a TTY.
 if [ -t 1 ] && [ "$json_out" -eq 0 ]; then
@@ -75,10 +781,10 @@ else
 fi
 
 jq -rs \
-  --argjson prices "$PRICES_JSON" \
+  --argjson prices "$resolved_prices" \
   --argjson json_out "$json_out" \
   --argjson no_price "$no_price" \
-  --arg asof "$PRICES_ASOF" \
+  --arg asof "$asof_label" \
   --arg B "$B" --arg CY "$CY" --arg GN "$GN" --arg YL "$YL" --arg DM "$DM" --arg R "$R" '
   def commas: tostring
     | if test("^[0-9]+$") and length > 3
@@ -90,6 +796,11 @@ jq -rs \
   def lpad($n): tostring | (" " * ([$n - length, 0] | max)) + .;
 
   # --- aggregate: one final usage snapshot per message id ---
+  # Cache writes split by ACTUAL TTL, read straight from the transcript
+  # (`usage.cache_creation.ephemeral_{5m,1h}_input_tokens`) rather than
+  # assumed — a 1h-TTL write billed at the 5m multiplier undercosts by 37.5%.
+  # Back-compat: transcripts without `cache_creation` fall back to the old
+  # behavior, `cache_creation_input_tokens` counted entirely as 5m.
   ( to_entries
     | map(.value
         | select(type == "object")
@@ -105,27 +816,41 @@ jq -rs \
         model: .[0].model,
         api_calls: length,
         input_uncached: (map(.u.input_tokens // 0) | add),
-        cache_write: (map(.u.cache_creation_input_tokens // 0) | add),
+        cache_write_5m: (map(
+            if (.u.cache_creation? != null) then (.u.cache_creation.ephemeral_5m_input_tokens // 0)
+            else (.u.cache_creation_input_tokens // 0) end) | add),
+        cache_write_1h: (map(
+            if (.u.cache_creation? != null) then (.u.cache_creation.ephemeral_1h_input_tokens // 0)
+            else 0 end) | add),
         cache_read: (map(.u.cache_read_input_tokens // 0) | add),
         output: (map(.u.output_tokens // 0) | add)
       })
   ) as $agg
 
   # --- price lookup: longest matching key prefix ---
+  # Cache-write rate: prefer the price sheet own published cache_write_5m /
+  # cache_write_1h (present once the cache has been populated by
+  # --update-prices); fall back to the 1.25x / 2x input multipliers only when
+  # a model entry lacks them (e.g. the built-in offline sheet, which only
+  # carries in/out).
   | ($agg | map(
       . as $m
       | ($prices | to_entries | map(select(.key as $k | $m.model | startswith($k)))
          | (max_by(.key | length) | .value)?) as $p
       | . + (if $p and ($no_price == 0) then
-          { cost_input: (.input_uncached * $p.in / 1e6),
-            cost_cache_write: (.cache_write * $p.in * 1.25 / 1e6),
-            cost_cache_read: (.cache_read * $p.in * 0.1 / 1e6),
-            cost_output: (.output * $p.out / 1e6),
-            cost_uncached_equiv:
-              (((.input_uncached + .cache_write + .cache_read) * $p.in
-                + .output * $p.out) / 1e6),
-            rates: $p }
-          | . + {cost_total: (.cost_input + .cost_cache_write + .cost_cache_read + .cost_output)}
+          ($p.cache_write_5m // ($p.in * 1.25)) as $rate5m
+          | ($p.cache_write_1h // ($p.in * 2.0)) as $rate1h
+          | { cost_input: (.input_uncached * $p.in / 1e6),
+              cost_cache_write_5m: (.cache_write_5m * $rate5m / 1e6),
+              cost_cache_write_1h: (.cache_write_1h * $rate1h / 1e6),
+              cost_cache_read: (.cache_read * $p.in * 0.1 / 1e6),
+              cost_output: (.output * $p.out / 1e6),
+              cost_uncached_equiv:
+                (((.input_uncached + .cache_write_5m + .cache_write_1h + .cache_read) * $p.in
+                  + .output * $p.out) / 1e6),
+              rates: ($p + {cache_write_5m: $rate5m, cache_write_1h: $rate1h}) }
+          | . + {cost_total: (.cost_input + .cost_cache_write_5m + .cost_cache_write_1h
+                              + .cost_cache_read + .cost_output)}
         else {} end)
     )) as $rows
 
@@ -133,7 +858,8 @@ jq -rs \
     ( [ $rows[] |
         "\($B)\($CY)\(.model)\($R)\($DM) — \(.api_calls) API calls\($R)",
         ( [ ["input (uncached)", .input_uncached, (.rates.in? // null), (.cost_input? // null)],
-            ["cache write 1.25x", .cache_write, (if .rates then .rates.in * 1.25 else null end), (.cost_cache_write? // null)],
+            ["cache write 5m", .cache_write_5m, (.rates.cache_write_5m? // null), (.cost_cache_write_5m? // null)],
+            ["cache write 1h", .cache_write_1h, (.rates.cache_write_1h? // null), (.cost_cache_write_1h? // null)],
             ["cache read 0.1x", .cache_read, (if .rates then .rates.in * 0.1 else null end), (.cost_cache_read? // null)],
             ["output", .output, (.rates.out? // null), (.cost_output? // null)]
           ][]
@@ -141,7 +867,7 @@ jq -rs \
             + (if .[2] != null then "  @ \(.[2] | lpad(6))/M  \(.[3] | money | lpad(10))" else "" end)
         ),
         (if .cost_total? then
-          "  \($B)\("subtotal" | rpad(18)) \((.input_uncached + .cache_write + .cache_read + .output) | commas | lpad(12))\(" " * 12)\(.cost_total | money | lpad(10))\($R)"
+          "  \($B)\("subtotal" | rpad(18)) \((.input_uncached + .cache_write_5m + .cache_write_1h + .cache_read + .output) | commas | lpad(12))\(" " * 12)\(.cost_total | money | lpad(10))\($R)"
          else empty end),
         ""
       ]
@@ -152,7 +878,7 @@ jq -rs \
                 + (if $unc > $total then
                     "   \($DM)(uncached would be \($unc | money) — caching saved \((100 * ($unc - $total) / $unc) | round)%)\($R)"
                    else "" end),
-              "\($YL)prices hardcoded as of \($asof) — verify at platform.claude.com/docs/en/pricing\($R)"
+              "\($YL)prices as of \($asof) — verify at platform.claude.com/docs/en/about-claude/pricing\($R)"
             ]
          else [] end)
       + ( [ $rows[] | select((.rates? // null) == null and ($no_price == 0)) | .model ]
