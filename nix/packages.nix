@@ -60,6 +60,7 @@ in
     fd
     fzf
     gh
+    gh-stack # `gh stack` extension; symlinked into gh's extension dir in flake.nix
     ghostscript
     go
     imagemagick
@@ -111,19 +112,27 @@ in
   ];
 
   # Homebrew CLI formulae kept on brew on purpose:
-  #   mas   — backs masApps during nix-darwin activation
   #   mise  — fast calver; brew stays fresher than nixpkgs
   #   beads — nixpkgs lags a major (steveyegge/beads); dolt + icu4c@78 ride along
   #   llama.cpp — multiple builds/day; brew runs ~700 builds ahead of nixpkgs,
   #           and freshness matters for model/perf support (replaced ollama)
   #   pi-coding-agent — fast-moving coding-agent CLI; Homebrew packages the
   #           official npm tarball with npm lifecycle scripts disabled
+  #   et — Eternal Terminal (brew formula is `et`, NOT `eternal-terminal` as in
+  #           nixpkgs). The client MUST match the devbox etserver's major version
+  #           or the handshake fails; the devbox installs et from the upstream
+  #           jgmath2000 PPA (7.x) while nixpkgs lags a major (6.2.x), so the Mac
+  #           client rides brew (7.x) too. Matches Termux (7.x). See roles/devbox.
+  #
+  # mas is intentionally NOT installed here: this Mac's MDM enrollment is in a
+  # broken state and `mas` activation runs fail/hang because of it. Re-add
+  # "mas" here and flip masApps back on in flake.nix once MDM is fixed.
   homebrewBrews = [
-    "mas"
     "mise"
     "beads"
     "llama.cpp"
     "pi-coding-agent"
+    "et"
   ];
 
   # Homebrew applications organized by category
@@ -171,6 +180,8 @@ in
     "thaw@beta"
   ];
 
+  # Preserved for when mas is re-enabled (see homebrewBrews comment above) —
+  # not wired into homebrew.masApps in flake.nix right now.
   macAppStoreApps = {
     "Amphetamine" = 937984704;
     "Apple developer" = 640199958;

@@ -11,7 +11,7 @@
 
     # Keyboard configuration
     hitoolbox = {
-      AppleFnUsageType = "Change Input Source";
+      AppleFnUsageType = "Start Dictation"; # Press 🌐 twice to dictate
     };
 
     # Finder configuration

@@ -26,8 +26,8 @@ in
     "24" = mkHotkey false []; # Accessibility feature
     "25" = mkHotkey false []; # Increase Contrast - Cmd+Ctrl+Opt+.
     "26" = mkHotkey false []; # Decrease Contrast - Cmd+Ctrl+Opt+,
-    "60" = mkHotkey false []; # Select previous input source - Cmd+Opt+Space
-    "61" = mkHotkey false []; # Select next input source - Cmd+Opt+Shift+Space
+    "60" = mkHotkey true [ 32 49 786432 ]; # Select the previous input source - Ctrl+Opt+Space (enabled)
+    "61" = mkHotkey false []; # Select next source in Input menu - disabled
     "64" = mkHotkey false []; # Show Spotlight search field - Cmd+Shift+Space
     "118" = mkHotkey false []; # Switch to Space 1 - Ctrl+1
     "119" = mkHotkey false []; # Switch to Space 2 - Ctrl+2
