@@ -15,7 +15,21 @@
     hostname = "BigMac-2024";
     username = "kovis";
     homeDirectory = "/Users/${username}";
-    
+
+    # bb client wiring (see the bb block further down, and BB.md in the homelab
+    # repo). bbVersion must match bb_server_version in roles/bb_server there:
+    # server and host daemons speak a versioned protocol, and on a mismatch the
+    # daemon silently downloads the server's own build on every connect.
+    bbVersion = "0.40.0";
+    bbServerUrl = "https://devbox.taile06170.ts.net";
+    # The npm bb-app package, NOT the copy inside /Applications/bb.app — that
+    # one's better-sqlite3 is built against Electron's ABI (NODE_MODULE_VERSION
+    # 145 vs node 24's 137) and aborts on startup under plain node.
+    bbClientPrefix = "${homeDirectory}/.local/share/bb-headless";
+    # Per-server machine data dir, holding this machine's enrolment secret
+    # (auth.json). Named after the server so a second bb never shares it.
+    bbMachineDataDir = "${homeDirectory}/.bb-machines/devbox.taile06170.ts.net";
+
     # Import module configurations
     packages = import ./packages.nix { inherit nixpkgs; };
     hotkeys = import ./hotkeys.nix { };
@@ -85,6 +99,50 @@
         };
       };
 
+      # bb: this Mac is a THIN CLIENT plus an execution machine. The
+      # authoritative bb server runs headless on devbox and is reached over the
+      # tailnet (`tailscale serve` in front of its loopback 38886) — see BB.md in
+      # the homelab repo. Neither piece below is a dotfile: both live under
+      # ~/Library, which Stow (target ~/.config) cannot manage, which is why
+      # this belongs in nix-darwin rather than the stowed tree.
+      #
+      # This agent is a standalone host daemon, and it is NOT optional: in remote
+      # mode the desktop app spawns no daemon of its own (it starts one only when
+      # its stored server target is "builtin"), so without this you cannot run
+      # threads on your own laptop at all.
+      #
+      # CLAUDE_CONFIG_DIR is set explicitly rather than inherited:
+      # environment.variables above reaches shells via /etc/zshenv but NOT
+      # launchd, so `launchctl getenv CLAUDE_CONFIG_DIR` is empty and a daemon
+      # started at boot would fall back to ~/.claude and report "not logged in".
+      # BB_CLAUDE_CODE_EXECUTABLE bypasses the umbel shim, which otherwise kills
+      # provider calls with `bundle 'clerk-discovery' not found`.
+      #
+      # Mirrors roles/bb_server in the homelab repo — keep bbVersion and the two
+      # provider variables in step with bb_server_version there.
+      launchd.user.agents.bb-host-daemon = {
+        serviceConfig = {
+          ProgramArguments = [
+            "${homeDirectory}/.local/share/mise/shims/node"
+            "${bbClientPrefix}/node_modules/bb-app/dist/bb-app.js"
+            "host-daemon"
+            "--server-url" bbServerUrl
+            "--host-daemon-port" "38890"
+            "--auto-update"
+          ];
+          EnvironmentVariables = {
+            BB_DATA_DIR = bbMachineDataDir;
+            BB_APP_NPM_PREFIX = "${bbMachineDataDir}/npm";
+            CLAUDE_CONFIG_DIR = "${homeDirectory}/.config/claude-code";
+            BB_CLAUDE_CODE_EXECUTABLE = "${homeDirectory}/.local/bin/claude";
+          };
+          RunAtLoad = true;
+          KeepAlive = true;
+          StandardOutPath = "${bbMachineDataDir}/launchd.out.log";
+          StandardErrorPath = "${bbMachineDataDir}/launchd.err.log";
+        };
+      };
+
       # === PROGRAMS ===
       
       programs.zsh.enable = true;
@@ -121,6 +179,55 @@
           ${packages.pinentry-rbw-touchid}/bin/pinentry-rbw-touchid || true
         sudo -u ${username} /usr/bin/env HOME=${homeDirectory} \
           ${pkgs.rbw}/bin/rbw config set lock_timeout 1 || true
+
+        # gh-stack (stacked PRs) wiring. gh finds extensions ONLY by scanning
+        # $XDG_DATA_HOME/gh/extensions for gh-<name>/gh-<name> — never PATH — so
+        # the nixpkgs binary needs this symlink to be reachable as `gh stack`.
+        # nix owns the version: `gh extension upgrade` sees no manifest, reports
+        # "already up to date", and leaves the link alone. Keep the pin in sync
+        # with devbox_gh_stack_version in the homelab repo's roles/devbox.
+        #
+        # Run as the user so the tree isn't root-owned (activation is root) —
+        # otherwise later `gh extension` commands fail on permissions. HOME is
+        # enough: XDG_DATA_HOME isn't exported here, but gh falls back to the
+        # same $HOME/.local/share default.
+        sudo -u ${username} /usr/bin/env HOME=${homeDirectory} \
+          mkdir -p ${homeDirectory}/.local/share/gh/extensions/gh-stack || true
+        sudo -u ${username} /usr/bin/env HOME=${homeDirectory} \
+          ln -sf ${pkgs.gh-stack}/bin/gh-stack \
+          ${homeDirectory}/.local/share/gh/extensions/gh-stack/gh-stack || true
+
+        # bb client: the npm bb-app package provides the headless host daemon
+        # the launchd agent above runs. Check-then-act on the installed version
+        # so a rebuild reinstalls only on a version bump, rather than reaching
+        # out to the npm registry on every activation.
+        sudo -u ${username} /usr/bin/env HOME=${homeDirectory} \
+          mkdir -p ${bbClientPrefix} || true
+        if [ "$(${homeDirectory}/.local/share/mise/shims/node -p \
+              "require('${bbClientPrefix}/node_modules/bb-app/package.json').version" \
+              2>/dev/null)" != "${bbVersion}" ]; then
+          sudo -u ${username} /usr/bin/env HOME=${homeDirectory} \
+            ${homeDirectory}/.local/share/mise/shims/npm install \
+            --prefix ${bbClientPrefix} bb-app@${bbVersion} \
+            --no-audit --no-fund || true
+        fi
+
+        # Seed the desktop app's server target so a fresh machine comes up
+        # pointing at devbox instead of silently starting its own local server.
+        # Written ONLY when absent: the app rewrites this file itself when you
+        # pick Window > Server, and clobbering it on every rebuild would revert
+        # that choice behind your back.
+        sudo -u ${username} /usr/bin/env HOME=${homeDirectory} \
+          mkdir -p "${homeDirectory}/Library/Application Support/bb" || true
+        if [ ! -e "${homeDirectory}/Library/Application Support/bb/server-target.json" ]; then
+          sudo -u ${username} /usr/bin/env HOME=${homeDirectory} \
+            install -m 644 ${pkgs.writeText "bb-server-target.json" (builtins.toJSON {
+              connectServer = null;
+              customServerUrl = bbServerUrl;
+              target = "custom";
+            })} \
+            "${homeDirectory}/Library/Application Support/bb/server-target.json" || true
+        fi
       '';
 
       # === PACKAGE MANAGEMENT ===
@@ -129,7 +236,10 @@
         enable = true;
         brews = packages.homebrewBrews;
         casks = packages.homebrewCasks;
-        masApps = packages.macAppStoreApps;
+        # masApps disabled: MDM enrollment is broken on this Mac and mas
+        # activation fails/hangs because of it. See packages.nix
+        # macAppStoreApps for the app list to restore once MDM is fixed.
+        masApps = { };
       };
 
       fonts.packages = with pkgs; [

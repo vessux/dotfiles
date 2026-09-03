@@ -70,6 +70,45 @@ Bundles live in `~/.config/umbel/bundles/*.md`. Some declare external binary
 prerequisites (e.g. `plannotator`, `tuidriver`) — each bundle's `.md`
 documents its own install step.
 
+## BB Setup
+
+This Mac is a **thin client plus an execution machine**. The authoritative bb
+server runs headless on devbox and is reached over the tailnet; see `BB.md` in
+the homelab repo for the full topology and recovery steps.
+
+Nothing here is stowed. Both Mac-side pieces live under `~/Library`, which Stow
+(target `~/.config`) cannot manage, so they are declared in `nix/flake.nix`
+instead:
+
+- `launchd.user.agents.bb-host-daemon` — a standalone host daemon. Not optional:
+  in remote mode the desktop app spawns no daemon of its own (it starts one only
+  when its stored server target is `builtin`), so without it you cannot run
+  threads on this Mac at all.
+- A `postActivation` step that installs the pinned `bb-app` npm package and
+  seeds `Library/Application Support/bb/server-target.json`. The seed is written
+  only when absent — the app rewrites that file whenever you use
+  **Window > Server**, and clobbering it every rebuild would revert your choice.
+
+Two environment variables in the agent are load-bearing, both learned the hard
+way:
+
+- `CLAUDE_CONFIG_DIR` is set **explicitly**, not inherited. `environment.variables`
+  reaches shells via `/etc/zshenv` but not launchd, so `launchctl getenv
+  CLAUDE_CONFIG_DIR` is empty and a daemon started at boot would fall back to
+  `~/.claude` and report "not logged in".
+- `BB_CLAUDE_CODE_EXECUTABLE` points at the real binary so provider calls bypass
+  the Umbel shim, which otherwise fails with `bundle 'clerk-discovery' not found`
+  and surfaces only as a thread that never starts.
+
+Keep `bbVersion` in `nix/flake.nix` in step with `bb_server_version` in the
+homelab repo's `roles/bb_server`: server and host daemons speak a versioned
+protocol, and on a mismatch the daemon re-downloads the server's build on every
+connect.
+
+The devbox side — server, unit, tailnet publication — is Ansible's job, not
+this repo's. There is deliberately no stowed `bb/` package and no systemd
+drop-in here any more.
+
 ## Pi Setup
 
 [Pi](https://pi.dev/) is installed as the Homebrew formula
@@ -170,6 +209,7 @@ All configurations are symlinked to `~/.config/` via Stow:
 ~/.config/
 ├── atuin/          # Shell history configuration
 ├── bat/            # Syntax highlighter configuration
+├── bb/             # BB config plus ignored local runtime state (BB_DATA_DIR)
 ├── bin/            # Reusable repo scripts on PATH (see ADR 0001)
 ├── ccstatusline/   # Claude Code status line configuration
 ├── claude-code/    # Claude Code app configuration
@@ -187,6 +227,7 @@ All configurations are symlinked to `~/.config/` via Stow:
 ├── nvim/           # Neovim configuration
 ├── pi/             # Pi coding agent config (PI_CODING_AGENT_DIR)
 ├── starship/       # Shell prompt configuration
+├── systemd/        # Linux user-service drop-ins
 ├── tmux/           # Terminal multiplexer configuration
 ├── umbel/          # Claude Code bundles (skills, hooks, MCP servers)
 ├── yazi/           # File manager configuration
