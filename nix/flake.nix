@@ -18,9 +18,13 @@
 
     # bb client wiring (see the bb block further down, and BB.md in the homelab
     # repo). bbVersion must match bb_server_version in roles/bb_server there:
-    # server and host daemons speak a versioned protocol, and on a mismatch the
-    # daemon silently downloads the server's own build on every connect.
-    bbVersion = "0.40.0";
+    # server and host daemons speak a versioned protocol, and a mismatch is
+    # terminal — the server rejects every daemon session and this machine just
+    # stops appearing. bb advertises that an auto-updating daemon repairs this
+    # itself; it does not (see the agent block below), so this pin is the only
+    # thing keeping the two in step. `just bb-update` in the homelab repo moves
+    # bb_server_version and prints a reminder to bump this.
+    bbVersion = "0.42.0";
     bbServerUrl = "https://devbox.taile06170.ts.net";
     # The npm bb-app package, NOT the copy inside /Applications/bb.app — that
     # one's better-sqlite3 is built against Electron's ABI (NODE_MODULE_VERSION
@@ -128,7 +132,20 @@
             "host-daemon"
             "--server-url" bbServerUrl
             "--host-daemon-port" "38890"
-            "--auto-update"
+            # No --auto-update. It is not merely redundant against bbVersion
+            # above, it is broken here in two independent, silent ways:
+            #   * the daemon installs the new build into BB_APP_NPM_PREFIX
+            #     below, but ProgramArguments execs bbClientPrefix — launchd
+            #     never runs the updated tree, and KeepAlive restores the old
+            #     one on the next restart;
+            #   * the install shells out to mise's npm wrapper, which ends with
+            #     `mise reshim`. launchd's PATH has no /opt/homebrew/bin, so
+            #     that exits 127 AFTER npm unpacked the tree correctly; npm
+            #     inherits 127 and bb discards an update that had succeeded.
+            # Adding /opt/homebrew/bin to EnvironmentVariables would fix only
+            # the second, and would be dead config once the flag is gone.
+            # A stale pin is loud (server rejects the session outright); a
+            # self-update racing the pin was not. See BB.md in the homelab repo.
           ];
           EnvironmentVariables = {
             BB_DATA_DIR = bbMachineDataDir;
