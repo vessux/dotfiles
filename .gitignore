@@ -72,7 +72,9 @@ __pycache__/
 # the source of truth (synced to the git remote via refs/dolt/data), so —
 #   - issues.jsonl: a ~60s-rewritten export, churny and redundant with Dolt.
 #   - interactions.jsonl: a raw agent-interaction audit log, not worth publishing.
-.beads/issues.jsonl
+# The glob also covers the dated .parked-* snapshots left by schema migrations,
+# which are the same churny export frozen at a point in time.
+.beads/issues.jsonl*
 .beads/interactions.jsonl
 
 # umbel: per-checkout bundle pin (local, re-created per machine)
