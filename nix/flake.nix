@@ -134,10 +134,10 @@
             "--host-daemon-port" "38890"
             # No --auto-update. It is not merely redundant against bbVersion
             # above, it is broken here in two independent, silent ways:
-            #   * the daemon installs the new build into BB_APP_NPM_PREFIX
-            #     below, but ProgramArguments execs bbClientPrefix — launchd
-            #     never runs the updated tree, and KeepAlive restores the old
-            #     one on the next restart;
+            #   * the daemon installs the new build under its own npm prefix
+            #     while ProgramArguments execs bbClientPrefix — launchd never
+            #     runs the updated tree, and KeepAlive restores the old one on
+            #     the next restart;
             #   * the install shells out to mise's npm wrapper, which ends with
             #     `mise reshim`. launchd's PATH has no /opt/homebrew/bin, so
             #     that exits 127 AFTER npm unpacked the tree correctly; npm
@@ -149,7 +149,13 @@
           ];
           EnvironmentVariables = {
             BB_DATA_DIR = bbMachineDataDir;
-            BB_APP_NPM_PREFIX = "${bbMachineDataDir}/npm";
+            # No BB_APP_NPM_PREFIX. Its only reader in the daemon bundle is the
+            # self-update installer, which is unreachable without
+            # --auto-update, so it was inert config. Worth knowing before
+            # re-adding the flag: unset omits `--prefix` altogether rather than
+            # defaulting sensibly, so a bare `npm install -g` would land in the
+            # mise-managed node install. Restore this alongside any future
+            # --auto-update, not after it.
             CLAUDE_CONFIG_DIR = "${homeDirectory}/.config/claude-code";
             BB_CLAUDE_CODE_EXECUTABLE = "${homeDirectory}/.local/bin/claude";
           };
