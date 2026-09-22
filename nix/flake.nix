@@ -24,7 +24,7 @@
     # itself; it does not (see the agent block below), so this pin is the only
     # thing keeping the two in step. `just bb-update` in the homelab repo moves
     # bb_server_version and prints a reminder to bump this.
-    bbVersion = "0.42.0";
+    bbVersion = "0.43.4";
     bbServerUrl = "https://devbox.taile06170.ts.net";
     # The npm bb-app package, NOT the copy inside /Applications/bb.app — that
     # one's better-sqlite3 is built against Electron's ABI (NODE_MODULE_VERSION
