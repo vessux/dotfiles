@@ -122,7 +122,14 @@
       # BB_CLAUDE_CODE_EXECUTABLE bypasses the umbel shim, which otherwise kills
       # provider calls with `bundle 'clerk-discovery' not found`.
       #
-      # Mirrors roles/bb_server in the homelab repo — keep bbVersion and the two
+      # The PI_* variables close the same launchd gap for pi, and it fails more
+      # quietly: without PI_CODING_AGENT_DIR a bb-spawned pi falls back to
+      # ~/.pi/agent, whose auth.json is `{}`, so `bb provider models pi` on this
+      # machine reports "No models available" and pi exits 0. The session dir
+      # must be absolute (pi does not expand $XDG_DATA_HOME), and
+      # PI_SKIP_VERSION_CHECK matches environment.variables above.
+      #
+      # Mirrors roles/bb_server in the homelab repo — keep bbVersion and the
       # provider variables in step with bb_server_version there.
       launchd.user.agents.bb-host-daemon = {
         serviceConfig = {
@@ -158,6 +165,9 @@
             # --auto-update, not after it.
             CLAUDE_CONFIG_DIR = "${homeDirectory}/.config/claude-code";
             BB_CLAUDE_CODE_EXECUTABLE = "${homeDirectory}/.local/bin/claude";
+            PI_CODING_AGENT_DIR = "${homeDirectory}/.config/pi/agent";
+            PI_CODING_AGENT_SESSION_DIR = "${homeDirectory}/.local/share/pi/sessions";
+            PI_SKIP_VERSION_CHECK = "1";
           };
           RunAtLoad = true;
           KeepAlive = true;
