@@ -20,7 +20,6 @@
   "transport": "auto",
   "hideThinkingBlock": false,
   "enabledModels": [
-    "openai-codex/gpt-5.5",
     "nvidia/deepseek-ai/deepseek-v4-pro",
     "nvidia/deepseek-ai/deepseek-v4-flash",
     "nvidia/z-ai/glm-5.2",
