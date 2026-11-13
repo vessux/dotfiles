@@ -28,7 +28,10 @@
     "nvidia/nvidia/nemotron-3-ultra-550b-a55b",
     "openai-codex/gpt-5.6-luna",
     "openai-codex/gpt-5.6-sol",
-    "openai-codex/gpt-5.6-terra"
+    "openai-codex/gpt-5.6-terra",
+    "claude-bridge/claude-opus-5-5",
+    "claude-bridge/claude-sonnet-5-5",
+    "claude-bridge/claude-haiku-5-5"
   ],
   "enableSkillCommands": true,
   "packages": [
@@ -38,7 +41,8 @@
     "git:github.com/DietrichGebert/ponytail",
     "npm:@juicesharp/rpiv-ask-user-question",
     "npm:@ff-labs/pi-fff",
-    "npm:pi-subagents@0.45.0"
+    "npm:pi-subagents@0.45.0",
+    "npm:pi-claude-bridge"
   ],
   "skills": [
     "/home/kovis/.config/pi/agent/skills/sidekick"
